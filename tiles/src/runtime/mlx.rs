@@ -1,7 +1,7 @@
 use crate::runtime::RunArgs;
 use crate::utils::config::{
-    create_default_memory_folder, get_config_dir, get_default_memory_path, get_memory_path,
-    get_server_dir, set_memory_path,
+    create_default_memory_folder, get_config_dir, get_default_memory_path, get_lib_dir,
+    get_memory_path, set_memory_path,
 };
 use crate::utils::hf_model_downloader::*;
 use anyhow::{Context, Result};
@@ -76,10 +76,10 @@ impl MLXRuntime {
         }
 
         let config_dir = get_config_dir()?;
-        let mut server_dir = get_server_dir()?;
+        let mut server_dir = get_lib_dir()?;
         let pid_file = config_dir.join("server.pid");
         fs::create_dir_all(&config_dir).context("Failed to create config directory")?;
-
+        server_dir = server_dir.join("server");
         let stdout_log = File::create(config_dir.join("server.out.log"))?;
         let stderr_log = File::create(config_dir.join("server.err.log"))?;
         let server_path = server_dir.join("stack_export_prod/app-server/bin/python");

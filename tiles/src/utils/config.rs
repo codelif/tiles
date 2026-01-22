@@ -60,7 +60,7 @@ pub fn create_default_memory_folder() -> Result<PathBuf> {
     Ok(memory_path)
 }
 
-pub fn get_server_dir() -> Result<PathBuf> {
+pub fn get_lib_dir() -> Result<PathBuf> {
     if cfg!(debug_assertions) {
         let base_dir = env::current_dir().context("Failed to fetch CURRENT_DIR")?;
         Ok(base_dir.join("server"))
@@ -68,9 +68,9 @@ pub fn get_server_dir() -> Result<PathBuf> {
         let home_dir = env::home_dir().context("Failed to fetch $HOME")?;
         let data_dir = match env::var("XDG_DATA_HOME") {
             Ok(val) => PathBuf::from(val),
-            Err(_err) => home_dir.join(".local/share"),
+            Err(_err) => home_dir.join(".local/lib"),
         };
-        Ok(data_dir.join("tiles/server"))
+        Ok(data_dir.join("tiles"))
     }
 }
 pub fn get_config_dir() -> Result<PathBuf> {
