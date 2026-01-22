@@ -51,6 +51,10 @@ struct RunFlags {
     /// Max times cli communicates with the model until it gets a proper reply for a user prompt
     #[arg(short = 'r', long, default_value_t = 10)]
     relay_count: u32,
+
+    /// Switches the mode to memory, used for interacting with memory models.
+    #[arg(short = 'm', long)]
+    memory: bool,
     // Future flags go here:
     // #[arg(long, default_value_t = 6969)]
     // port: u16,
@@ -98,6 +102,7 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
             let run_args = RunArgs {
                 modelfile_path,
                 relay_count: flags.relay_count,
+                memory: flags.memory,
             };
             commands::run(&runtime, run_args).await;
         }

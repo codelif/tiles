@@ -1,7 +1,7 @@
 use crate::runtime::RunArgs;
 use crate::utils::config::{
-    create_default_memory_folder, get_config_dir, get_default_memory_path, get_memory_path,
-    get_server_dir, set_memory_path,
+    create_default_memory_folder, get_config_dir, get_default_memory_path, get_lib_dir,
+    get_memory_path, set_memory_path,
 };
 use crate::utils::hf_model_downloader::*;
 use anyhow::{Context, Result};
@@ -17,6 +17,7 @@ use rustyline::{Config, Editor, Helper};
 use serde_json::{Value, json};
 use std::fs;
 use std::fs::File;
+use std::path::PathBuf;
 use std::process::Stdio;
 use std::time::Duration;
 use std::{io, process::Command};
@@ -42,26 +43,28 @@ impl MLXRuntime {
         MLXRuntime {}
     }
 
-    pub async fn run(&self, run_args: super::RunArgs) {
-        const DEFAULT_MODELFILE: &str = "FROM driaforall/mem-agent-mlx-4bit";
-        //Parse modelfile
+    pub async fn run(&self, run_args: super::RunArgs) -> Result<()> {
+        let default_modelfile_path = get_default_modelfile(run_args.memory)?;
+        let default_modelfile =
+            tilekit::modelfile::parse_from_file(default_modelfile_path.to_str().unwrap()).unwrap();
         let modelfile_parse_result = if let Some(modelfile_str) = &run_args.modelfile_path {
             tilekit::modelfile::parse_from_file(modelfile_str.as_str())
         } else {
-            tilekit::modelfile::parse(DEFAULT_MODELFILE)
+            Err("NOT PROVIDED".to_string())
         };
 
         let modelfile = match modelfile_parse_result {
             Ok(mf) => mf,
+            Err(err) if err == "NOT PROVIDED" => default_modelfile.clone(),
             Err(_err) => {
                 println!("Invalid Modelfile");
-                return;
+                return Ok(());
             }
         };
 
-        let _res = run_model_with_server(self, modelfile, &run_args)
+        run_model_with_server(self, modelfile, default_modelfile, &run_args)
             .await
-            .inspect_err(|e| eprintln!("Failed to run the model due to {e}"));
+            .inspect_err(|e| eprintln!("Failed to run the model due to {e}"))
     }
 
     #[allow(clippy::zombie_processes)]
@@ -76,10 +79,10 @@ impl MLXRuntime {
         }
 
         let config_dir = get_config_dir()?;
-        let mut server_dir = get_server_dir()?;
+        let mut server_dir = get_lib_dir()?;
         let pid_file = config_dir.join("server.pid");
         fs::create_dir_all(&config_dir).context("Failed to create config directory")?;
-
+        server_dir = server_dir.join("server");
         let stdout_log = File::create(config_dir.join("server.out.log"))?;
         let stderr_log = File::create(config_dir.join("server.err.log"))?;
         let server_path = server_dir.join("stack_export_prod/app-server/bin/python");
@@ -257,6 +260,7 @@ fn show_help(model_name: &str) {
 async fn run_model_with_server(
     mlx_runtime: &MLXRuntime,
     modelfile: Modelfile,
+    default_modelfile: Modelfile,
     run_args: &RunArgs,
 ) -> Result<()> {
     if !cfg!(debug_assertions) {
@@ -268,7 +272,7 @@ async fn run_model_with_server(
     // loading the model from mem-agent via daemon server
     let memory_path = get_or_set_memory_path().context("Setting/Retrieving memory_path failed")?;
     let modelname = modelfile.from.as_ref().unwrap();
-    match load_model(modelname, &memory_path).await {
+    match load_model(&modelfile, &default_modelfile, &memory_path).await {
         Ok(_) => start_repl(mlx_runtime, modelname, run_args).await,
         Err(err) => return Err(anyhow::anyhow!(err)),
     }
@@ -426,11 +430,17 @@ pub async fn ping() -> Result<(), String> {
     }
 }
 
-async fn load_model(model_name: &str, memory_path: &str) -> Result<()> {
+async fn load_model(
+    modelfile: &Modelfile,
+    default_modelfile: &Modelfile,
+    memory_path: &str,
+) -> Result<()> {
     let client = Client::new();
+    let model_name = modelfile.from.clone().unwrap();
     let body = json!({
         "model": model_name,
-        "memory_path": memory_path
+        "memory_path": memory_path,
+        "system_prompt": modelfile.system.clone().unwrap_or(default_modelfile.system.clone().unwrap())
     });
 
     let res = client
@@ -442,7 +452,7 @@ async fn load_model(model_name: &str, memory_path: &str) -> Result<()> {
         StatusCode::OK => Ok(()),
         StatusCode::NOT_FOUND => {
             println!("Downloading {}\n", model_name);
-            match pull_model(model_name).await {
+            match pull_model(&model_name).await {
                 Ok(_) => {
                     println!("\nDownloading completed \n");
                     Ok(())
@@ -547,5 +557,18 @@ async fn wait_until_server_is_up() {
                 sleep(Duration::from_secs(5)).await;
             }
         }
+    }
+}
+
+fn get_default_modelfile(memory_mode: bool) -> Result<PathBuf> {
+    // get default by the args -m
+    // let path =
+    if memory_mode {
+        let path = get_lib_dir()?.join("modelfiles/mem-agent");
+        Ok(path)
+    } else {
+        // let path = get_lib_dir()?.join("modelfiles/gpt-oss");
+        let path = get_lib_dir()?.join("modelfiles/mem-agent");
+        Ok(path)
     }
 }

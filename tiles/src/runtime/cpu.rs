@@ -12,7 +12,7 @@ impl CPURuntime {
     pub fn new() -> Self {
         CPURuntime {}
     }
-    pub async fn run(&self, _run_args: super::RunArgs) {
+    pub async fn run(&self, _run_args: super::RunArgs) -> Result<()> {
         unimplemented!()
     }
 

@@ -8,7 +8,7 @@ pub mod mlx;
 pub struct RunArgs {
     pub modelfile_path: Option<String>,
     pub relay_count: u32,
-    // Future flags go here
+    pub memory: bool, // Future flags go here
 }
 
 pub enum Runtime {
@@ -17,7 +17,7 @@ pub enum Runtime {
 }
 
 impl Runtime {
-    pub async fn run(&self, run_args: RunArgs) {
+    pub async fn run(&self, run_args: RunArgs) -> Result<()> {
         match self {
             Runtime::Mlx(runtime) => runtime.run(run_args).await,
             Runtime::Cpu(runtime) => runtime.run(run_args).await,

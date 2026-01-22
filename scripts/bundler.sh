@@ -3,6 +3,7 @@ set -euo pipefail
 
 BINARY_NAME="tiles"
 DIST_DIR="dist"
+MODELFILE_DIR="modelfiles"
 SERVER_DIR="server"
 TARGET="release"
 
@@ -35,6 +36,8 @@ cp -r "${SERVER_DIR}" "${DIST_DIR}/tmp/"
 rm -rf "${DIST_DIR}/tmp/server/__pycache__"
 rm -rf "${DIST_DIR}/tmp/server/.venv"
 rm -rf "${DIST_DIR}/tmp/server/stack"
+
+cp -r "${MODELFILE_DIR}" "${DIST_DIR}/tmp/"
 
 echo "📦 Creating ${OUT_NAME}.tar.gz..."
 tar --exclude-from=scripts/tar.exclude -czf "${DIST_DIR}/${OUT_NAME}.tar.gz" -C "${DIST_DIR}/tmp" .
