@@ -100,3 +100,10 @@ pub fn get_data_dir() -> Result<PathBuf> {
         Ok(data_dir.join("tiles"))
     }
 }
+
+pub fn is_memory_model(modelname: &str) -> bool {
+    if modelname.contains("mem") {
+        return true;
+    }
+    return false;
+}

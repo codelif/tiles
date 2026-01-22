@@ -1,7 +1,6 @@
 from fastapi import FastAPI, HTTPException
 
 from .schemas import ChatMessage,  ChatCompletionRequest, StartRequest, downloadRequest
-from .config import SYSTEM_PROMPT
 import logging
 import sys
 from typing import Optional
@@ -45,7 +44,7 @@ async def start_model(request: StartRequest):
     """Load the model and start the agent"""
     global _messages, _runner, _memory_path
 
-    _messages = [ChatMessage(role="system", content=SYSTEM_PROMPT)]
+    _messages = [ChatMessage(role="system", content=request.system_prompt)]
     _memory_path = request.memory_path
     logger.info(f"{runtime.backend}")
     runtime.backend.get_or_load_model(request.model)

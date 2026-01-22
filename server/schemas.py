@@ -59,7 +59,7 @@ class ModelInfo(BaseModel):
 class StartRequest(BaseModel):
     model: str
     memory_path: str
-
+    system_prompt: str 
 
 class downloadRequest(BaseModel):
     model: str

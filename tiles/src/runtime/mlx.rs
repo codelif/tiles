@@ -17,6 +17,7 @@ use rustyline::{Config, Editor, Helper};
 use serde_json::{Value, json};
 use std::fs;
 use std::fs::File;
+use std::path::PathBuf;
 use std::process::Stdio;
 use std::time::Duration;
 use std::{io, process::Command};
@@ -43,22 +44,25 @@ impl MLXRuntime {
     }
 
     pub async fn run(&self, run_args: super::RunArgs) -> Result<()> {
-        let default_modelfile_path = get_lib_dir()?.join("modelfiles/mem-agent");
+        let default_modelfile_path = get_default_modelfile()?;
+        let default_modelfile =
+            tilekit::modelfile::parse_from_file(default_modelfile_path.to_str().unwrap()).unwrap();
         let modelfile_parse_result = if let Some(modelfile_str) = &run_args.modelfile_path {
             tilekit::modelfile::parse_from_file(modelfile_str.as_str())
         } else {
-            tilekit::modelfile::parse_from_file(default_modelfile_path.to_str().unwrap())
+            Err("NOT PROVIDED".to_string())
         };
 
         let modelfile = match modelfile_parse_result {
             Ok(mf) => mf,
+            Err(err) if err == "NOT PROVIDED" => default_modelfile.clone(),
             Err(_err) => {
                 println!("Invalid Modelfile");
                 return Ok(());
             }
         };
 
-        let _res = run_model_with_server(self, modelfile, &run_args)
+        let _res = run_model_with_server(self, modelfile, default_modelfile, &run_args)
             .await
             .inspect_err(|e| eprintln!("Failed to run the model due to {e}"));
         Ok(())
@@ -257,6 +261,7 @@ fn show_help(model_name: &str) {
 async fn run_model_with_server(
     mlx_runtime: &MLXRuntime,
     modelfile: Modelfile,
+    default_modelfile: Modelfile,
     run_args: &RunArgs,
 ) -> Result<()> {
     if !cfg!(debug_assertions) {
@@ -268,7 +273,7 @@ async fn run_model_with_server(
     // loading the model from mem-agent via daemon server
     let memory_path = get_or_set_memory_path().context("Setting/Retrieving memory_path failed")?;
     let modelname = modelfile.from.as_ref().unwrap();
-    match load_model(modelname, &memory_path).await {
+    match load_model(&modelfile, &default_modelfile, &memory_path).await {
         Ok(_) => start_repl(mlx_runtime, modelname, run_args).await,
         Err(err) => return Err(anyhow::anyhow!(err)),
     }
@@ -426,11 +431,17 @@ pub async fn ping() -> Result<(), String> {
     }
 }
 
-async fn load_model(model_name: &str, memory_path: &str) -> Result<()> {
+async fn load_model(
+    modelfile: &Modelfile,
+    default_modelfile: &Modelfile,
+    memory_path: &str,
+) -> Result<()> {
     let client = Client::new();
+    let model_name = modelfile.from.clone().unwrap();
     let body = json!({
         "model": model_name,
-        "memory_path": memory_path
+        "memory_path": memory_path,
+        "system_prompt": modelfile.system.clone().unwrap_or(default_modelfile.system.clone().unwrap())
     });
 
     let res = client
@@ -442,7 +453,7 @@ async fn load_model(model_name: &str, memory_path: &str) -> Result<()> {
         StatusCode::OK => Ok(()),
         StatusCode::NOT_FOUND => {
             println!("Downloading {}\n", model_name);
-            match pull_model(model_name).await {
+            match pull_model(&model_name).await {
                 Ok(_) => {
                     println!("\nDownloading completed \n");
                     Ok(())
@@ -548,4 +559,9 @@ async fn wait_until_server_is_up() {
             }
         }
     }
+}
+
+fn get_default_modelfile() -> Result<PathBuf> {
+    let path = get_lib_dir()?.join("modelfiles/mem-agent");
+    Ok(path)
 }
