@@ -66,13 +66,11 @@ pub fn get_lib_dir() -> Result<PathBuf> {
         Ok(base_dir)
     } else {
         let home_dir = env::home_dir().context("Failed to fetch $HOME")?;
-        let data_dir = match env::var("XDG_DATA_HOME") {
-            Ok(val) => PathBuf::from(val),
-            Err(_err) => home_dir.join(".local/lib"),
-        };
+        let data_dir = home_dir.join(".local/lib");
         Ok(data_dir.join("tiles"))
     }
 }
+
 pub fn get_config_dir() -> Result<PathBuf> {
     if cfg!(debug_assertions) {
         let base_dir = env::current_dir().context("Failed to fetch CURRENT_DIR")?;
@@ -105,5 +103,5 @@ pub fn is_memory_model(modelname: &str) -> bool {
     if modelname.contains("mem") {
         return true;
     }
-    return false;
+    false
 }

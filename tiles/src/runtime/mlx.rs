@@ -44,7 +44,7 @@ impl MLXRuntime {
     }
 
     pub async fn run(&self, run_args: super::RunArgs) -> Result<()> {
-        let default_modelfile_path = get_default_modelfile()?;
+        let default_modelfile_path = get_default_modelfile(run_args.memory)?;
         let default_modelfile =
             tilekit::modelfile::parse_from_file(default_modelfile_path.to_str().unwrap()).unwrap();
         let modelfile_parse_result = if let Some(modelfile_str) = &run_args.modelfile_path {
@@ -62,10 +62,9 @@ impl MLXRuntime {
             }
         };
 
-        let _res = run_model_with_server(self, modelfile, default_modelfile, &run_args)
+        run_model_with_server(self, modelfile, default_modelfile, &run_args)
             .await
-            .inspect_err(|e| eprintln!("Failed to run the model due to {e}"));
-        Ok(())
+            .inspect_err(|e| eprintln!("Failed to run the model due to {e}"))
     }
 
     #[allow(clippy::zombie_processes)]
@@ -561,7 +560,15 @@ async fn wait_until_server_is_up() {
     }
 }
 
-fn get_default_modelfile() -> Result<PathBuf> {
-    let path = get_lib_dir()?.join("modelfiles/mem-agent");
-    Ok(path)
+fn get_default_modelfile(memory_mode: bool) -> Result<PathBuf> {
+    // get default by the args -m
+    // let path =
+    if memory_mode {
+        let path = get_lib_dir()?.join("modelfiles/mem-agent");
+        Ok(path)
+    } else {
+        // let path = get_lib_dir()?.join("modelfiles/gpt-oss");
+        let path = get_lib_dir()?.join("modelfiles/mem-agent");
+        Ok(path)
+    }
 }
