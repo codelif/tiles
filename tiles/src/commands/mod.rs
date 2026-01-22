@@ -8,7 +8,7 @@ use tiles::{core::health, runtime::RunArgs};
 pub use tilekit::optimize::optimize;
 
 pub async fn run(runtime: &Runtime, run_args: RunArgs) {
-    runtime.run(run_args).await;
+    let _ = runtime.run(run_args).await;
 }
 
 pub fn set_memory(path: &str) {

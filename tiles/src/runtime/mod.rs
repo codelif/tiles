@@ -17,7 +17,7 @@ pub enum Runtime {
 }
 
 impl Runtime {
-    pub async fn run(&self, run_args: RunArgs) {
+    pub async fn run(&self, run_args: RunArgs) -> Result<()> {
         match self {
             Runtime::Mlx(runtime) => runtime.run(run_args).await,
             Runtime::Cpu(runtime) => runtime.run(run_args).await,

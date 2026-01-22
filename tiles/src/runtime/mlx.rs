@@ -42,26 +42,26 @@ impl MLXRuntime {
         MLXRuntime {}
     }
 
-    pub async fn run(&self, run_args: super::RunArgs) {
-        const DEFAULT_MODELFILE: &str = "FROM driaforall/mem-agent-mlx-4bit";
-        //Parse modelfile
+    pub async fn run(&self, run_args: super::RunArgs) -> Result<()> {
+        let default_modelfile_path = get_lib_dir()?.join("modelfiles/mem-agent");
         let modelfile_parse_result = if let Some(modelfile_str) = &run_args.modelfile_path {
             tilekit::modelfile::parse_from_file(modelfile_str.as_str())
         } else {
-            tilekit::modelfile::parse(DEFAULT_MODELFILE)
+            tilekit::modelfile::parse_from_file(default_modelfile_path.to_str().unwrap())
         };
 
         let modelfile = match modelfile_parse_result {
             Ok(mf) => mf,
             Err(_err) => {
                 println!("Invalid Modelfile");
-                return;
+                return Ok(());
             }
         };
 
         let _res = run_model_with_server(self, modelfile, &run_args)
             .await
             .inspect_err(|e| eprintln!("Failed to run the model due to {e}"));
+        Ok(())
     }
 
     #[allow(clippy::zombie_processes)]

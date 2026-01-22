@@ -7,6 +7,7 @@ REPO="tilesprivacy/tiles"
 VERSION="0.4.0-rc.1"       
 INSTALL_DIR="$HOME/.local/bin"           # CLI install location
 SERVER_DIR="$HOME/.local/lib/tiles/server"         # Python server folder
+MODELFILE_DIR="$HOME/.local/lib/tiles/modelfiles"  # Python server folder
 TMPDIR="$(mktemp -d)"
 OS=$(uname -s | tr '[:upper:]' '[:lower:]')
 ARCH=$(uname -m)
@@ -33,6 +34,13 @@ tar -xzf "${TMPDIR}/tiles.tar.gz" -C "${TMPDIR}"
 log "📦 Installing tiles binary to ${INSTALL_DIR}..."
 mkdir -p "${INSTALL_DIR}"
 install -m 755 "${TMPDIR}/tiles" "${INSTALL_DIR}/tiles"
+
+log "Unpacking libs ..."
+rm -rf "${MODELFILE_DIR}"
+
+mkdir -p "${MODELFILE_DIR}"
+
+cp -r "${TMPDIR}/modelfiles"/* "${MODELFILE_DIR}/"
 
 log "📦 Installing Python server to ${SERVER_DIR}..."
 rm -rf "${SERVER_DIR}"
