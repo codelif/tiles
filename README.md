@@ -13,10 +13,11 @@
 
 <p align="center">
   Your private AI assistant with offline memory<br />
-  <a href="https://tiles.run/download">Download</a> ·
+  <a href="#getting-started">Getting Started</a> ·
   <a href="https://tiles.run/book">Documentation</a> ·
   <a href="#about">About</a> ·
-  <a href="CONTRIBUTING.md">Contributing</a>
+  <a href="#contributing">Contributing</a> ·
+  <a href="#license">License</a>
 </p>
 
 ---
@@ -48,11 +49,6 @@ It provides:
 - Model composition and chaining, with MIR support currently in development
 
 Tilekit is the foundation for building custom local models and agent experiences within Tiles.
-
-## Download
-
-Get the latest release from the Tiles website:  
-https://tiles.run/download
 
 ## Documentation
 

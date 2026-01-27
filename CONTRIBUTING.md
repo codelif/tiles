@@ -33,6 +33,17 @@ When submitting a pull request:
 
 New inference backends, memory models, and improvements aligned with the roadmap are especially welcome.
 
+### Using AI Agents
+
+This project has specific guidelines for using AI tools when contributing. **AI-generated pull requests are not accepted**—AI tools may only be used in an assistive capacity.
+
+For detailed information about:
+- What AI assistance is permitted
+- How to properly disclose AI usage
+- Guidelines for AI agents and contributors
+
+Please see [AGENTS.md](AGENTS.md) before using AI tools in your contributions.
+
 ### Communication and Support
 
 If you have questions or want to discuss ideas, you can reach the team and community via:
