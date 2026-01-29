@@ -391,8 +391,15 @@ async fn start_repl(mlx_runtime: &MLXRuntime, modelname: &str, run_args: &RunArg
         loop {
             if remaining_count > 0 {
                 let chat_start = remaining_count == run_args.relay_count;
-                if let Ok(response) =
-                    chat(&input, modelname, chat_start, &python_code, &g_reply).await
+                if let Ok(response) = chat(
+                    &input,
+                    modelname,
+                    chat_start,
+                    &python_code,
+                    &g_reply,
+                    run_args,
+                )
+                .await
                 {
                     if response.reply.is_empty() {
                         if !response.code.is_empty() {
@@ -401,7 +408,11 @@ async fn start_repl(mlx_runtime: &MLXRuntime, modelname: &str, run_args: &RunArg
                         remaining_count -= 1;
                     } else {
                         g_reply = response.reply.clone();
-                        println!("\n{}", response.reply.trim());
+                        if run_args.memory {
+                            println!("\n{}", response.reply.trim());
+                        } else {
+                            println!("\n");
+                        }
                         break;
                     }
                 } else {
@@ -473,6 +484,7 @@ async fn chat(
     chat_start: bool,
     python_code: &str,
     g_reply: &str,
+    run_args: &RunArgs,
 ) -> Result<ChatResponse, String> {
     let client = Client::new();
 
@@ -493,6 +505,7 @@ async fn chat(
     let mut stream = res.bytes_stream();
     let mut accumulated = String::new();
     println!();
+    let mut is_answer_start = false;
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.unwrap();
         let s = String::from_utf8_lossy(&chunk);
@@ -504,13 +517,20 @@ async fn chat(
             let data = line.trim_start_matches("data: ");
 
             if data == "[DONE]" {
-                return Ok(convert_to_chat_response(&accumulated));
+                return Ok(convert_to_chat_response(&accumulated, run_args.memory));
             }
             // Parse JSON
             let v: Value = serde_json::from_str(data).unwrap();
             if let Some(delta) = v["choices"][0]["delta"]["content"].as_str() {
                 accumulated.push_str(delta);
-                print!("{}", delta.dimmed());
+                if !run_args.memory && delta.contains("**[Answer]**") {
+                    is_answer_start = true;
+                }
+                if !is_answer_start {
+                    print!("{}", delta.dimmed());
+                } else {
+                    print!("{}", delta);
+                }
                 use std::io::Write;
                 std::io::stdout().flush().ok();
             }
@@ -519,15 +539,18 @@ async fn chat(
     Err(String::from("request failed"))
 }
 
-fn convert_to_chat_response(content: &str) -> ChatResponse {
+fn convert_to_chat_response(content: &str, memory_mode: bool) -> ChatResponse {
     ChatResponse {
-        reply: extract_reply(content),
+        reply: extract_reply(content, memory_mode),
         code: extract_python(content),
     }
 }
 
-fn extract_reply(content: &str) -> String {
-    if content.contains("<reply>") && content.contains("</reply>") {
+fn extract_reply(content: &str, memory_mode: bool) -> String {
+    if !memory_mode && content.contains("**[Answer]**") {
+        let list_a = content.split("**[Answer]**").collect::<Vec<&str>>();
+        list_a[1].to_owned()
+    } else if content.contains("<reply>") && content.contains("</reply>") {
         let list_a = content.split("<reply>").collect::<Vec<&str>>();
         let list_b = list_a[1].split("</reply>").collect::<Vec<&str>>();
         list_b[0].to_owned()
@@ -561,14 +584,11 @@ async fn wait_until_server_is_up() {
 }
 
 fn get_default_modelfile(memory_mode: bool) -> Result<PathBuf> {
-    // get default by the args -m
-    // let path =
     if memory_mode {
         let path = get_lib_dir()?.join("modelfiles/mem-agent");
         Ok(path)
     } else {
-        // let path = get_lib_dir()?.join("modelfiles/gpt-oss");
-        let path = get_lib_dir()?.join("modelfiles/mem-agent");
+        let path = get_lib_dir()?.join("modelfiles/gpt-oss");
         Ok(path)
     }
 }

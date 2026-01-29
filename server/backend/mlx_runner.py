@@ -254,7 +254,6 @@ class MLXRunner:
         if hasattr(self.tokenizer, "name_or_path"):
             name_or_path = str(getattr(self.tokenizer, "name_or_path", "")).lower()
             model_type = ReasoningExtractor.detect_model_type(name_or_path)
-
             if model_type:
                 # This is a reasoning model
                 self._is_reasoning_model = True
