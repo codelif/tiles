@@ -274,8 +274,6 @@ fn show_help(model_name: &str) {
 
     println!("Usage Tips:");
     println!("  - Type your questions or prompts directly");
-    println!("  - Model outputs <think>, <python>, and <reply> tags");
-    println!("  - Only <reply> content is shown as final output");
     println!();
 }
 

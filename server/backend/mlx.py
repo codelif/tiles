@@ -1,7 +1,14 @@
 from .mlx_runner import MLXRunner
 from ..cache_utils import get_model_path
 from fastapi import HTTPException
-from ..schemas import ChatMessage,  ChatCompletionRequest, downloadRequest, GenerationMetrics
+from ..schemas import (
+    ChatMessage,
+    ChatCompletionRequest,
+    ResponsesResponse,
+    downloadRequest,
+    GenerationMetrics,
+    ResponsesRequest,
+)
 from ..hf_downloader import pull_model
 
 import logging
@@ -77,6 +84,7 @@ def get_or_load_model(model_spec: str, verbose: bool = False) -> MLXRunner:
         logger.info(f"Model {model_name} already in memory")
 
     return _model_cache[model_path_str]
+
 
 async def generate_chat_stream(
     messages: List[ChatMessage], request: ChatCompletionRequest
@@ -181,6 +189,7 @@ async def generate_chat_stream(
     yield f"data: {json.dumps(final_response)}\n\n"
     yield "data: [DONE]\n\n"
 
+
 def format_chat_messages_for_runner(
     messages: List[ChatMessage],
 ) -> List[Dict[str, str]]:
@@ -195,3 +204,45 @@ def count_tokens(text: str) -> int:
     """Rough token count estimation."""
     return int(len(text.split()) * 1.3)  # Approximation, convert to int
 
+
+async def generate_response_chat(request: ResponsesRequest):
+    """Generate chat responses"""
+
+    model = request.model or "mlx-community/gpt-oss-20b-MXFP4-Q4"
+    input = request.input or ""
+    response_id = f"resp-{uuid.uuid4()}"
+    msg_id = f"msg_{uuid.uuid4()}"
+    created = int(time.time())
+    runner = get_or_load_model(model)
+    generated_text = runner.generate_batch(
+        prompt=input,
+        max_tokens=runner.get_effective_max_tokens(request.max_output_tokens),
+        temperature=request.temperature or 1,
+        top_p=request.top_p or 1,
+        use_chat_template=True,  # Already applied in _format_conversation
+    )
+    completed_at = int(time.time())
+    return ResponsesResponse(
+        id=response_id,
+        created_at=created,
+        completed_at=completed_at,
+        model=model,
+        status="completed",
+        object="response",
+        output=[
+            {
+                "type": "message",
+                "id": msg_id,
+                "status": "completed",
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "output_text",
+                        "text": generated_text,
+                        "annotations": [],
+                    }
+                ],
+            }
+        ],
+        usage={"input_tokens": 36},
+    )
