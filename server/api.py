@@ -1,6 +1,12 @@
 from fastapi import FastAPI, HTTPException
 
-from .schemas import ChatMessage,  ChatCompletionRequest, StartRequest, downloadRequest
+from .schemas import (
+    ChatMessage,
+    ChatCompletionRequest,
+    StartRequest,
+    downloadRequest,
+    ResponsesRequest,
+)
 import logging
 import sys
 from typing import Optional
@@ -10,11 +16,11 @@ from pydantic import BaseModel, Field
 
 from .hf_downloader import pull_model
 
-from server.mem_agent.utils import (
+from .mem_agent.utils import (
     create_memory_if_not_exists,
     format_results,
 )
-from server.mem_agent.engine import execute_sandboxed_code
+from .mem_agent.engine import execute_sandboxed_code
 
 from . import runtime
 
@@ -38,6 +44,7 @@ async def ping():
 async def download(request: downloadRequest):
     """Download the model"""
     runtime.backend.download_model(request.model)
+
 
 @app.post("/start")
 async def start_model(request: StartRequest):
@@ -77,3 +84,14 @@ async def create_chat_completion(request: ChatCompletionRequest):
             )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/v1/responses")
+async def create_chat_response(request: ResponsesRequest):
+    """
+    Create a response with openResponse format
+    """
+
+    global _messages
+
+    return await runtime.backend.generate_response_chat(request)

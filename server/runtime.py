@@ -1,1 +1,3 @@
-backend = None
+from typing import Any
+
+backend: Any = None

@@ -440,16 +440,16 @@ sha256 = "b36f1fef9334a5588b4166f8bcd26a14e521f2b55e6b9de3aaa80d3ff7a37529"
 
 [[packages]]
 name = "pathspec"
-version = "1.0.3"
+version = "1.0.4"
 index = "https://pypi.org/simple"
 
 [[packages.wheels]]
-url = "https://files.pythonhosted.org/packages/32/2b/121e912bd60eebd623f873fd090de0e84f322972ab25a7f9044c056804ed/pathspec-1.0.3-py3-none-any.whl"
-upload-time = 2026-01-09T15:46:44Z
-size = 55021
+url = "https://files.pythonhosted.org/packages/ef/3c/2c197d226f9ea224a9ab8d197933f9da0ae0aac5b6e0f884e2b8d9c8e9f7/pathspec-1.0.4-py3-none-any.whl"
+upload-time = 2026-01-27T03:59:45Z
+size = 55206
 
 [packages.wheels.hashes]
-sha256 = "e80767021c1cc524aa3fb14bedda9c34406591343cc42797b386ce7b9354fb6c"
+sha256 = "fb6ae2fd4e7c921a165808a552060e722767cfa526f99ca5156ed2ce45a5c723"
 
 [[packages]]
 name = "platformdirs"
@@ -466,32 +466,32 @@ sha256 = "d03afa3963c806a9bed9d5125c8f4cb2fdaf74a55ab60e5d59b3fde758104d31"
 
 [[packages]]
 name = "protobuf"
-version = "6.33.4"
+version = "6.33.5"
 index = "https://pypi.org/simple"
 
 [[packages.wheels]]
-url = "https://files.pythonhosted.org/packages/66/15/6ee23553b6bfd82670207ead921f4d8ef14c107e5e11443b04caeb5ab5ec/protobuf-6.33.4-cp39-abi3-macosx_10_9_universal2.whl"
-upload-time = 2026-01-12T18:33:32Z
-size = 427612
+url = "https://files.pythonhosted.org/packages/a2/6b/e48dfc1191bc5b52950246275bf4089773e91cb5ba3592621723cdddca62/protobuf-6.33.5-cp39-abi3-macosx_10_9_universal2.whl"
+upload-time = 2026-01-29T21:51:25Z
+size = 427766
 
 [packages.wheels.hashes]
-sha256 = "2fe67f6c014c84f655ee06f6f66213f9254b3a8b6bda6cda0ccd4232c73c06f0"
+sha256 = "a5cb85982d95d906df1e2210e58f8e4f1e3cdc088e52c921a041f9c9a0386de5"
 
 [[packages.wheels]]
-url = "https://files.pythonhosted.org/packages/e8/8e/971c0edd084914f7ee7c23aa70ba89e8903918adca179319ee94403701d5/protobuf-6.33.4-cp39-abi3-manylinux2014_x86_64.whl"
-upload-time = 2026-01-12T18:33:36Z
-size = 323311
+url = "https://files.pythonhosted.org/packages/9b/53/a9443aa3ca9ba8724fdfa02dd1887c1bcd8e89556b715cfbacca6b63dbec/protobuf-6.33.5-cp39-abi3-manylinux2014_x86_64.whl"
+upload-time = 2026-01-29T21:51:28Z
+size = 323465
 
 [packages.wheels.hashes]
-sha256 = "3df850c2f8db9934de4cf8f9152f8dc2558f49f298f37f90c517e8e5c84c30e9"
+sha256 = "cbf16ba3350fb7b889fca858fb215967792dc125b35c7976ca4818bee3521cf0"
 
 [[packages.wheels]]
-url = "https://files.pythonhosted.org/packages/75/b1/1dc83c2c661b4c62d56cc081706ee33a4fc2835bd90f965baa2663ef7676/protobuf-6.33.4-py3-none-any.whl"
-upload-time = 2026-01-12T18:33:39Z
-size = 170532
+url = "https://files.pythonhosted.org/packages/57/bf/2086963c69bdac3d7cff1cc7ff79b8ce5ea0bec6797a017e1be338a46248/protobuf-6.33.5-py3-none-any.whl"
+upload-time = 2026-01-29T21:51:32Z
+size = 170687
 
 [packages.wheels.hashes]
-sha256 = "1fe3730068fcf2e595816a6c34fe66eeedd37d51d0400b72fabc848811fdc1bc"
+sha256 = "69915a973dd0f60f31a08b8318b73eab2bd6a392c79184b3612226b0a3f8ec02"
 
 [[packages]]
 name = "pydantic"
@@ -537,40 +537,40 @@ sha256 = "915c3d10f81bec3a74fbd4faebe8391013ba61e5a1a8d48c4455b923bdda7858"
 
 [[packages]]
 name = "pytokens"
-version = "0.4.0"
+version = "0.4.1"
 index = "https://pypi.org/simple"
 
 [[packages.wheels]]
-url = "https://files.pythonhosted.org/packages/98/63/627b7e71d557383da5a97f473ad50f8d9c2c1f55c7d3c2531a120c796f6e/pytokens-0.4.0-cp313-cp313-macosx_11_0_arm64.whl"
-upload-time = 2026-01-19T07:59:16Z
-size = 159744
+url = "https://files.pythonhosted.org/packages/cb/dc/08b1a080372afda3cceb4f3c0a7ba2bde9d6a5241f1edb02a22a019ee147/pytokens-0.4.1-cp313-cp313-macosx_11_0_arm64.whl"
+upload-time = 2026-01-30T01:03:13Z
+size = 160720
 
 [packages.wheels.hashes]
-sha256 = "73eff3bdd8ad08da679867992782568db0529b887bed4c85694f84cdf35eafc6"
+sha256 = "8bdb9d0ce90cbf99c525e75a2fa415144fd570a1ba987380190e8b786bc6ef9b"
 
 [[packages.wheels]]
-url = "https://files.pythonhosted.org/packages/ab/96/04102856b9527701ae57d74a6393d1aca5bad18a1b1ca48ccffb3c93b392/pytokens-0.4.0-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl"
-upload-time = 2026-01-19T07:59:19Z
-size = 267452
+url = "https://files.pythonhosted.org/packages/e0/d2/afe5c7f8607018beb99971489dbb846508f1b8f351fcefc225fcf4b2adc0/pytokens-0.4.1-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl"
+upload-time = 2026-01-30T01:03:15Z
+size = 268423
 
 [packages.wheels.hashes]
-sha256 = "a2c8952c537cb73a1a74369501a83b7f9d208c3cf92c41dd88a17814e68d48ce"
+sha256 = "29d1d8fb1030af4d231789959f21821ab6325e463f0503a61d204343c9b355d1"
 
 [[packages.wheels]]
-url = "https://files.pythonhosted.org/packages/0e/ef/0936eb472b89ab2d2c2c24bb81c50417e803fa89c731930d9fb01176fe9f/pytokens-0.4.0-cp313-cp313-musllinux_1_2_x86_64.whl"
-upload-time = 2026-01-19T07:59:20Z
-size = 265965
+url = "https://files.pythonhosted.org/packages/68/d4/00ffdbd370410c04e9591da9220a68dc1693ef7499173eb3e30d06e05ed1/pytokens-0.4.1-cp313-cp313-musllinux_1_2_x86_64.whl"
+upload-time = 2026-01-30T01:03:17Z
+size = 266859
 
 [packages.wheels.hashes]
-sha256 = "5dbf56f3c748aed9310b310d5b8b14e2c96d3ad682ad5a943f381bdbbdddf753"
+sha256 = "970b08dd6b86058b6dc07efe9e98414f5102974716232d10f32ff39701e841c4"
 
 [[packages.wheels]]
-url = "https://files.pythonhosted.org/packages/7c/3c/6941a82f4f130af6e1c68c076b6789069ef10c04559bd4733650f902fd3b/pytokens-0.4.0-py3-none-any.whl"
-upload-time = 2026-01-19T07:59:49Z
-size = 13224
+url = "https://files.pythonhosted.org/packages/c6/78/397db326746f0a342855b81216ae1f0a32965deccfd7c830a2dbc66d2483/pytokens-0.4.1-py3-none-any.whl"
+upload-time = 2026-01-30T01:03:45Z
+size = 13729
 
 [packages.wheels.hashes]
-sha256 = "0508d11b4de157ee12063901603be87fb0253e8f4cb9305eb168b1202ab92068"
+sha256 = "26cef14744a8385f35d0e095dc8b3a7583f6c953c2e3d269c7f82484bf5ad2de"
 
 [[packages]]
 name = "pyyaml"
