@@ -24,6 +24,8 @@ from typing import Any, Dict, Iterator, List, Optional, Union
 _model_cache: Dict[str, MLXRunner] = {}
 _default_max_tokens: Optional[int] = None  # Use dynamic model-aware limits by default
 _current_model_path: Optional[str] = None
+# Store generated responses for follow-up support (previous_response_id)
+_responses: Dict[str, ResponsesResponse] = {}
 
 
 def download_model(model_name: str):
@@ -200,36 +202,180 @@ def format_chat_messages_for_runner(
     return [{"role": msg.role, "content": msg.content} for msg in messages]
 
 
+def _prepend_previous_response(user_input: str, prev_id: Optional[str]) -> str:
+    """If prev_id points to a stored response, prepend its output text as context."""
+    if not prev_id:
+        return user_input
+    prev = _responses.get(prev_id)
+    if not prev or not getattr(prev, "output", None):
+        return user_input
+    prev_text_parts: List[str] = []
+    for out in prev.output:
+        for c in out.get("content", []):
+            if c.get("type") == "output_text":
+                prev_text_parts.append(c.get("text", ""))
+    if prev_text_parts:
+        return "\n".join(prev_text_parts) + "\n\n" + user_input
+    return user_input
+
+
+def _calc_usage(runner: MLXRunner, input_text: str, generated_text: str) -> Dict[str, int]:
+    """Calculate token usage using the runner tokenizer; fall back to zeros on error."""
+    try:
+        input_tokens = len(runner.tokenizer.encode(input_text))
+        output_tokens = len(runner.tokenizer.encode(generated_text))
+        return {"input_tokens": input_tokens, "output_tokens": output_tokens}
+    except Exception:
+        return {"input_tokens": 0, "output_tokens": 0}
+
+
+def _store_response(
+    response_id: str,
+    created: int,
+    completed_at: Optional[int],
+    model: str,
+    status: str,
+    output: List[Dict[str, Any]],
+    usage: Dict[str, int],
+    metrics: Optional[Dict[str, Any]] = None,
+    error: Optional[Dict[str, Any]] = None,
+) -> ResponsesResponse:
+    """Create a ResponsesResponse, attach metrics to metadata and store it in `_responses`."""
+    resp = ResponsesResponse(
+        id=response_id,
+        created_at=created,
+        completed_at=completed_at,
+        model=model,
+        status=status,
+        object="response",
+        error=error,
+        output=output,
+        usage=usage,
+    )
+    if metrics:
+        try:
+            resp.metadata["metrics"] = metrics
+        except Exception:
+            pass
+    try:
+        _responses[response_id] = resp
+    except Exception:
+        pass
+    return resp
+
+
 def count_tokens(text: str) -> int:
     """Rough token count estimation."""
     return int(len(text.split()) * 1.3)  # Approximation, convert to int
 
 
-async def generate_response_chat(request: ResponsesRequest):
-    """Generate chat responses"""
+async def generate_response_chat_stream(
+    request: ResponsesRequest
+) -> AsyncGenerator[str, None]:
+    """Generate streaming chat responses for Responses API."""
 
     model = request.model or "mlx-community/gpt-oss-20b-MXFP4-Q4"
-    input = request.input or ""
+    user_input = request.input or ""
     response_id = f"resp-{uuid.uuid4()}"
     msg_id = f"msg_{uuid.uuid4()}"
     created = int(time.time())
     runner = get_or_load_model(model)
-    generated_text = runner.generate_batch(
-        prompt=input,
-        max_tokens=runner.get_effective_max_tokens(request.max_output_tokens),
-        temperature=request.temperature or 1,
-        top_p=request.top_p or 1,
-        use_chat_template=True,  # Already applied in _format_conversation
-    )
+    metrics = None
+    # If a previous_response_id is provided, prepend its text to the prompt
+    prev_id = getattr(request, "previous_response_id", None)
+    user_input = _prepend_previous_response(user_input, prev_id)
+
+    # Calculate input tokens once
+    input_tokens = len(runner.tokenizer.encode(user_input))
+
+    # Initial chunk
+    initial_chunk = {
+        "id": response_id,
+        "object": "response.chunk",
+        "created_at": created,
+        "model": model,
+        "status": "in_progress",
+        "output": [
+            {
+                "type": "message",
+                "id": msg_id,
+                "status": "in_progress",
+                "role": "assistant",
+                "content": [],
+            }
+        ],
+        "usage": {"input_tokens": input_tokens, "output_tokens": 0},
+    }
+    yield f"data: {json.dumps(initial_chunk)}\n\n"
+    
+    # Stream tokens
+    accumulated_text = ""
+    output_tokens = 0
+    try:
+        for token in runner.generate_streaming(
+            prompt=user_input,
+            max_tokens=runner.get_effective_max_tokens(request.max_output_tokens),
+            temperature=request.temperature or 1,
+            top_p=request.top_p or 1,
+            use_chat_template=True,
+        ):
+            if isinstance(token, GenerationMetrics):
+                metrics = token
+                continue
+            
+            accumulated_text += token
+            output_tokens += 1  # Each yield is one token
+            
+            chunk = {
+                "id": response_id,
+                "object": "response.chunk",
+                "created_at": created,
+                "model": model,
+                "status": "in_progress",
+                "output": [
+                    {
+                        "type": "message",
+                        "id": msg_id,
+                        "status": "in_progress",
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "output_text",
+                                "text": token,
+                                "annotations": [],
+                            }
+                        ],
+                    }
+                ],
+                "usage": {"input_tokens": input_tokens, "output_tokens": output_tokens},
+            }
+            yield f"data: {json.dumps(chunk)}\n\n"
+            
+    except Exception as e:
+        error_chunk = {
+            "id": response_id,
+            "object": "response.chunk",
+            "created_at": created,
+            "model": model,
+            "status": "failed",
+            "error": {"message": str(e), "type": "internal_error"},
+            "output": [],
+            "usage": {"input_tokens": input_tokens, "output_tokens": output_tokens},
+        }
+        yield f"data: {json.dumps(error_chunk)}\n\n"
+        return
+    
+    # Final chunk
     completed_at = int(time.time())
-    return ResponsesResponse(
-        id=response_id,
-        created_at=created,
-        completed_at=completed_at,
-        model=model,
-        status="completed",
-        object="response",
-        output=[
+    # Build final chunk with accumulated text and store response for follow-ups
+    final_chunk = {
+        "id": response_id,
+        "object": "response.chunk",
+        "created_at": created,
+        "completed_at": completed_at,
+        "model": model,
+        "status": "completed",
+        "output": [
             {
                 "type": "message",
                 "id": msg_id,
@@ -238,11 +384,110 @@ async def generate_response_chat(request: ResponsesRequest):
                 "content": [
                     {
                         "type": "output_text",
-                        "text": generated_text,
+                        "text": "",
                         "annotations": [],
                     }
                 ],
             }
         ],
-        usage={"input_tokens": 36},
+        "usage": {"input_tokens": input_tokens, "output_tokens": output_tokens},
+    }
+    # Store and return a typed ResponsesResponse for follow-ups
+    metrics_obj = None
+    if metrics:
+        metrics_obj = {
+            "ttft_ms": metrics.ttft_ms,
+            "total_tokens": metrics.total_tokens,
+            "tokens_per_second": metrics.tokens_per_second,
+            "total_latency_s": metrics.total_latency_s,
+        }
+        final_chunk["metrics"] = metrics_obj
+
+    _store_response(
+        response_id=response_id,
+        created=created,
+        completed_at=completed_at,
+        model=model,
+        status="completed",
+        output=final_chunk["output"],
+        usage={"input_tokens": input_tokens, "output_tokens": output_tokens},
+        metrics=metrics_obj,
     )
+    yield f"data: {json.dumps(final_chunk)}\n\n"
+    yield "data: [DONE]\n\n"
+
+
+async def generate_response_chat(request: ResponsesRequest):
+    """Generate chat responses"""
+
+    model = request.model or "mlx-community/gpt-oss-20b-MXFP4-Q4"
+    user_input = request.input or ""
+    response_id = f"resp-{uuid.uuid4()}"
+    msg_id = f"msg_{uuid.uuid4()}"
+    created = int(time.time())
+    runner = get_or_load_model(model)
+
+    # If a previous_response_id is provided, prepend its text to the prompt
+    prev_id = getattr(request, "previous_response_id", None)
+    user_input = _prepend_previous_response(user_input, prev_id)
+
+    metrics_obj = None
+    try:
+        start_time = time.time()
+        generated_text = runner.generate_batch(
+            prompt=user_input,
+            max_tokens=runner.get_effective_max_tokens(request.max_output_tokens),
+            temperature=request.temperature or 1,
+            top_p=request.top_p or 1,
+            use_chat_template=True,
+        )
+
+        # Metrics for batch generation (approximate)
+        generation_time = time.time() - start_time
+
+        completed_at = int(time.time())
+        status = "completed"
+        error = None
+
+        # Calculate token usage
+        usage = _calc_usage(runner, user_input, generated_text)
+        output_tokens = usage.get("output_tokens", 0)
+        metrics_obj = {
+            "ttft_ms": generation_time * 1000.0,
+            "total_tokens": output_tokens,
+            "tokens_per_second": (output_tokens / generation_time) if generation_time > 0 else 0.0,
+            "total_latency_s": generation_time,
+        }
+
+    except Exception as e:
+        completed_at = None
+        status = "failed"
+        error = {"message": str(e), "type": "internal_error"}
+        generated_text = ""
+        usage = {"input_tokens": 0, "output_tokens": 0}
+
+    output_block = [
+        {
+            "type": "message",
+            "id": msg_id,
+            "status": "completed" if status == "completed" else "failed",
+            "role": "assistant",
+            "content": [
+                {"type": "output_text", "text": generated_text, "annotations": []}
+            ],
+        }
+    ] if status == "completed" else []
+
+    resp = _store_response(
+        response_id=response_id,
+        created=created,
+        completed_at=completed_at,
+        model=model,
+        status=status,
+        output=output_block,
+        usage=usage,
+        metrics=(metrics_obj if status == "completed" else None),
+        error=error,
+    )
+
+    return resp
