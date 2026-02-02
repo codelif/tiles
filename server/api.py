@@ -94,4 +94,12 @@ async def create_chat_response(request: ResponsesRequest):
 
     global _messages
 
-    return await runtime.backend.generate_response_chat(request)
+    if request.stream:
+        # Streaming response
+        return StreamingResponse(
+            runtime.backend.generate_response_chat_stream(request),
+            media_type="text/plain",
+            headers={"Cache-Control": "no-cache"},
+        )
+    else:
+        return await runtime.backend.generate_response_chat(request)

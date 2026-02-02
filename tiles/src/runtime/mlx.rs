@@ -448,12 +448,12 @@ async fn start_repl(mlx_runtime: &MLXRuntime, modelname: &str, run_args: &RunArg
                             println!(
                                 "{}",
                                 format!(
-                                    "\n{} {:.1} tok/s | {} tokens | {:.0}ms TTFT",
+                                    "\n{} {:.1} tok/s | {} tokens | {:.0}s TTFT",
                                     "💡".yellow(),
                                     bench_metrics.total_tokens as f64
                                         / bench_metrics.total_latency_s,
                                     bench_metrics.total_tokens,
-                                    bench_metrics.ttft_ms
+                                    bench_metrics.ttft_ms / 1000.0
                                 )
                                 .dimmed()
                             );
@@ -536,13 +536,14 @@ async fn chat(
 
     let body = json!({
         "model": model_name,
+        "input": input,
         "chat_start": chat_start,
         "stream": true,
         "python_code": python_code,
         "messages": [{"role": "assistant", "content": g_reply}, {"role": "user", "content": input}]
     });
     let res = client
-        .post("http://127.0.0.1:6969/v1/chat/completions")
+        .post("http://127.0.0.1:6969/v1/responses")
         .json(&body)
         .send()
         .await
@@ -573,11 +574,12 @@ async fn chat(
 
             // Parse JSON
             let v: Value = serde_json::from_str(data).unwrap();
+            // println!("{:?}", v);
             // Check for metrics in the response
             if let Some(metrics_obj) = v.get("metrics") {
                 metrics = serde_json::from_value(metrics_obj.clone()).ok();
             }
-            if let Some(delta) = v["choices"][0]["delta"]["content"].as_str() {
+            if let Some(delta) = v["output"][0]["content"][0]["text"].as_str() {
                 accumulated.push_str(delta);
                 if !run_args.memory && delta.contains("**[Answer]**") {
                     is_answer_start = true;
