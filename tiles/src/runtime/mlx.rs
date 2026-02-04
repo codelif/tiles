@@ -221,8 +221,6 @@ fn show_help(model_name: &str) {
 
     println!("Report issues: https://github.com/tilesprivacy/tiles/issues");
     println!();
-
-    println!();
 }
 
 async fn run_model_with_server(
@@ -522,7 +520,6 @@ async fn chat(
 
             // Parse JSON
             let v: Value = serde_json::from_str(data).unwrap();
-
             // Check for metrics in the response
             if let Some(metrics_obj) = v.get("metrics") {
                 metrics = serde_json::from_value(metrics_obj.clone()).ok();
