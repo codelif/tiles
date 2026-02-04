@@ -542,12 +542,14 @@ async fn chat(
         "python_code": python_code,
         "messages": [{"role": "assistant", "content": g_reply}, {"role": "user", "content": input}]
     });
-    let res = client
-        .post("http://127.0.0.1:6969/v1/responses")
-        .json(&body)
-        .send()
-        .await
-        .unwrap();
+    #[allow(unused_assignments)]
+    let mut api_url = "";
+    if run_args.memory {
+        api_url = "http://127.0.0.1:6969/v1/chat/completions"
+    } else {
+        api_url = "http://127.0.0.1:6969/v1/responses"
+    }
+    let res = client.post(api_url).json(&body).send().await.unwrap();
 
     let mut stream = res.bytes_stream();
     let mut accumulated = String::new();
@@ -574,12 +576,18 @@ async fn chat(
 
             // Parse JSON
             let v: Value = serde_json::from_str(data).unwrap();
-            // println!("{:?}", v);
+
             // Check for metrics in the response
             if let Some(metrics_obj) = v.get("metrics") {
                 metrics = serde_json::from_value(metrics_obj.clone()).ok();
             }
-            if let Some(delta) = v["output"][0]["content"][0]["text"].as_str() {
+            let model_text: Option<&str> = if run_args.memory {
+                v["choices"][0]["delta"]["content"].as_str()
+            } else {
+                v["output"][0]["content"][0]["text"].as_str()
+            };
+
+            if let Some(delta) = model_text {
                 accumulated.push_str(delta);
                 if !run_args.memory && delta.contains("**[Answer]**") {
                     is_answer_start = true;
