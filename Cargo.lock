@@ -3311,7 +3311,7 @@ dependencies = [
 
 [[package]]
 name = "tiles"
-version = "0.4.0-rc.1"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -3322,6 +3322,7 @@ dependencies = [
  "rustyline",
  "serde",
  "serde_json",
+ "tempfile",
  "tilekit",
  "tokio",
 ]

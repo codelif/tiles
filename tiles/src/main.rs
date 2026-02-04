@@ -5,7 +5,7 @@ use tiles::runtime::{RunArgs, build_runtime};
 mod commands;
 #[derive(Debug, Parser)]
 #[command(name = "tiles")]
-#[command(version, about = "Your private AI assistant with offline memory.", long_about = None)]
+#[command(version, about = "Your private and secure AI assistant for everyday use.", long_about = None, after_help = "Documentation: https://tiles.run/book\nReport issues: https://github.com/tilesprivacy/tiles/issues")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,

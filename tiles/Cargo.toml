@@ -1,6 +1,6 @@
 [package]
 name = "tiles"
-version = "0.4.0-rc.1"
+version = "0.4.0"
 edition = "2024"
 
 [dependencies]
@@ -15,3 +15,6 @@ owo-colors = "4"
 futures-util = "0.3"
 hf-hub = {version = "0.4", features = ["tokio"]}
 rustyline = "17.0"
+
+[dev-dependencies]
+tempfile = "3"

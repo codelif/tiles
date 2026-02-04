@@ -1,6 +1,6 @@
 use crate::runtime::RunArgs;
 use crate::utils::config::{
-    create_default_memory_folder, get_config_dir, get_default_memory_path, get_lib_dir,
+    ConfigProvider, DefaultProvider, create_default_memory_folder, get_default_memory_path,
     get_memory_path, set_memory_path,
 };
 use crate::utils::hf_model_downloader::*;
@@ -100,8 +100,8 @@ impl MLXRuntime {
             return Ok(());
         }
 
-        let config_dir = get_config_dir()?;
-        let mut server_dir = get_lib_dir()?;
+        let config_dir = DefaultProvider.get_config_dir()?;
+        let mut server_dir = DefaultProvider.get_lib_dir()?;
         let pid_file = config_dir.join("server.pid");
         fs::create_dir_all(&config_dir).context("Failed to create config directory")?;
         server_dir = server_dir.join("server");
@@ -129,7 +129,7 @@ impl MLXRuntime {
             println!("Server is not running");
             return Ok(());
         }
-        let pid_file = get_config_dir()?.join("server.pid");
+        let pid_file = DefaultProvider.get_config_dir()?.join("server.pid");
 
         if !pid_file.exists() {
             eprintln!("server pid doesnt exist");
@@ -144,62 +144,6 @@ impl MLXRuntime {
     }
 }
 
-#[allow(dead_code)]
-fn run_model_by_sub_process(modelfile: Modelfile) {
-    // build the arg list from modelfile
-    let mut args: Vec<String> = vec![];
-    args.push("--model".to_owned());
-    args.push(modelfile.from.unwrap());
-    for parameter in modelfile.parameters {
-        let param_value = parameter.value.to_string();
-        match parameter.param_type.as_str() {
-            "num_predict" => {
-                args.push("--max-tokens".to_owned());
-                args.push(param_value);
-            }
-            "temperature" => {
-                args.push("--temp".to_owned());
-                args.push(param_value);
-            }
-            "top_p" => {
-                args.push("--top-p".to_owned());
-                args.push(param_value);
-            }
-            "seed" => {
-                args.push("--seed".to_owned());
-                args.push(param_value);
-            }
-            _ => {}
-        }
-    }
-    if let Some(system_prompt) = modelfile.system {
-        args.push("--system-prompt".to_owned());
-        args.push(system_prompt);
-    }
-    if let Some(adapter_path) = modelfile.adapter {
-        args.push("--adapter-path".to_owned());
-        args.push(adapter_path);
-    }
-    let mut mlx = match Command::new("mlx_lm.chat").args(args).spawn() {
-        Ok(child) => child,
-        Err(e) => {
-            if e.kind() == std::io::ErrorKind::NotFound {
-                eprintln!("❌ Error: mlx_lm.chat command not found");
-                eprintln!("💡 Hint: Install mlx-lm by running: pip install mlx-lm");
-                eprintln!("📝 Note: mlx-lm is only available on macOS with Apple Silicon");
-                std::process::exit(1);
-            } else {
-                eprintln!("❌ Error: Failed to spawn mlx_lm.chat: {}", e);
-                std::process::exit(1);
-            }
-        }
-    };
-
-    if let Err(err) = mlx.wait() {
-        eprintln!("❌ Error: Failed to wait for mlx_lm: {}", err);
-    }
-}
-
 struct TilesHinter;
 
 impl Hinter for TilesHinter {
@@ -207,7 +151,7 @@ impl Hinter for TilesHinter {
 
     fn hint(&self, line: &str, _pos: usize, _ctx: &rustyline::Context<'_>) -> Option<Self::Hint> {
         if line.is_empty() {
-            Some("Send a message (/? for help)".to_string())
+            Some("Send a message (/help for help)".to_string())
         } else {
             None
         }
@@ -260,20 +204,24 @@ fn handle_slash_command(input: &str, modelname: &str) -> SlashCommand {
 }
 
 fn show_help(model_name: &str) {
-    println!("\n=== Tiles REPL Help ===\n");
+    println!("\n=== Tiles REPL ===\n");
+
+    println!("Model:");
+    println!("  {}", model_name);
+
+    println!("Directory:");
+    println!("  {}\n", get_memory_path().unwrap());
 
     println!("Available Commands:");
-    println!("  /?          Show this help message");
     println!("  /help       Show this help message");
     println!("  /bye        Exit the REPL");
     println!();
 
-    println!("Current Model:");
-    println!("  {}", model_name);
+    println!("\nDocumentation: https://tiles.run/book");
+
+    println!("Report issues: https://github.com/tilesprivacy/tiles/issues");
     println!();
 
-    println!("Usage Tips:");
-    println!("  - Type your questions or prompts directly");
     println!();
 }
 
@@ -542,13 +490,11 @@ async fn chat(
         "python_code": python_code,
         "messages": [{"role": "assistant", "content": g_reply}, {"role": "user", "content": input}]
     });
-    #[allow(unused_assignments)]
-    let mut api_url = "";
-    if run_args.memory {
-        api_url = "http://127.0.0.1:6969/v1/chat/completions"
+    let api_url = if run_args.memory {
+        "http://127.0.0.1:6969/v1/chat/completions"
     } else {
-        api_url = "http://127.0.0.1:6969/v1/responses"
-    }
+        "http://127.0.0.1:6969/v1/responses"
+    };
     let res = client.post(api_url).json(&body).send().await.unwrap();
 
     let mut stream = res.bytes_stream();
@@ -656,10 +602,10 @@ async fn wait_until_server_is_up() {
 
 fn get_default_modelfile(memory_mode: bool) -> Result<PathBuf> {
     if memory_mode {
-        let path = get_lib_dir()?.join("modelfiles/mem-agent");
+        let path = DefaultProvider.get_lib_dir()?.join("modelfiles/mem-agent");
         Ok(path)
     } else {
-        let path = get_lib_dir()?.join("modelfiles/gpt-oss");
+        let path = DefaultProvider.get_lib_dir()?.join("modelfiles/gpt-oss");
         Ok(path)
     }
 }
