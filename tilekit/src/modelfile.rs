@@ -341,11 +341,9 @@ fn parse_singleline(input: &str) -> IResult<&str, &str> {
     .parse(input)
 }
 fn create_modelfile(commands: Vec<(&str, Output)>) -> Result<Modelfile, String> {
-    // TODO: There might be a better way
     let mut modelfile: Modelfile = Modelfile::new();
     for command in commands {
         let _ = match (command.0.to_lowercase().as_str(), command.1) {
-            //TODO: Can add validations for path if its a gguf file later
             ("from", Output::Single(from)) => modelfile.add_from(from.trim()),
             ("parameter", Output::Pair((param, argument))) => {
                 modelfile.add_parameter(param, argument.trim())

@@ -1,9 +1,11 @@
 // Configuration related stuff
 
 use anyhow::{Context, Result};
+use std::fs::File;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::{env, fs};
+use toml::Table;
 
 pub trait ConfigProvider {
     fn get_config_dir(&self) -> Result<PathBuf>;
@@ -118,4 +120,48 @@ fn set_memory_path_with_provider<P: ConfigProvider>(provider: &P, path: &str) ->
         "Memory path set successfully at {}",
         path_buf.to_str().unwrap()
     ))
+}
+
+//TODO: Add memory path also to config.toml
+pub fn get_or_create_config() -> Result<Table> {
+    let tiles_config_dir = DefaultProvider.get_config_dir()?;
+    let config_toml_path = tiles_config_dir.join("config.toml");
+
+    fs::create_dir_all(&tiles_config_dir).context("Failed to create config directory")?;
+    if config_toml_path.try_exists()? {
+        let config_str = fs::read_to_string(config_toml_path)?;
+        Ok(config_str.parse::<Table>()?)
+    } else {
+        let init_table: Table = toml::from_str(
+            r#"
+                [root-user]
+                id = ''
+                nickname = ''
+            "#,
+        )?;
+        fs::write(config_toml_path, init_table.to_string())?;
+        Ok(init_table)
+    }
+}
+
+pub fn save_config(config: &Table) -> Result<()> {
+    let tiles_config_dir = DefaultProvider.get_config_dir()?;
+    let config_toml_path = tiles_config_dir.join("config.toml");
+
+    fs::write(config_toml_path, config.to_string())?;
+    Ok(())
+}
+
+// pub fn save_config(config: &Table)
+//TODO: Add more tests for config.toml
+#[cfg(test)]
+mod tests {
+
+    use super::*;
+
+    #[test]
+    fn test_create_config_file() -> Result<()> {
+        let _config_table = get_or_create_config()?;
+        Ok(())
+    }
 }

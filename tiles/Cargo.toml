@@ -15,6 +15,7 @@ owo-colors = "4"
 futures-util = "0.3"
 hf-hub = {version = "0.4", features = ["tokio"]}
 rustyline = "17.0"
-
+toml = "1.0.3"
 [dev-dependencies]
 tempfile = "3"
+keyring = { version = "3", features = ["apple-native"] }
