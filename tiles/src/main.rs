@@ -8,7 +8,10 @@ mod commands;
 #[command(version, about = "Your private and secure AI assistant for everyday use.", long_about = None, after_help = "Documentation: https://tiles.run/book\nReport issues: https://github.com/tilesprivacy/tiles/issues")]
 struct Cli {
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
+
+    #[command(flatten)]
+    flags: RunFlags,
 }
 
 #[derive(Subcommand, Debug)]
@@ -114,10 +117,19 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
     let runtime = build_runtime();
     match cli.command {
-        Commands::Run {
+        None => {
+            // Running tiles without subcommand - launch default model with flags
+            let run_args = RunArgs {
+                modelfile_path: None,
+                relay_count: cli.flags.relay_count,
+                memory: cli.flags.memory,
+            };
+            commands::run(&runtime, run_args).await;
+        }
+        Some(Commands::Run {
             modelfile_path,
             flags,
-        } => {
+        }) => {
             let run_args = RunArgs {
                 modelfile_path,
                 relay_count: flags.relay_count,
@@ -125,27 +137,27 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
             };
             commands::run(&runtime, run_args).await;
         }
-        Commands::Health => {
+        Some(Commands::Health) => {
             commands::check_health().await;
         }
-        Commands::Server(server) => match server.command {
+        Some(Commands::Server(server)) => match server.command {
             Some(ServerCommands::Start) => commands::start_server(&runtime).await,
             Some(ServerCommands::Stop) => commands::stop_server(&runtime).await,
             _ => println!("Expected start or stop"),
         },
-        Commands::Memory(memory) => match memory.command {
+        Some(Commands::Memory(memory)) => match memory.command {
             MemoryCommands::SetPath { path } => commands::set_memory(path.as_str()),
         },
-        Commands::Optimize {
+        Some(Commands::Optimize {
             modelfile_path,
             data,
             model,
-        } => {
+        }) => {
             let modelfile = commands::optimize(modelfile_path.clone(), data, model).await?;
             std::fs::write(&modelfile_path, modelfile.to_string())?;
             println!("Successfully updated {}", modelfile_path);
         }
-        Commands::Account(account_args) => {
+        Some(Commands::Account(account_args)) => {
             commands::run_account_commands(account_args)?;
         }
     }
