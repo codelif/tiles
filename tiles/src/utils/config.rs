@@ -1,9 +1,10 @@
 // Configuration related stuff
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::{env, fs};
+use toml::Table;
 
 pub trait ConfigProvider {
     fn get_config_dir(&self) -> Result<PathBuf>;
@@ -59,20 +60,22 @@ pub fn set_memory_path(path: &str) -> Result<String> {
 }
 
 pub fn get_memory_path() -> Result<String> {
-    let tiles_config_dir = DefaultProvider.get_config_dir()?;
-    let mut is_memory_path_found: bool = false;
-    let mut memory_path: String = String::from("");
-    if tiles_config_dir.is_dir()
-        && let Ok(content) = fs::read_to_string(tiles_config_dir.join(".memory_path"))
-    {
-        memory_path = content;
-        is_memory_path_found = true;
-    }
+    let root_config = get_or_create_config()?;
+    let memory_config = root_config
+        .get("memory")
+        .ok_or_else(|| anyhow!("memory section doesnt exist"))?
+        .as_table()
+        .expect("Failed to parse to table (memory)");
 
-    if is_memory_path_found {
-        Ok(memory_path)
-    } else {
+    let path = memory_config
+        .get("path")
+        .ok_or_else(|| anyhow!("path doesnt exist (memory)"))?
+        .as_str()
+        .expect("parse failed (memory)");
+    if path.is_empty() {
         Err(anyhow::anyhow!(format!("NOT SET")))
+    } else {
+        Ok(path.to_owned())
     }
 }
 
@@ -95,19 +98,19 @@ pub fn is_memory_model(modelname: &str) -> bool {
     false
 }
 
-fn set_memory_path_with_provider<P: ConfigProvider>(provider: &P, path: &str) -> Result<String> {
+fn set_memory_path_with_provider<P: ConfigProvider>(_provider: &P, path: &str) -> Result<String> {
     let path_buf = PathBuf::from_str(path)?;
     if path_buf.try_exists()? {
-        let tiles_config_dir = provider.get_config_dir()?;
-        let tiles_config_memory_path = tiles_config_dir.join(".memory_path");
-        if tiles_config_memory_path.try_exists()? {
-            fs::write(tiles_config_memory_path, path)?;
-        } else {
-            fs::create_dir_all(&tiles_config_dir)
-                .context("Failed to create tiles config directory")?;
-            fs::write(tiles_config_memory_path, path)
-                .context("Failed to write the memory path to .memory_path")?;
-        }
+        let mut root_config = get_or_create_config()?;
+        let mut memory_config = root_config
+            .get("memory")
+            .ok_or_else(|| anyhow!("memory section doesnt exist"))?
+            .as_table()
+            .expect("Failed to parse to table (memory)")
+            .clone();
+        memory_config.insert(String::from("path"), toml::Value::String(path.to_owned()));
+        root_config.insert(String::from("memory"), toml::Value::Table(memory_config));
+        save_config(&root_config)?;
     } else {
         return Err(anyhow::anyhow!(format!(
             "Not a valid path {}",
@@ -118,4 +121,52 @@ fn set_memory_path_with_provider<P: ConfigProvider>(provider: &P, path: &str) ->
         "Memory path set successfully at {}",
         path_buf.to_str().unwrap()
     ))
+}
+
+pub fn get_or_create_config() -> Result<Table> {
+    let tiles_config_dir = DefaultProvider.get_config_dir()?;
+    let config_toml_path = tiles_config_dir.join("config.toml");
+
+    fs::create_dir_all(&tiles_config_dir).context("Failed to create config directory")?;
+    if config_toml_path.try_exists()? {
+        let config_str = fs::read_to_string(config_toml_path)?;
+        Ok(config_str.parse::<Table>()?)
+    } else {
+        let init_table: Table = toml::from_str(
+            r#"
+                [root-user]
+                id = ''
+                nickname = ''
+
+                [memory]
+                path = ''
+            "#,
+        )?;
+        fs::write(config_toml_path, init_table.to_string())?;
+        Ok(init_table)
+    }
+}
+
+/// Saves the root config toml `Table` type
+pub fn save_config(config: &Table) -> Result<()> {
+    let tiles_config_dir = DefaultProvider.get_config_dir()?;
+    let config_path = tiles_config_dir.join("config.toml");
+    let tmp_path = tiles_config_dir.join("config.tmp.toml");
+    fs::write(&tmp_path, config.to_string())?;
+    fs::copy(&tmp_path, &config_path)?;
+    fs::remove_file(tmp_path)?;
+    Ok(())
+}
+
+//TODO: Add more tests for config.toml
+#[cfg(test)]
+mod tests {
+
+    use super::*;
+
+    #[test]
+    fn test_create_config_file() -> Result<()> {
+        let _config_table = get_or_create_config()?;
+        Ok(())
+    }
 }
