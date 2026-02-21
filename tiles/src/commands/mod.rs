@@ -47,7 +47,7 @@ pub fn run_account_commands(account_args: AccountArgs) -> Result<()> {
     match account_args.command {
         Some(AccountCommands::Create { nickname }) => {
             if !root_user_details.id.is_empty() {
-                println!("Root account exists with id: {}", root_user_details.id)
+                println!("Local Identity exists with id: {}", root_user_details.id)
             } else {
                 let root_user_config = RootUser::new(&create_root_account(&config, nickname)?)?;
 
@@ -55,7 +55,7 @@ pub fn run_account_commands(account_args: AccountArgs) -> Result<()> {
                 println!(
                     "{}",
                     format_args!(
-                        "Root account has been created with id: {}",
+                        "Local Identity has been created with id: {}",
                         root_user_config.id
                     )
                 )
@@ -92,7 +92,7 @@ pub fn run_account_commands(account_args: AccountArgs) -> Result<()> {
 
 fn get_account_not_created_msg() -> String {
     format!(
-        "Root account not created yet, use {}",
+        "Local Identity not created yet, use {}",
         "tiles account create".yellow()
     )
 }

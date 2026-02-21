@@ -1,7 +1,10 @@
 use crate::runtime::RunArgs;
+use crate::utils::accounts::{
+    RootUser, create_root_account, get_root_user_details, save_root_account,
+};
 use crate::utils::config::{
     ConfigProvider, DefaultProvider, create_default_memory_folder, get_default_memory_path,
-    get_memory_path, set_memory_path,
+    get_memory_path, get_or_create_config, set_memory_path,
 };
 use crate::utils::hf_model_downloader::*;
 use anyhow::{Context, Result};
@@ -234,6 +237,7 @@ async fn run_model_with_server(
         });
         let _ = wait_until_server_is_up().await;
     }
+    run_setup_for_ftue()?;
     // loading the model from mem-agent via daemon server
     let memory_path = get_or_set_memory_path().context("Setting/Retrieving memory_path failed")?;
     let modelname = modelfile.from.as_ref().unwrap();
@@ -241,6 +245,63 @@ async fn run_model_with_server(
         Ok(_) => start_repl(mlx_runtime, modelname, run_args).await,
         Err(err) => return Err(anyhow::anyhow!(err)),
     }
+    Ok(())
+}
+
+fn run_setup_for_ftue() -> Result<()> {
+    let root_config = get_or_create_config()?;
+    let root_user_details = get_root_user_details(&root_config)?;
+    if root_user_details.id.is_empty() {
+        println!(
+            "
+              ▓▓▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▓▓▓░             
+             ▓▓                      ▓▓░░▓▒            
+           ░▓▓░░░░░░░░░░     ░░░░░░░▓▓    ▓▒           
+            ▓▓░░░░░░░▓▓░    ▓▓▓░░░░░▓▓   ▓▓            
+             ▓▓     ░▓▒    ▓▓ ▓▒     ▒▓░▓▓             
+              ▓▓▓▓▓▓▓▒    ▓▓   ▓▓▓▓▓▓▓▓▓▓              
+                   ▓▓    ▓▓   ░▓░                      
+                  ▓▓    ▒▓░   ▓▒                       
+                 ▒▓    ░▓░   ▓▓                        
+                ▒▓    ░▓▒   ▓▓                         
+               ░▓░    ▓▓   ▓▓                          
+              ░▓▒    ▓▓   ▒▓                           
+              ▓▓▓▓▓▓▓▓   ▒▓░                           
+              ░▓▒    ▓▓ ░▓░                            
+                ▓▓    ▓▓▓▒                             
+                 ▓▓▓▓▓▓▓▓                              
+                                                       
+            "
+        );
+
+        println!(
+            "{}",
+            "Welcome to Tiles: Your private and secure AI assistant for everyday use.\n"
+                .to_string()
+                .bold()
+                .blue()
+        );
+        // FTUE
+        println!("{}",
+            "\nPlease set a nickname for your local Tiles identity (You can change this later via `tiles account set-nickname`)\n".to_string().cyan()
+        );
+        let stdin = io::stdin();
+        let mut input = String::new();
+        stdin.read_line(&mut input)?;
+        input = input.trim().to_owned();
+        let root_user_config = RootUser::new(&create_root_account(&root_config, Some(input))?)?;
+
+        save_root_account(root_config, &root_user_config.to_table())?;
+        println!(
+            "{}",
+            format_args!(
+                "\nYour Tiles local identity: {} has been created with nickname {}\n",
+                root_user_config.id, root_user_config.nickname
+            )
+            .green()
+        );
+    }
+
     Ok(())
 }
 
@@ -258,13 +319,18 @@ fn get_or_set_memory_path() -> Result<String> {
             println!(
                 "{}",
                 format!(
-                    "Default Memory location will be set at {:?}\n",
+                    "\nYour Default Memory location will be set at {:?}\n",
                     default_memory
                 )
                 .yellow()
             );
-            println!("You can always change the location with `tiles memory set-path <PATH>`\n");
-            println!("Do you want to add a custom memory location right now instead? [Y/N]");
+            println!("\nYou can always change the location with `tiles memory set-path <PATH>`\n");
+            println!(
+                "{}",
+                "\nDo you want to add a custom memory location right now instead? [Y/N]"
+                    .to_string()
+                    .cyan()
+            );
             let mut input = String::new();
             loop {
                 input.clear();
@@ -281,13 +347,13 @@ fn get_or_set_memory_path() -> Result<String> {
                             default_memory = input.as_str();
                             println!("{}", msg.green());
                             println!(
-                                "You can always change the location with `tiles memory set-path <PATH>`\n"
+                                "\nYou can always change the location with `tiles memory set-path <PATH>`\n"
                             );
                             break;
                         }
                         Err(err) => {
                             let error_msg =
-                                format!("Try again, Error setting memory path due to {:?}", err);
+                                format!("\nTry again, Error setting memory path due to {:?}", err);
                             println!("{}", error_msg.red());
                             continue;
                         }
@@ -298,7 +364,7 @@ fn get_or_set_memory_path() -> Result<String> {
                         Ok(msg) => {
                             println!("{}", msg.green());
                             println!(
-                                "You can always change the location with `tiles memory set-path <PATH>`\n"
+                                "\nYou can always change the location with `tiles memory set-path <PATH>`\n"
                             );
                             break;
                         }
