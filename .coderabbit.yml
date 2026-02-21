@@ -18,6 +18,7 @@ reviews:
   path_instructions:
     - path: "**/*.{rs,toml}"
       instructions:
-        "Review the Rust code for conformity with best practices in Rust,
-        Systems programming. Highlight any deviations."
+        "Review the Rust code and Python code for conformity with best practices in Rust,
+        Systems programming and Python. Highlight any deviations. Also highlight if there any
+        any security issues in the code"
 

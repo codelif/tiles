@@ -118,7 +118,6 @@ impl MLXRuntime {
             .spawn()
             .expect("failed to start server");
 
-        fs::create_dir_all(&config_dir).context("Failed to create config directory")?;
         std::fs::write(pid_file, child.id().to_string()).unwrap();
         println!("Server started with PID {}", child.id());
         Ok(())

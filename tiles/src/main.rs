@@ -47,6 +47,8 @@ enum Commands {
         #[arg(long, default_value = "openai:gpt-4o-mini")]
         model: String,
     },
+    /// Manage user account
+    Account(AccountArgs),
 }
 
 #[derive(Debug, Args)]
@@ -93,6 +95,23 @@ enum MemoryCommands {
     SetPath { path: String },
 }
 
+#[derive(Debug, Args)]
+#[command(args_conflicts_with_subcommands = true)]
+#[command(flatten_help = true)]
+struct AccountArgs {
+    #[command(subcommand)]
+    command: Option<AccountCommands>,
+}
+
+#[derive(Debug, Subcommand)]
+enum AccountCommands {
+    /// Creates a local root account
+    Create { nickname: Option<String> },
+
+    /// Sets nickname to local root account
+    SetNickname { nickname: String },
+}
+
 #[tokio::main(flavor = "current_thread")]
 pub async fn main() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
@@ -137,6 +156,9 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
             let modelfile = commands::optimize(modelfile_path.clone(), data, model).await?;
             std::fs::write(&modelfile_path, modelfile.to_string())?;
             println!("Successfully updated {}", modelfile_path);
+        }
+        Commands::Account(account_args) => {
+            commands::run_account_commands(account_args)?;
         }
     }
     Ok(())
