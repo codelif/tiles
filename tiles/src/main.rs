@@ -157,7 +157,7 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
             std::fs::write(&modelfile_path, modelfile.to_string())?;
             println!("Successfully updated {}", modelfile_path);
         }
-        Commands::Account(account_args) => {
+        Some(Commands::Account(account_args)) => {
             commands::run_account_commands(account_args)?;
         }
     }
