@@ -4,7 +4,7 @@ use anyhow::Result;
 use owo_colors::OwoColorize;
 use tiles::runtime::Runtime;
 use tiles::utils::accounts::{
-    create_root_account, get_root_user_details, save_root_account, set_nickname,
+    RootUser, create_root_account, get_root_user_details, save_root_account, set_nickname,
 };
 use tiles::utils::config::{get_or_create_config, set_memory_path};
 use tiles::{core::health, runtime::RunArgs};
@@ -40,26 +40,30 @@ pub async fn stop_server(runtime: &Runtime) {
     let _ = runtime.stop_server_daemon().await;
 }
 
-//TODO: add docs
+/// Runs the account command with the args being passed.
 pub fn run_account_commands(account_args: AccountArgs) -> Result<()> {
     let config = get_or_create_config()?;
     let root_user_details = get_root_user_details(&config)?;
     match account_args.command {
         Some(AccountCommands::Create { nickname }) => {
-            //TODO: could show a message if did is already there
-            let root_user_config = create_root_account(&config, nickname)?;
-            let id = root_user_config.get("id").unwrap().as_str().unwrap();
-            save_root_account(config, &root_user_config)?;
-            //TODO: color it...
-            let _ = println!("Root account has been created with id: {}", id).green();
+            if !root_user_details.id.is_empty() {
+                println!("Root account exists with id: {}", root_user_details.id)
+            } else {
+                let root_user_config = RootUser::new(&create_root_account(&config, nickname)?)?;
+
+                save_root_account(config, &root_user_config.to_table())?;
+                println!(
+                    "{}",
+                    format_args!(
+                        "Root account has been created with id: {}",
+                        root_user_config.id
+                    )
+                )
+            }
         }
         Some(AccountCommands::SetNickname { nickname }) => {
-            //FIXME: redundant code
-            if root_user_details.get("id").unwrap().is_empty() {
-                println!(
-                    "Root account not created yet, use {}",
-                    format!("tiles account create").yellow()
-                );
+            if root_user_details.id.is_empty() {
+                println!("{}", get_account_not_created_msg());
             } else {
                 match set_nickname(&config, nickname) {
                     Ok(root_user_config) => {
@@ -75,18 +79,20 @@ pub fn run_account_commands(account_args: AccountArgs) -> Result<()> {
             }
         }
         _ => {
-            if root_user_details.get("id").unwrap().is_empty() {
-                println!(
-                    "Root account not created yet, use {}",
-                    format!("tiles account create").yellow()
-                );
+            if root_user_details.id.is_empty() {
+                println!("{}", get_account_not_created_msg());
             } else {
-                for elem in root_user_details {
-                    println!("{}: {}", elem.0, elem.1)
-                }
+                println!("{}", root_user_details);
             }
         }
     }
 
     Ok(())
+}
+
+fn get_account_not_created_msg() -> String {
+    format!(
+        "Root account not created yet, use {}",
+        "tiles account create".yellow()
+    )
 }

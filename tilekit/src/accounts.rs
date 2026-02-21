@@ -1,17 +1,19 @@
-// Handles stuff related to accounts, identity etc..
+//! Handles stuff related to accounts, identity etc..
+
 use anyhow::Result;
 use ed25519_dalek::{SigningKey, ed25519::signature::rand_core::OsRng};
 use keyring::Entry;
 use ucan::did::Ed25519Did;
 
-type DID = String;
-type Identity = DID;
+type Did = String;
+type Identity = Did;
 
-/// Creates an `Identity`
-/// # Parameters
-/// - `app`: The service for which Identity is made (for ex: tiles)
+/// Creates an `Identity` for given application
 /// The keypair generated will be stored in OS secure storage
-/// Returns an `Identity`
+///
+/// # Arguments
+///
+/// - `app`: The service for which Identity is made (for ex: tiles)
 pub fn create_identity(app: &str) -> Result<Identity> {
     let mut csprng = OsRng;
     let signing_key = SigningKey::generate(&mut csprng);

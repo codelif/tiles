@@ -1,7 +1,6 @@
 // Configuration related stuff
 
 use anyhow::{Context, Result};
-use std::fs::File;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::{env, fs};
@@ -144,15 +143,17 @@ pub fn get_or_create_config() -> Result<Table> {
     }
 }
 
+/// Saves the root config toml `Table` type
 pub fn save_config(config: &Table) -> Result<()> {
     let tiles_config_dir = DefaultProvider.get_config_dir()?;
-    let config_toml_path = tiles_config_dir.join("config.toml");
-
-    fs::write(config_toml_path, config.to_string())?;
+    let config_path = tiles_config_dir.join("config.toml");
+    let tmp_path = tiles_config_dir.join("config.tmp.toml");
+    fs::write(&tmp_path, config.to_string())?;
+    fs::copy(&tmp_path, &config_path)?;
+    fs::remove_file(tmp_path)?;
     Ok(())
 }
 
-// pub fn save_config(config: &Table)
 //TODO: Add more tests for config.toml
 #[cfg(test)]
 mod tests {
