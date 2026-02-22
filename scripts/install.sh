@@ -4,7 +4,7 @@ set -euo pipefail
 ENV="prod" # prod is another env, try taking it from github env
 REPO="tilesprivacy/tiles" 
 # VERSION="${TILES_VERSION:-latest}"       
-VERSION="0.4.0"       
+VERSION="0.4.1"       
 INSTALL_DIR="$HOME/.local/bin"           # CLI install location
 SERVER_DIR="$HOME/.local/lib/tiles/server"         # Python server folder
 MODELFILE_DIR="$HOME/.local/lib/tiles/modelfiles"  # Python server folder
