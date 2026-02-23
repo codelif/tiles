@@ -124,7 +124,7 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
                 relay_count: cli.flags.relay_count,
                 memory: cli.flags.memory,
             };
-            commands::run_setup_for_ftue()
+            commands::run_setup_for_ftue(&run_args)
                 .inspect_err(|e| eprintln!("Failed to setup Tiles due to {:?}", e))?;
             commands::run(&runtime, run_args).await;
         }

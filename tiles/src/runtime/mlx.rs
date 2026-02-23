@@ -203,13 +203,7 @@ fn handle_slash_command(input: &str, modelname: &str) -> SlashCommand {
 }
 
 fn show_help(model_name: &str) {
-    println!("\n=== Tiles REPL ===\n");
-
-    println!("Model:");
-    println!("  {}", model_name);
-
-    println!("Directory:");
-    println!("  {}\n", get_memory_path().unwrap());
+    let _ = model_name;
 
     println!("Available Commands:");
     println!("  /help       Show this help message");
