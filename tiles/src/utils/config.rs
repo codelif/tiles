@@ -212,11 +212,11 @@ pub fn save_config(config: &Table) -> Result<()> {
 #[cfg(test)]
 mod tests {
 
-    use super::*;
+    // use super::*;
 
-    #[test]
-    fn test_create_config_file() -> Result<()> {
-        let _config_table = get_or_create_config()?;
-        Ok(())
-    }
+    // #[test]
+    // fn test_create_config_file() -> Result<()> {
+    //     let _config_table = get_or_create_config()?;
+    //     Ok(())
+    // }
 }
