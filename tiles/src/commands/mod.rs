@@ -9,12 +9,12 @@ use tiles::utils::accounts::{
     RootUser, create_root_account, get_root_user_details, save_root_account, set_nickname,
 };
 use tiles::utils::config::{
-    ConfigProvider, DefaultProvider, get_memory_path, get_or_create_config, set_user_data_path,
+    ConfigProvider, DefaultProvider, get_or_create_config, set_user_data_path,
 };
 use tiles::{core::health, runtime::RunArgs};
 
-pub use tilekit::optimize::optimize;
 use tilekit::modelfile::parse_from_file;
+pub use tilekit::optimize::optimize;
 use toml::Table;
 
 use crate::{AccountArgs, AccountCommands};
@@ -86,15 +86,14 @@ fn print_runtime_context<T: ConfigProvider>(
     root_user_details: &RootUser,
 ) -> Result<()> {
     let model_name = get_configured_model_name(run_args.memory, config_provider)?;
-    let directory = get_memory_path().or_else(|_| {
-        config_provider
-            .get_user_data_dir()
-            .map(|path| path.display().to_string())
-    })?;
+    let directory = config_provider
+        .get_user_data_dir()
+        .map(|path| path.display().to_string())?;
+
     let nickname = if root_user_details.nickname.is_empty() {
-        "Unknown".to_owned()
+        "Unknown"
     } else {
-        root_user_details.nickname.clone()
+        root_user_details.nickname.as_str()
     };
 
     println!("Account:");
@@ -205,7 +204,10 @@ fn setup_default_user_data_dir<T: ConfigProvider>(config_provider: &T) -> Result
             }
         }
 
-        println!("{}", "Please enter y or n (or press Enter for default N).".red());
+        println!(
+            "{}",
+            "Please enter y or n (or press Enter for default N).".red()
+        );
     }
 }
 
@@ -326,7 +328,10 @@ mod tests {
         assert_eq!(FTUE_ACCOUNT_DETAILS_HINT, "View full details:");
         assert_eq!(FTUE_DATA_DIR_PROMPT, "Data directory");
         assert_eq!(FTUE_DATA_DIR_CHANGE_HINT, "Change data path later:");
-        assert_eq!(FTUE_CUSTOM_DATA_PROMPT, "Use a custom data directory now? [y/N]");
+        assert_eq!(
+            FTUE_CUSTOM_DATA_PROMPT,
+            "Use a custom data directory now? [y/N]"
+        );
     }
 
     #[test]
