@@ -1,11 +1,5 @@
 use crate::runtime::RunArgs;
-use crate::utils::accounts::{
-    RootUser, create_root_account, get_root_user_details, save_root_account,
-};
-use crate::utils::config::{
-    ConfigProvider, DefaultProvider, create_default_memory_folder, get_default_memory_path,
-    get_memory_path, get_or_create_config, set_memory_path,
-};
+use crate::utils::config::{ConfigProvider, DefaultProvider, get_memory_path};
 use crate::utils::hf_model_downloader::*;
 use anyhow::{Context, Result};
 use futures_util::StreamExt;
@@ -19,12 +13,11 @@ use rustyline::validate::Validator;
 use rustyline::{Config, Editor, Helper};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::fs;
 use std::fs::File;
 use std::path::PathBuf;
+use std::process::Command;
 use std::process::Stdio;
 use std::time::Duration;
-use std::{io, process::Command};
 use tilekit::modelfile::Modelfile;
 use tokio::time::sleep;
 
@@ -104,12 +97,12 @@ impl MLXRuntime {
         }
 
         let config_dir = DefaultProvider.get_config_dir()?;
+        let data_dir = DefaultProvider.get_data_dir()?;
         let mut server_dir = DefaultProvider.get_lib_dir()?;
         let pid_file = config_dir.join("server.pid");
-        fs::create_dir_all(&config_dir).context("Failed to create config directory")?;
         server_dir = server_dir.join("server");
-        let stdout_log = File::create(config_dir.join("server.out.log"))?;
-        let stderr_log = File::create(config_dir.join("server.err.log"))?;
+        let stdout_log = File::open(data_dir.join("logs/server.out.log"))?;
+        let stderr_log = File::open(data_dir.join("logs/server.err.log"))?;
         let server_path = server_dir.join("stack_export_prod/app-server/bin/python");
         server_dir.pop();
         let child = Command::new(server_path)
@@ -237,148 +230,14 @@ async fn run_model_with_server(
         });
         let _ = wait_until_server_is_up().await;
     }
-    run_setup_for_ftue()?;
     // loading the model from mem-agent via daemon server
-    let memory_path = get_or_set_memory_path().context("Setting/Retrieving memory_path failed")?;
+    let memory_path = get_memory_path().context("Setting/Retrieving memory_path failed")?;
     let modelname = modelfile.from.as_ref().unwrap();
     match load_model(&modelfile, &default_modelfile, &memory_path).await {
         Ok(_) => start_repl(mlx_runtime, modelname, run_args).await,
         Err(err) => return Err(anyhow::anyhow!(err)),
     }
     Ok(())
-}
-
-fn run_setup_for_ftue() -> Result<()> {
-    let root_config = get_or_create_config()?;
-    let root_user_details = get_root_user_details(&root_config)?;
-    if root_user_details.id.is_empty() {
-        println!(
-            "
-              ▓▓▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▓▓▓░             
-             ▓▓                      ▓▓░░▓▒            
-           ░▓▓░░░░░░░░░░     ░░░░░░░▓▓    ▓▒           
-            ▓▓░░░░░░░▓▓░    ▓▓▓░░░░░▓▓   ▓▓            
-             ▓▓     ░▓▒    ▓▓ ▓▒     ▒▓░▓▓             
-              ▓▓▓▓▓▓▓▒    ▓▓   ▓▓▓▓▓▓▓▓▓▓              
-                   ▓▓    ▓▓   ░▓░                      
-                  ▓▓    ▒▓░   ▓▒                       
-                 ▒▓    ░▓░   ▓▓                        
-                ▒▓    ░▓▒   ▓▓                         
-               ░▓░    ▓▓   ▓▓                          
-              ░▓▒    ▓▓   ▒▓                           
-              ▓▓▓▓▓▓▓▓   ▒▓░                           
-              ░▓▒    ▓▓ ░▓░                            
-                ▓▓    ▓▓▓▒                             
-                 ▓▓▓▓▓▓▓▓                              
-                                                       
-            "
-        );
-
-        println!(
-            "{}",
-            "Welcome to Tiles: Your private and secure AI assistant for everyday use.\n"
-                .to_string()
-                .bold()
-                .blue()
-        );
-        // FTUE
-        println!("{}",
-            "\nPlease set a nickname for your local Tiles identity (You can change this later via `tiles account set-nickname`)\n".to_string().cyan()
-        );
-        let stdin = io::stdin();
-        let mut input = String::new();
-        stdin.read_line(&mut input)?;
-        input = input.trim().to_owned();
-        let root_user_config = RootUser::new(&create_root_account(&root_config, Some(input))?)?;
-
-        save_root_account(root_config, &root_user_config.to_table())?;
-        println!(
-            "{}",
-            format_args!(
-                "\nYour Tiles local identity: {} has been created with nickname {}\n",
-                root_user_config.id, root_user_config.nickname
-            )
-            .green()
-        );
-    }
-
-    Ok(())
-}
-
-fn get_or_set_memory_path() -> Result<String> {
-    match get_memory_path() {
-        Ok(memory_path) => Ok(memory_path),
-        Err(_err) => {
-            let stdin = io::stdin();
-            let default_memory_pathbuf = get_default_memory_path()?;
-            let mut default_memory = default_memory_pathbuf
-                .to_str()
-                .ok_or_else(|| anyhow::anyhow!("Invalid path"))?;
-            let mut chose_yes = false;
-
-            println!(
-                "{}",
-                format!(
-                    "\nYour Default Memory location will be set at {:?}\n",
-                    default_memory
-                )
-                .yellow()
-            );
-            println!("\nYou can always change the location with `tiles memory set-path <PATH>`\n");
-            println!(
-                "{}",
-                "\nDo you want to add a custom memory location right now instead? [Y/N]"
-                    .to_string()
-                    .cyan()
-            );
-            let mut input = String::new();
-            loop {
-                input.clear();
-                stdin.read_line(&mut input)?;
-                input = input.trim().to_owned();
-                if (input == "Y" || input == "y") || chose_yes {
-                    if !chose_yes {
-                        chose_yes = true;
-                        println!("Add the path for your custom memory");
-                        continue;
-                    }
-                    match set_memory_path(input.as_str()) {
-                        Ok(msg) => {
-                            default_memory = input.as_str();
-                            println!("{}", msg.green());
-                            println!(
-                                "\nYou can always change the location with `tiles memory set-path <PATH>`\n"
-                            );
-                            break;
-                        }
-                        Err(err) => {
-                            let error_msg =
-                                format!("\nTry again, Error setting memory path due to {:?}", err);
-                            println!("{}", error_msg.red());
-                            continue;
-                        }
-                    }
-                } else {
-                    create_default_memory_folder()?;
-                    match set_memory_path(default_memory) {
-                        Ok(msg) => {
-                            println!("{}", msg.green());
-                            println!(
-                                "\nYou can always change the location with `tiles memory set-path <PATH>`\n"
-                            );
-                            break;
-                        }
-                        Err(err) => {
-                            let error_msg = format!("Error setting memory path due to {:?}", err);
-                            println!("{}", error_msg.red());
-                            return Err(anyhow::anyhow!("Error setting default memory path"));
-                        }
-                    }
-                }
-            }
-            Ok(default_memory.to_owned())
-        }
-    }
 }
 
 async fn start_repl(mlx_runtime: &MLXRuntime, modelname: &str, run_args: &RunArgs) {

@@ -25,8 +25,8 @@ enum Commands {
         flags: RunFlags,
     },
 
-    /// Configure your memory
-    Memory(MemoryArgs),
+    /// Configure your data
+    Data(DataArgs),
 
     /// Checks the status of dependencies
     Health,
@@ -85,13 +85,13 @@ enum ServerCommands {
 #[derive(Debug, Args)]
 #[command(args_conflicts_with_subcommands = true)]
 #[command(flatten_help = true)]
-struct MemoryArgs {
+struct DataArgs {
     #[command(subcommand)]
-    command: MemoryCommands,
+    command: DataCommands,
 }
 #[derive(Debug, Subcommand)]
-enum MemoryCommands {
-    /// Set Path for the memory
+enum DataCommands {
+    /// Set Path for the user data
     SetPath { path: String },
 }
 
@@ -124,6 +124,8 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
                 relay_count: cli.flags.relay_count,
                 memory: cli.flags.memory,
             };
+            commands::run_setup_for_ftue()
+                .inspect_err(|e| eprintln!("Failed to setup Tiles due to {:?}", e))?;
             commands::run(&runtime, run_args).await;
         }
         Some(Commands::Run {
@@ -145,8 +147,8 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
             Some(ServerCommands::Stop) => commands::stop_server(&runtime).await,
             _ => println!("Expected start or stop"),
         },
-        Some(Commands::Memory(memory)) => match memory.command {
-            MemoryCommands::SetPath { path } => commands::set_memory(path.as_str()),
+        Some(Commands::Data(data)) => match data.command {
+            DataCommands::SetPath { path } => commands::set_data(path.as_str()),
         },
         Some(Commands::Optimize {
             modelfile_path,

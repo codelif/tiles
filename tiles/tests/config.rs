@@ -1,23 +1,23 @@
-use anyhow::Result;
+// use anyhow::Result;
 use std::path::PathBuf;
-use tiles::utils::config::ConfigProvider;
+// use tiles::utils::config::ConfigProvider;
 
 #[allow(dead_code)]
 struct MockProvider {
     base: PathBuf,
 }
 
-impl ConfigProvider for MockProvider {
-    fn get_config_dir(&self) -> Result<PathBuf> {
-        Ok(self.base.join("config"))
-    }
-    fn get_data_dir(&self) -> Result<PathBuf> {
-        Ok(self.base.join("data"))
-    }
-    fn get_lib_dir(&self) -> Result<PathBuf> {
-        Ok(self.base.join("lib"))
-    }
-}
+// impl ConfigProvider for MockProvider {
+//     fn get_config_dir(&self) -> Result<PathBuf> {
+//         Ok(self.base.join("config"))
+//     }
+//     fn get_data_dir(&self) -> Result<PathBuf> {
+//         Ok(self.base.join("data"))
+//     }
+//     fn get_lib_dir(&self) -> Result<PathBuf> {
+//         Ok(self.base.join("lib"))
+//     }
+// }
 
 // #[test]
 // fn test_get_memory_path() -> Result<()> {
