@@ -22,9 +22,9 @@ use crate::{AccountArgs, AccountCommands};
 const FTUE_VERSION_TITLE: &str = "Tiles v0.4.1";
 const FTUE_HEADER: &str = "Initializing local account...";
 const FTUE_ASCII_ART: &str = r#"
-              ▓▓▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▓▓▓░
+              ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
              ▓▓                      ▓▓░░▓▒
-           ░▓▓░░░░░░░░░░     ░░░░░░░▓▓    ▓▒
+           ▓▓▓▓▓▓▓▓▓▓▓▓▓     ▓▓▓▓▓▓▓▓▓    ▓▓
             ▓▓░░░░░░░▓▓░    ▓▓▓░░░░░▓▓   ▓▓
              ▓▓     ░▓▒    ▓▓ ▓▒     ▒▓░▓▓
               ▓▓▓▓▓▓▓▒    ▓▓   ▓▓▓▓▓▓▓▓▓▓
