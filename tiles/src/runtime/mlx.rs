@@ -13,7 +13,7 @@ use rustyline::validate::Validator;
 use rustyline::{Config, Editor, Helper};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::fs::File;
+use std::fs::OpenOptions;
 use std::path::PathBuf;
 use std::process::Command;
 use std::process::Stdio;
@@ -101,8 +101,12 @@ impl MLXRuntime {
         let mut server_dir = DefaultProvider.get_lib_dir()?;
         let pid_file = config_dir.join("server.pid");
         server_dir = server_dir.join("server");
-        let stdout_log = File::open(data_dir.join("logs/server.out.log"))?;
-        let stderr_log = File::open(data_dir.join("logs/server.err.log"))?;
+        let stdout_log = OpenOptions::new()
+            .append(true)
+            .open(data_dir.join("logs/server.out.log"))?;
+        let stderr_log = OpenOptions::new()
+            .append(true)
+            .open(data_dir.join("logs/server.err.log"))?;
         let server_path = server_dir.join("stack_export_prod/app-server/bin/python");
         server_dir.pop();
         let child = Command::new(server_path)
