@@ -170,7 +170,8 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
         }
         Some(Commands::Update) => {
             println!("trying to update tiles");
-            installer::get_latest_version("https://api.github.com").await?;
+            let res = installer::try_update().await?;
+            println!("{}", res);
         }
     }
     Ok(())
