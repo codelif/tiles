@@ -1,7 +1,10 @@
 use std::error::Error;
 
 use clap::{Args, Parser, Subcommand};
-use tiles::runtime::{RunArgs, build_runtime};
+use tiles::{
+    runtime::{RunArgs, build_runtime},
+    utils::installer,
+};
 mod commands;
 #[derive(Debug, Parser)]
 #[command(name = "tiles")]
@@ -49,6 +52,9 @@ enum Commands {
     },
     /// Manage user account
     Account(AccountArgs),
+
+    /// Update Tiles to latest version
+    Update,
 }
 
 #[derive(Debug, Args)]
@@ -161,6 +167,10 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
         }
         Some(Commands::Account(account_args)) => {
             commands::run_account_commands(account_args)?;
+        }
+        Some(Commands::Update) => {
+            println!("trying to update tiles");
+            installer::get_latest_version("https://api.github.com").await?;
         }
     }
     Ok(())
