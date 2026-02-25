@@ -1,21 +1,22 @@
-from .mlx_runner import MLXRunner
-from ..cache_utils import get_model_path
-from fastapi import HTTPException
-from ..schemas import (
-    ChatMessage,
-    ChatCompletionRequest,
-    ResponsesResponse,
-    downloadRequest,
-    GenerationMetrics,
-    ResponsesRequest,
-)
-from ..hf_downloader import pull_model
-
-import logging
 import json
+import logging
 import time
 import uuid
 from collections.abc import AsyncGenerator
+
+from fastapi import HTTPException
+
+from ..cache_utils import get_model_path
+from ..hf_downloader import pull_model
+from ..schemas import (
+    ChatCompletionRequest,
+    ChatMessage,
+    GenerationMetrics,
+    ResponsesRequest,
+    ResponsesResponse,
+    downloadRequest,
+)
+from .mlx_runner import MLXRunner
 
 logger = logging.getLogger("app")
 
@@ -36,7 +37,7 @@ def download_model(model_name: str):
         raise HTTPException(status_code=400, detail="Downloading model failed")
 
 
-def get_or_load_model(model_spec: str, verbose: bool = False) -> MLXRunner:
+def get_or_load_model(model_spec: str, verbose: bool = True) -> MLXRunner:
     """Get model from cache or load it if not cached."""
     global _model_cache, _current_model_path
 
@@ -219,7 +220,9 @@ def _prepend_previous_response(user_input: str, prev_id: Optional[str]) -> str:
     return user_input
 
 
-def _calc_usage(runner: MLXRunner, input_text: str, generated_text: str) -> Dict[str, int]:
+def _calc_usage(
+    runner: MLXRunner, input_text: str, generated_text: str
+) -> Dict[str, int]:
     """Calculate token usage using the runner tokenizer; fall back to zeros on error."""
     try:
         input_tokens = len(runner.tokenizer.encode(input_text))
@@ -270,7 +273,7 @@ def count_tokens(text: str) -> int:
 
 
 async def generate_response_chat_stream(
-    request: ResponsesRequest
+    request: ResponsesRequest,
 ) -> AsyncGenerator[str, None]:
     """Generate streaming chat responses for Responses API."""
 
@@ -307,7 +310,7 @@ async def generate_response_chat_stream(
         "usage": {"input_tokens": input_tokens, "output_tokens": 0},
     }
     yield f"data: {json.dumps(initial_chunk)}\n\n"
-    
+
     # Stream tokens
     accumulated_text = ""
     output_tokens = 0
@@ -322,10 +325,10 @@ async def generate_response_chat_stream(
             if isinstance(token, GenerationMetrics):
                 metrics = token
                 continue
-            
+
             accumulated_text += token
             output_tokens += 1  # Each yield is one token
-            
+
             chunk = {
                 "id": response_id,
                 "object": "response.chunk",
@@ -350,7 +353,7 @@ async def generate_response_chat_stream(
                 "usage": {"input_tokens": input_tokens, "output_tokens": output_tokens},
             }
             yield f"data: {json.dumps(chunk)}\n\n"
-            
+
     except Exception as e:
         error_chunk = {
             "id": response_id,
@@ -364,7 +367,7 @@ async def generate_response_chat_stream(
         }
         yield f"data: {json.dumps(error_chunk)}\n\n"
         return
-    
+
     # Final chunk
     completed_at = int(time.time())
     # Build final chunk with accumulated text and store response for follow-ups
@@ -455,7 +458,9 @@ async def generate_response_chat(request: ResponsesRequest):
         metrics_obj = {
             "ttft_ms": generation_time * 1000.0,
             "total_tokens": output_tokens,
-            "tokens_per_second": (output_tokens / generation_time) if generation_time > 0 else 0.0,
+            "tokens_per_second": (output_tokens / generation_time)
+            if generation_time > 0
+            else 0.0,
             "total_latency_s": generation_time,
         }
 
@@ -466,17 +471,21 @@ async def generate_response_chat(request: ResponsesRequest):
         generated_text = ""
         usage = {"input_tokens": 0, "output_tokens": 0}
 
-    output_block = [
-        {
-            "type": "message",
-            "id": msg_id,
-            "status": "completed" if status == "completed" else "failed",
-            "role": "assistant",
-            "content": [
-                {"type": "output_text", "text": generated_text, "annotations": []}
-            ],
-        }
-    ] if status == "completed" else []
+    output_block = (
+        [
+            {
+                "type": "message",
+                "id": msg_id,
+                "status": "completed" if status == "completed" else "failed",
+                "role": "assistant",
+                "content": [
+                    {"type": "output_text", "text": generated_text, "annotations": []}
+                ],
+            }
+        ]
+        if status == "completed"
+        else []
+    )
 
     resp = _store_response(
         response_id=response_id,

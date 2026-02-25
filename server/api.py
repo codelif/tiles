@@ -1,28 +1,25 @@
-from fastapi import FastAPI, HTTPException
-
-from .schemas import (
-    ChatMessage,
-    ChatCompletionRequest,
-    StartRequest,
-    downloadRequest,
-    ResponsesRequest,
-)
 import logging
 import sys
 from typing import Optional
 
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from . import runtime
 from .hf_downloader import pull_model
-
+from .mem_agent.engine import execute_sandboxed_code
 from .mem_agent.utils import (
     create_memory_if_not_exists,
     format_results,
 )
-from .mem_agent.engine import execute_sandboxed_code
-
-from . import runtime
+from .schemas import (
+    ChatCompletionRequest,
+    ChatMessage,
+    ResponsesRequest,
+    StartRequest,
+    downloadRequest,
+)
 
 logger = logging.getLogger("app")
 _current_model_path: Optional[str] = None
