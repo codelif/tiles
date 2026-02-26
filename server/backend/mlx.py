@@ -315,15 +315,17 @@ async def generate_response_chat_stream(
     accumulated_text = ""
     output_tokens = 0
     try:
-        for token in runner.generate_streaming(
+        for token in runner.generate_streaming_gpt(
             prompt=user_input,
             max_tokens=runner.get_effective_max_tokens(request.max_output_tokens),
             temperature=request.temperature or 1,
             top_p=request.top_p or 1,
-            use_chat_template=True,
         ):
             if isinstance(token, GenerationMetrics):
                 metrics = token
+                continue
+
+            if not isinstance(token, str):
                 continue
 
             accumulated_text += token
@@ -437,7 +439,7 @@ async def generate_response_chat(request: ResponsesRequest):
     metrics_obj = None
     try:
         start_time = time.time()
-        generated_text = runner.generate_batch(
+        generated_text = runner.generate_batch_gpt(
             prompt=user_input,
             max_tokens=runner.get_effective_max_tokens(request.max_output_tokens),
             temperature=request.temperature or 1,

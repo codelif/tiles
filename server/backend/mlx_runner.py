@@ -7,9 +7,9 @@ import json
 import os
 import sys
 import time
+from ast import Yield
 from collections.abc import Iterator
 from pathlib import Path
-from string import printable
 from typing import Dict, Optional
 
 from mlx_lm.tokenizer_utils import TokenizerWrapper
@@ -26,6 +26,7 @@ from openai_harmony import (
     HarmonyEncodingName,
     Message,
     Role,
+    StreamableParser,
     SystemContent,
     load_harmony_encoding,
 )
@@ -441,6 +442,108 @@ class MLXRunner:
             server_limit = self._context_length // 2
             return min(requested_tokens or server_limit, server_limit)
 
+    def generate_streaming_gpt(
+        self,
+        prompt: str,
+        max_tokens: int = 500,
+        temperature: float = 0.7,
+        top_p: float = 0.9,
+        repetition_penalty: float = 1.1,
+        repetition_context_size: int = 20,
+    ) -> Iterator[str]:
+        # we will omit the use_chat_stop_token and stuff
+        #
+        if not self.model or not self.tokenizer:
+            raise RuntimeError("Model not loaded. Call load_model() first.")
+
+        effective_max_tokens = self.get_effective_max_tokens(max_tokens, False)
+
+        encoding = load_harmony_encoding(HarmonyEncodingName.HARMONY_GPT_OSS)
+        system = Message.from_role_and_content(Role.SYSTEM, SystemContent.new())
+        user = Message.from_role_and_content(Role.USER, prompt)
+
+        convo = Conversation.from_messages([system, user])
+        effective_max_tokens = self.get_effective_max_tokens(max_tokens, False)
+
+        prompt_tokens = encoding.render_conversation_for_completion(
+            convo, Role.ASSISTANT
+        )
+
+        prompt_array = mx.array(prompt_tokens)
+
+        # Track generation metrics
+        start_time = time.time()
+        tokens_generated = 0
+        ttft = None
+        # Create sampler with our parameters
+        sampler = make_sampler(temp=temperature, top_p=top_p)
+
+        # Create repetition penalty processor if needed
+        logits_processors = []
+        if repetition_penalty > 1.0:
+            logits_processors.append(
+                make_repetition_penalty(repetition_penalty, repetition_context_size)
+            )
+
+        # Generate tokens one by one for streaming
+        generator = generate_step(
+            prompt=prompt_array,
+            model=self.model,
+            max_tokens=effective_max_tokens,
+            sampler=sampler,
+            logits_processors=logits_processors if logits_processors else None,
+        )
+
+        parser = StreamableParser(encoding, Role.ASSISTANT)
+
+        # Collect tokens and yield text
+        generated_tokens = []
+        previous_decoded = ""
+        accumulated_response = ""  # Track full response for stop token detection
+
+        # Keep a sliding window of recent tokens for context
+        context_window = 10  # Decode last N tokens for proper spacing
+
+        for token, _ in generator:
+            # Token might be an array or an int
+            token_id = token.item() if hasattr(token, "item") else token
+            parser.process(token_id)
+            generated_tokens.append(token_id)
+
+            if ttft is None:
+                ttft = time.time() - start_time
+
+            yield parser.last_content_delta
+
+            tokens_generated += 1
+
+            # Check for EOS token - don't yield it
+
+            if token_id == self.tokenizer.eos_token_id:
+                break
+
+        # Yield metrics at the end
+        total_latency = time.time() - start_time
+        tokens_per_second = tokens_generated / total_latency if total_latency > 0 else 0
+        ttft_ms = (ttft * 1000) if ttft is not None else 0
+        metrics = GenerationMetrics(
+            ttft_ms=ttft_ms,
+            total_tokens=tokens_generated,
+            tokens_per_second=tokens_per_second,
+            total_latency_s=total_latency,
+        )
+        yield metrics
+
+        # Print generation statistics if verbose
+        if self.verbose:
+            generation_time = time.time() - start_time
+            tokens_per_second = (
+                tokens_generated / generation_time if generation_time > 0 else 0
+            )
+            print(
+                f"\n\nGenerated {tokens_generated} tokens in {generation_time:.1f}s ({tokens_per_second:.1f} tokens/s)"
+            )
+
     def generate_streaming(
         self,
         prompt: str,
@@ -731,12 +834,13 @@ class MLXRunner:
             convo, Role.ASSISTANT
         )
 
+        prompt_array = mx.array(prompt_tokens)
         sampler = make_sampler(temp=temperature, top_p=top_p)
         logits_processors = []
 
         # TODO: Maybe add repetition penalty
         generator = generate_step(
-            prompt=prompt_tokens,
+            prompt=prompt_array,
             model=self.model,
             max_tokens=effective_max_tokens,
             sampler=sampler,
@@ -760,9 +864,22 @@ class MLXRunner:
             generated_tokens, Role.ASSISTANT
         )
 
-        # TODO: need to format stuff here
+        print(f"{response}")
+        reasoning_texts = [
+            msg.content[0].text for msg in response if msg.channel == "analysis"
+        ]
+        final_texts = [
+            msg.content[0].text for msg in response if msg.channel != "analysis"
+        ]
 
-        return "ad"
+        # Concatenate the lists and turn into a single string.
+        all_texts = reasoning_texts + final_texts
+        combined_text = "\n\n".join(filter(None, all_texts))
+
+        # if they are 2 different fields, then
+        print(f"{combined_text}")
+
+        return combined_text
 
     def generate_batch(
         self,
@@ -802,7 +919,7 @@ class MLXRunner:
             and hasattr(self.tokenizer, "chat_template")
             and self.tokenizer.chat_template
         ):
-            print(f"applied chat template")
+            print("applied chat template")
             messages = [{"role": "user", "content": prompt}]
             formatted_prompt = self.tokenizer.apply_chat_template(
                 messages, tokenize=False, add_generation_prompt=True

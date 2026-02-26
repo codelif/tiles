@@ -1,7 +1,7 @@
 use crate::runtime::RunArgs;
 use crate::utils::config::{ConfigProvider, DefaultProvider, get_memory_path};
 use crate::utils::hf_model_downloader::*;
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use futures_util::StreamExt;
 use owo_colors::OwoColorize;
 use reqwest::{Client, StatusCode};
@@ -405,7 +405,7 @@ async fn chat(
     python_code: &str,
     g_reply: &str,
     run_args: &RunArgs,
-) -> Result<ChatResponse, String> {
+) -> Result<ChatResponse> {
     let client = Client::new();
 
     let body = json!({
@@ -429,7 +429,7 @@ async fn chat(
     let mut metrics: Option<BenchmarkMetrics> = None;
     let mut is_answer_start = false;
     while let Some(chunk) = stream.next().await {
-        let chunk = chunk.unwrap();
+        let chunk = chunk?;
         let s = String::from_utf8_lossy(&chunk);
         for line in s.lines() {
             if !line.starts_with("data: ") {
@@ -473,7 +473,8 @@ async fn chat(
             }
         }
     }
-    Err(String::from("request failed"))
+    println!("request failed");
+    Err(anyhow!("Result failed"))
 }
 
 fn convert_to_chat_response(
@@ -489,6 +490,7 @@ fn convert_to_chat_response(
 }
 
 fn extract_reply(content: &str, memory_mode: bool) -> String {
+    return content.to_owned();
     if !memory_mode && content.contains("**[Answer]**") {
         let list_a = content.split("**[Answer]**").collect::<Vec<&str>>();
         list_a[1].to_owned()
