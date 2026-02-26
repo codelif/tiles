@@ -25,8 +25,12 @@ struct Release {
     tag_name: String,
 }
 
-pub async fn try_update() -> Result<String> {
-    let latest_vsn = get_latest_version(RELEASES_BASE_ENDPOINT).await?;
+pub async fn try_update(latest_version: Option<String>) -> Result<String> {
+    let latest_vsn = if let Some(vsn) = latest_version {
+        vsn
+    } else {
+        get_latest_version(RELEASES_BASE_ENDPOINT).await?
+    };
 
     let req_vsn = VersionReq::parse(&latest_vsn)?;
     let current_vsn = Version::parse(env!("CARGO_PKG_VERSION"))
@@ -49,6 +53,21 @@ pub async fn try_update() -> Result<String> {
             .status()?;
 
         Ok("Update completed".to_owned())
+    }
+}
+
+//TODO: docs
+pub async fn is_update_available() -> Result<(bool, String, String)> {
+    let latest_vsn = get_latest_version(RELEASES_BASE_ENDPOINT).await?;
+
+    let req_vsn = VersionReq::parse(&latest_vsn)?;
+    let current_vsn = Version::parse(env!("CARGO_PKG_VERSION"))
+        .map_err(|e| anyhow!("Failed to parse pkg version due to {}", e))?;
+
+    if req_vsn.matches(&current_vsn) {
+        Ok((false, req_vsn.to_string(), current_vsn.to_string()))
+    } else {
+        Ok((true, req_vsn.to_string(), current_vsn.to_string()))
     }
 }
 
