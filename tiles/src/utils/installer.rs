@@ -56,7 +56,7 @@ pub async fn try_update(update_info: Option<UpdateInfo>) -> Result<String> {
             .status()?;
 
         Ok(format!(
-            "Tiles updagraded to {}",
+            "Tiles upgraded to {}",
             app_update_info.latest_version
         ))
     }
