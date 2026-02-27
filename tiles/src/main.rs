@@ -132,7 +132,9 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
             };
             commands::run_setup_for_ftue(&run_args)
                 .inspect_err(|e| eprintln!("Failed to setup Tiles due to {:?}", e))?;
-            commands::try_app_update().await?;
+            commands::try_app_update()
+                .await
+                .inspect_err(|e| eprintln!("Failed to update the app due to {:?}", e))?;
             commands::run(&runtime, run_args).await;
         }
         Some(Commands::Run {

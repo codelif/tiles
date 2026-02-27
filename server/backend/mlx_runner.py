@@ -3,9 +3,9 @@ Enhanced MLX model runner with direct API integration.
 Provides ollama-like run experience with streaming and interactive chat.
 """
 
-import sys
 import json
 import os
+import sys
 import time
 from collections.abc import Iterator
 from pathlib import Path
@@ -18,8 +18,9 @@ else:
 from mlx_lm import load
 from mlx_lm.generate import generate_step
 from mlx_lm.sample_utils import make_repetition_penalty, make_sampler
-from ..schemas import GenerationMetrics
+
 from ..reasoning_utils import ReasoningExtractor, StreamingReasoningParser
+from ..schemas import GenerationMetrics
 
 
 def get_model_context_length(model_path: str) -> int:
@@ -569,13 +570,15 @@ class MLXRunner:
                         if reasoning_parser:
                             yield from reasoning_parser.finalize()
                         total_latency = time.time() - start_time
-                        tokens_per_second = tokens_generated / total_latency if total_latency > 0 else 0
+                        tokens_per_second = (
+                            tokens_generated / total_latency if total_latency > 0 else 0
+                        )
                         ttft_ms = (ttft * 1000) if ttft is not None else 0
                         yield GenerationMetrics(
                             ttft_ms=ttft_ms,
                             total_tokens=tokens_generated,
                             tokens_per_second=tokens_per_second,
-                            total_latency_s=total_latency
+                            total_latency_s=total_latency,
                         )
                         return  # Stop generation without yielding stop token
 
@@ -610,13 +613,17 @@ class MLXRunner:
                             if reasoning_parser:
                                 yield from reasoning_parser.finalize()
                             total_latency = time.time() - start_time
-                            tokens_per_second = tokens_generated / total_latency if total_latency > 0 else 0
+                            tokens_per_second = (
+                                tokens_generated / total_latency
+                                if total_latency > 0
+                                else 0
+                            )
                             ttft_ms = (ttft * 1000) if ttft is not None else 0
                             yield GenerationMetrics(
                                 ttft_ms=ttft_ms,
                                 total_tokens=tokens_generated,
                                 tokens_per_second=tokens_per_second,
-                                total_latency_s=total_latency
+                                total_latency_s=total_latency,
                             )
                             return  # Stop generation without yielding stop token
 
@@ -649,7 +656,7 @@ class MLXRunner:
             ttft_ms=ttft_ms,
             total_tokens=tokens_generated,
             tokens_per_second=tokens_per_second,
-            total_latency_s=total_latency
+            total_latency_s=total_latency,
         )
         yield metrics
 

@@ -11,7 +11,7 @@ use tiles::utils::accounts::{
 use tiles::utils::config::{
     ConfigProvider, DefaultProvider, get_or_create_config, set_user_data_path,
 };
-use tiles::utils::installer::{is_update_available, try_update};
+use tiles::utils::installer::{UpdateInfo, get_update_info, try_update};
 use tiles::{core::health, runtime::RunArgs};
 
 use tilekit::modelfile::parse_from_file;
@@ -227,22 +227,24 @@ fn read_required_nickname() -> Result<String> {
     }
 }
 
-//TODO: docs
 pub async fn try_app_update() -> Result<()> {
-    let (available, latest_vsn, current_vsn) = is_update_available().await?;
-    if available {
-        let update_str = format!("Update available {} -> {}\n", current_vsn, latest_vsn);
+    let update_info: UpdateInfo = get_update_info().await?;
+    if update_info.can_update {
+        let update_str = format!(
+            "Update available {} -> {}\n",
+            update_info.current_version, update_info.latest_version
+        );
 
         println!("{}", update_str.yellow());
         println!("You can always update via `tiles update` later\n");
 
-        println!("{}", format!("Do you want to update now? (Y/N)").green());
+        println!("{}", "Do you want to update now? (Y/N)".to_string().green());
         let stdin = io::stdin();
         let mut input = String::new();
         stdin.read_line(&mut input)?;
         let clean_input = input.trim();
         if clean_input.to_lowercase() == "y" {
-            try_update(Some(latest_vsn)).await?;
+            try_update(Some(update_info)).await?;
         }
     }
 
