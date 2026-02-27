@@ -1,7 +1,10 @@
 use std::error::Error;
 
 use clap::{Args, Parser, Subcommand};
-use tiles::runtime::{RunArgs, build_runtime};
+use tiles::{
+    runtime::{RunArgs, build_runtime},
+    utils::installer,
+};
 mod commands;
 #[derive(Debug, Parser)]
 #[command(name = "tiles")]
@@ -49,6 +52,9 @@ enum Commands {
     },
     /// Manage user account
     Account(AccountArgs),
+
+    /// Update Tiles to latest version
+    Update,
 }
 
 #[derive(Debug, Args)]
@@ -126,6 +132,9 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
             };
             commands::run_setup_for_ftue(&run_args)
                 .inspect_err(|e| eprintln!("Failed to setup Tiles due to {:?}", e))?;
+            commands::try_app_update()
+                .await
+                .inspect_err(|e| eprintln!("Failed to update the app due to {:?}", e))?;
             commands::run(&runtime, run_args).await;
         }
         Some(Commands::Run {
@@ -161,6 +170,11 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
         }
         Some(Commands::Account(account_args)) => {
             commands::run_account_commands(account_args)?;
+        }
+        Some(Commands::Update) => {
+            println!("trying to update tiles");
+            let res = installer::try_update(None).await?;
+            println!("{}", res);
         }
     }
     Ok(())

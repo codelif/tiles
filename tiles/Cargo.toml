@@ -16,6 +16,10 @@ futures-util = "0.3"
 hf-hub = {version = "0.4", features = ["tokio"]}
 rustyline = "17.0"
 toml = "1.0.3"
+semver = "1.0"
+
 [dev-dependencies]
 tempfile = "3"
 keyring = { version = "3", features = ["apple-native"] }
+wiremock = "0.6.5"
+async-std = { version = "1.12", features = ["attributes"] }
