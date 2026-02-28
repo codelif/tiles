@@ -47,6 +47,7 @@ pub struct ChatResponse {
     // think: String,
     reply: String,
     code: String,
+    prev_response_id: String,
     metrics: Option<BenchmarkMetrics>,
 }
 
@@ -251,6 +252,8 @@ async fn start_repl(mlx_runtime: &MLXRuntime, modelname: &str, run_args: &RunArg
     let mut editor = Editor::<TilesHinter, DefaultHistory>::with_config(config).unwrap();
     editor.set_helper(Some(TilesHinter));
     let mut g_reply: String = "".to_owned();
+    let mut prev_response_id: String = String::from("");
+
     loop {
         let readline = editor.readline(">>> ");
         let input = match readline {
@@ -298,6 +301,7 @@ async fn start_repl(mlx_runtime: &MLXRuntime, modelname: &str, run_args: &RunArg
                     &python_code,
                     &g_reply,
                     run_args,
+                    &prev_response_id,
                 )
                 .await
                 {
@@ -314,6 +318,7 @@ async fn start_repl(mlx_runtime: &MLXRuntime, modelname: &str, run_args: &RunArg
                         if run_args.memory {
                             println!("\n{}", response.reply.trim());
                         } else {
+                            prev_response_id = response.prev_response_id;
                             println!("\n");
                         }
                         // Display benchmark metrics if available
@@ -371,7 +376,7 @@ async fn load_model(
     let body = json!({
         "model": model_name,
         "memory_path": memory_path,
-        "system_prompt": modelfile.system.clone().unwrap_or(default_modelfile.system.clone().unwrap())
+        "system_prompt": modelfile.system.clone().unwrap_or(default_modelfile.system.clone().unwrap_or("".to_owned()))
     });
 
     let res = client
@@ -405,29 +410,58 @@ async fn chat(
     python_code: &str,
     g_reply: &str,
     run_args: &RunArgs,
+    prev_response_id: &str,
 ) -> Result<ChatResponse> {
     let client = Client::new();
-
     let body = json!({
+        "model": model_name,
+        "input": [{
+            "type": "message",
+            "role": "user",
+            "content": input
+        },
+        {
+            "type": "message",
+            "role": "developer",
+            "content": ""
+        }],
+        "reasoning": {"effort": "low"},
+        "chat_start": chat_start,
+        "stream": true,
+        "previous_response_id": prev_response_id,
+        "python_code": python_code,
+        "messages": [{"role": "assistant", "content": g_reply}, {"role": "user", "content": input}]
+    });
+
+    let memory_body = json!({
         "model": model_name,
         "input": input,
         "chat_start": chat_start,
         "stream": true,
         "python_code": python_code,
         "messages": [{"role": "assistant", "content": g_reply}, {"role": "user", "content": input}]
+
     });
-    let api_url = if run_args.memory {
-        "http://127.0.0.1:6969/v1/chat/completions"
+    let res = if run_args.memory {
+        let api_url = "http://127.0.0.1:6969/v1/chat/completions";
+        client
+            .post(api_url)
+            .json(&memory_body)
+            .send()
+            .await
+            .unwrap()
     } else {
-        "http://127.0.0.1:6969/v1/responses"
+        let api_url = "http://127.0.0.1:6969/v1/responses";
+        client.post(api_url).json(&body).send().await.unwrap()
     };
-    let res = client.post(api_url).json(&body).send().await.unwrap();
 
     let mut stream = res.bytes_stream();
     let mut accumulated = String::new();
     println!();
     let mut metrics: Option<BenchmarkMetrics> = None;
     let mut is_answer_start = false;
+    let mut prev_response_id: String = String::from("");
+    let mut output_completed: bool = false;
     while let Some(chunk) = stream.next().await {
         let chunk = chunk?;
         let s = String::from_utf8_lossy(&chunk);
@@ -442,11 +476,12 @@ async fn chat(
                 return Ok(convert_to_chat_response(
                     &accumulated,
                     run_args.memory,
+                    prev_response_id,
                     metrics,
                 ));
             }
 
-            // Parse JSON
+            //TODO: This will break if we ask the model to give an essay and all
             let v: Value = serde_json::from_str(data).unwrap();
             // Check for metrics in the response
             if let Some(metrics_obj) = v.get("metrics") {
@@ -455,42 +490,54 @@ async fn chat(
             let model_text: Option<&str> = if run_args.memory {
                 v["choices"][0]["delta"]["content"].as_str()
             } else {
+                prev_response_id = serde_json::to_string(&v["id"])?;
+                // println!("prev_id {}", prev_response_id);
+                if serde_json::to_string(&v["status"])?.contains("completed") {
+                    output_completed = true;
+                }
+
                 v["output"][0]["content"][0]["text"].as_str()
             };
 
             if let Some(delta) = model_text {
-                accumulated.push_str(delta);
-                if !run_args.memory && delta.contains("**[Answer]**") {
-                    is_answer_start = true;
-                }
-                if !is_answer_start {
-                    print!("{}", delta.dimmed());
-                } else {
-                    print!("{}", delta);
+                if !run_args.memory {
+                    // TODO: This doesn't support non-harmonic models, so need to handle it
+                    if delta.contains("**[Answer]**") {
+                        is_answer_start = true
+                    }
+                    if !output_completed {
+                        accumulated.push_str(delta);
+                        if !is_answer_start {
+                            print!("{}", delta.dimmed());
+                        } else {
+                            print!("{}", delta);
+                        };
+                    }
                 }
                 use std::io::Write;
                 std::io::stdout().flush().ok();
             }
         }
     }
-    println!("request failed");
+
     Err(anyhow!("Result failed"))
 }
 
 fn convert_to_chat_response(
     content: &str,
     memory_mode: bool,
+    prev_response_id: String,
     metrics: Option<BenchmarkMetrics>,
 ) -> ChatResponse {
     ChatResponse {
         reply: extract_reply(content, memory_mode),
         code: extract_python(content),
+        prev_response_id,
         metrics,
     }
 }
 
 fn extract_reply(content: &str, memory_mode: bool) -> String {
-    return content.to_owned();
     if !memory_mode && content.contains("**[Answer]**") {
         let list_a = content.split("**[Answer]**").collect::<Vec<&str>>();
         list_a[1].to_owned()

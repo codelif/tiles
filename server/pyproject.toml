@@ -12,6 +12,16 @@ dependencies = [
     "openai-harmony==0.0.8"
 ]
 
+[project.optional-dependencies]
+# test = ["pytest"]
+# lint = ["ruff"]
+typecheck = ["openresponses-types"]
+dev = [
+    # "your_project[test]",
+    # "your_project[lint]",
+    "server[typecheck]",
+]
+
 [build-system]
 requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"

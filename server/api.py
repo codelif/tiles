@@ -89,10 +89,7 @@ async def create_chat_response(request: ResponsesRequest):
     Create a response with openResponse format
     """
 
-    global _messages
-
     if request.stream:
-        # Streaming response
         return StreamingResponse(
             runtime.backend.generate_response_chat_stream(request),
             media_type="text/plain",

@@ -444,38 +444,31 @@ class MLXRunner:
 
     def generate_streaming_gpt(
         self,
-        prompt: str,
+        conversation: Conversation,
         max_tokens: int = 500,
         temperature: float = 0.7,
         top_p: float = 0.9,
         repetition_penalty: float = 1.1,
         repetition_context_size: int = 20,
     ) -> Iterator[str]:
-        # we will omit the use_chat_stop_token and stuff
-        #
         if not self.model or not self.tokenizer:
             raise RuntimeError("Model not loaded. Call load_model() first.")
 
         effective_max_tokens = self.get_effective_max_tokens(max_tokens, False)
 
         encoding = load_harmony_encoding(HarmonyEncodingName.HARMONY_GPT_OSS)
-        system = Message.from_role_and_content(Role.SYSTEM, SystemContent.new())
-        user = Message.from_role_and_content(Role.USER, prompt)
-
-        convo = Conversation.from_messages([system, user])
         effective_max_tokens = self.get_effective_max_tokens(max_tokens, False)
 
         prompt_tokens = encoding.render_conversation_for_completion(
-            convo, Role.ASSISTANT
+            conversation, Role.ASSISTANT
         )
 
-        prompt_array = mx.array(prompt_tokens)
+        prompt_array = mx.array(prompt_tokens)  # pyright: ignore
 
-        # Track generation metrics
         start_time = time.time()
         tokens_generated = 0
         ttft = None
-        # Create sampler with our parameters
+
         sampler = make_sampler(temp=temperature, top_p=top_p)
 
         # Create repetition penalty processor if needed
@@ -488,7 +481,7 @@ class MLXRunner:
         # Generate tokens one by one for streaming
         generator = generate_step(
             prompt=prompt_array,
-            model=self.model,
+            model=self.model,  # pyright: ignore
             max_tokens=effective_max_tokens,
             sampler=sampler,
             logits_processors=logits_processors if logits_processors else None,
@@ -498,22 +491,26 @@ class MLXRunner:
 
         # Collect tokens and yield text
         generated_tokens = []
-        previous_decoded = ""
-        accumulated_response = ""  # Track full response for stop token detection
-
-        # Keep a sliding window of recent tokens for context
-        context_window = 10  # Decode last N tokens for proper spacing
-
+        is_analysis = None
+        is_final = None
         for token, _ in generator:
-            # Token might be an array or an int
             token_id = token.item() if hasattr(token, "item") else token
-            parser.process(token_id)
+            parser.process(token_id)  # pyright: ignore
+
             generated_tokens.append(token_id)
+
+            if is_analysis is None and parser.current_channel == "analysis":
+                is_analysis = True
+                yield "**[Reasoning]**\n\n"
+
+            if is_final is None and parser.current_channel == "final":
+                is_final = True
+                yield "\n\n---\n\n**[Answer]**\n\n"
 
             if ttft is None:
                 ttft = time.time() - start_time
 
-            yield parser.last_content_delta
+            yield parser.last_content_delta  # pyright: ignore
 
             tokens_generated += 1
 
@@ -806,7 +803,7 @@ class MLXRunner:
 
     def generate_batch_gpt(
         self,
-        prompt: str,
+        conversation: Conversation,
         max_tokens: int = 500,
         temperature: float = 0.7,
         top_p: float = 0.9,
@@ -824,14 +821,10 @@ class MLXRunner:
 
         # lets do stuff for harmoy
         encoding = load_harmony_encoding(HarmonyEncodingName.HARMONY_GPT_OSS)
-        system = Message.from_role_and_content(Role.SYSTEM, SystemContent.new())
-        user = Message.from_role_and_content(Role.USER, prompt)
-
-        convo = Conversation.from_messages([system, user])
         effective_max_tokens = self.get_effective_max_tokens(max_tokens, interactive)
 
         prompt_tokens = encoding.render_conversation_for_completion(
-            convo, Role.ASSISTANT
+            conversation, Role.ASSISTANT
         )
 
         prompt_array = mx.array(prompt_tokens)
@@ -864,7 +857,6 @@ class MLXRunner:
             generated_tokens, Role.ASSISTANT
         )
 
-        print(f"{response}")
         reasoning_texts = [
             msg.content[0].text for msg in response if msg.channel == "analysis"
         ]
@@ -877,7 +869,6 @@ class MLXRunner:
         combined_text = "\n\n".join(filter(None, all_texts))
 
         # if they are 2 different fields, then
-        print(f"{combined_text}")
 
         return combined_text
 
