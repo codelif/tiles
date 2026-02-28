@@ -113,17 +113,21 @@ pub fn get_memory_path() -> Result<String> {
         .get("data")
         .ok_or_else(|| anyhow!("memory section doesnt exist"))?
         .as_table()
-        .expect("Failed to parse to table (memory)");
+        .expect("Failed to parse to table (data)");
 
     let path = memory_config
         .get("path")
-        .ok_or_else(|| anyhow!("path doesnt exist (memory)"))?
+        .ok_or_else(|| anyhow!("path doesnt exist (data)"))?
         .as_str()
         .expect("parse failed (memory)");
     if path.is_empty() {
         Err(anyhow::anyhow!(format!("NOT SET")))
     } else {
-        Ok(path.to_owned())
+        Ok(PathBuf::from_str(path)?
+            .join("memory")
+            .to_str()
+            .ok_or_else(|| anyhow!("failed to convert path to str"))?
+            .to_owned())
     }
 }
 
