@@ -12,7 +12,7 @@
 <h1 align="center">Tiles</h1>
 
 <p align="center">
-  Your private AI assistant with offline memory<br />
+  Your private and secure AI assistant for everyday use<br />
   <a href="#getting-started">Getting Started</a> ·
   <a href="https://tiles.run/book">Documentation</a> ·
   <a href="#about">About</a> ·
@@ -28,7 +28,7 @@ There are two primary ways to work with Tiles, depending on whether you are an e
 
 ## Tiles CLI
 
-Tiles is a private AI assistant for everyday use. The CLI is the fastest way to get started and will feel familiar if you have used tools like Ollama or LM Studio.
+The CLI is the fastest way to get started and will feel familiar if you have used tools like Ollama or LM Studio.
 
 Install and run:
 
@@ -37,15 +37,14 @@ curl -fsSL https://tiles.run/install.sh | sh
 tiles
 ```
 
-This launches the recommended default memory model for your device.
-
 ## Tilekit SDK
 
-Tilekit is a Rust-based SDK for customizing local models and agent experiences within Tiles. It is built on open source specifications such as Modelfile and the Open Responses API.
+Tilekit is a Rust-based SDK for customizing local models and agent experiences within Tiles.
 
 It provides:
 - A Modelfile specification for defining and sharing models
 - Fast, efficient local deployment across consumer platforms
+- Built on open source specifications such as Open Responses API
 - Model composition and chaining, with MIR support currently in development
 
 ## Documentation
@@ -59,11 +58,9 @@ Our mission is to bring privacy technology to everyone.
 
 Tiles Privacy emerged from the [User & Agents](https://userandagents.com) community with a simple principle: software should understand you without taking anything from you.
 
-We build privacy-first engineering that does not compromise on usability. Identity and memory belong together, and Tiles enables you to own both through a personal user agent that runs on your device.
+We strive to deliver the best privacy-focused engineering while also offering unmatched convenience in our consumer products. We believe identity and memory belong together, and Tiles gives you a way to own both through your personal user agent.
 
-Tiles is designed for privacy-conscious users who want intelligence without handing over their memory to centralized providers. Our first offerings are:
-- A private AI assistant for everyday use
-- A Modelfile-based SDK for building and customizing local models and agents
+Tiles is built for privacy conscious users who want intelligence without renting their memory to centralized providers. 
 
 We are seeking design partners for training workloads that align with our goal of a verifiable privacy perimeter. Contact us at hello@tiles.run.
 
@@ -79,7 +76,7 @@ Start here:
 
 This project is dual-licensed under MIT and Apache 2.0:
 
-- MIT License: https://github.com/tilesprivacy/tiles/blob/main/LICENSE-MIT.txt
-- Apache License 2.0: https://github.com/tilesprivacy/tiles/blob/main/LICENSE-APACHE.txt
+- [MIT License](https://github.com/tilesprivacy/tiles/blob/main/LICENSE-MIT.txt)
+- [Apache License 2.0](https://github.com/tilesprivacy/tiles/blob/main/LICENSE-APACHE.txt)
 
 You may choose either license, or both. Apache 2.0 is included for its explicit patent protections.
