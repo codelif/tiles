@@ -34,21 +34,19 @@ Install and run:
 
 ```bash
 curl -fsSL https://tiles.run/install.sh | sh
-tiles run
+tiles
 ```
 
 This launches the recommended default memory model for your device.
 
 ## Tilekit SDK
 
-Tilekit is a Modelfile-based Rust SDK that powers all model deployment in Tiles.
+Tilekit is a Rust-based SDK for customizing local models and agent experiences within Tiles. It is built on open source specifications such as Modelfile and the Open Responses API.
 
 It provides:
 - A Modelfile specification for defining and sharing models
 - Fast, efficient local deployment across consumer platforms
 - Model composition and chaining, with MIR support currently in development
-
-Tilekit is the foundation for building custom local models and agent experiences within Tiles.
 
 ## Documentation
 
@@ -81,7 +79,7 @@ Start here:
 
 This project is dual-licensed under MIT and Apache 2.0:
 
-- MIT License: https://github.com/tileshq/tilekit/blob/main/LICENSE-MIT.txt
-- Apache License 2.0: https://github.com/tileshq/tilekit/blob/main/LICENSE-APACHE.txt
+- MIT License: https://github.com/tilesprivacy/tiles/blob/main/LICENSE-MIT.txt
+- Apache License 2.0: https://github.com/tilesprivacy/tiles/blob/main/LICENSE-APACHE.txt
 
 You may choose either license, or both. Apache 2.0 is included for its explicit patent protections.
