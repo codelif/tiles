@@ -9,6 +9,8 @@ dependencies = [
     "mlx-lm",
     "black",
     "huggingface-hub>=0.34.0",
+    "openai-harmony==0.0.8",
+    "openresponses-types"
 ]
 
 [build-system]

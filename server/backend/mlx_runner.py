@@ -7,9 +7,12 @@ import json
 import os
 import sys
 import time
+from ast import Yield
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Dict, Optional
+
+from mlx_lm.tokenizer_utils import TokenizerWrapper
 
 if sys.platform == "darwin":
     import mlx.core as mx
@@ -18,6 +21,15 @@ else:
 from mlx_lm import load
 from mlx_lm.generate import generate_step
 from mlx_lm.sample_utils import make_repetition_penalty, make_sampler
+from openai_harmony import (
+    Conversation,
+    HarmonyEncodingName,
+    Message,
+    Role,
+    StreamableParser,
+    SystemContent,
+    load_harmony_encoding,
+)
 
 from ..reasoning_utils import ReasoningExtractor, StreamingReasoningParser
 from ..schemas import GenerationMetrics
@@ -62,8 +74,25 @@ def get_model_context_length(model_path: str) -> int:
 class MLXRunner:
     """Direct MLX model runner with streaming and interactive capabilities."""
 
+    model_path: Path
+    adapter_path: str | None
+    model: object | None
+    tokenizer: TokenizerWrapper | None
+    _memory_baseline: float | None
+    _stop_tokens: list[str] | None
+    _message_end_tokens: list[str] | None
+    _chat_stop_tokens: list[str] | None
+    _context_length: int | None
+    _is_reasoning_model: bool
+    _reasoning_start: str | None
+    _reasoning_end: str | None
+    _final_start: str | None
+    verbose: bool
+    _model_loaded: bool
+    _context_entered: bool
+
     def __init__(
-        self, model_path: str, adapter_path: Optional[str] = None, verbose: bool = False
+        self, model_path: str, adapter_path: str | None = None, verbose: bool = False
     ):
         """Initialize the runner with a model.
 
@@ -113,6 +142,8 @@ class MLXRunner:
         return False  # Don't suppress exceptions
 
     def load_model(self):
+        if mx is None:
+            raise RuntimeError("MLX runtime not available in current runtime")
         """Load the MLX model and tokenizer."""
         if self._model_loaded:
             if self.verbose:
@@ -132,7 +163,7 @@ class MLXRunner:
 
         try:
             # Load model and tokenizer
-            self.model, self.tokenizer = load(
+            self.model, self.tokenizer, *_ = load(
                 str(self.model_path), adapter_path=self.adapter_path
             )
 
@@ -410,6 +441,105 @@ class MLXRunner:
             server_limit = self._context_length // 2
             return min(requested_tokens or server_limit, server_limit)
 
+    def generate_streaming_gpt(
+        self,
+        conversation: Conversation,
+        max_tokens: int = 500,
+        temperature: float = 0.7,
+        top_p: float = 0.9,
+        repetition_penalty: float = 1.1,
+        repetition_context_size: int = 20,
+    ) -> Iterator[str]:
+        if not self.model or not self.tokenizer:
+            raise RuntimeError("Model not loaded. Call load_model() first.")
+
+        effective_max_tokens = self.get_effective_max_tokens(max_tokens, False)
+
+        encoding = load_harmony_encoding(HarmonyEncodingName.HARMONY_GPT_OSS)
+        effective_max_tokens = self.get_effective_max_tokens(max_tokens, False)
+
+        prompt_tokens = encoding.render_conversation_for_completion(
+            conversation, Role.ASSISTANT
+        )
+
+        prompt_array = mx.array(prompt_tokens)  # pyright: ignore
+
+        start_time = time.time()
+        tokens_generated = 0
+        ttft = None
+
+        sampler = make_sampler(temp=temperature, top_p=top_p)
+
+        # Create repetition penalty processor if needed
+        logits_processors = []
+        if repetition_penalty > 1.0:
+            logits_processors.append(
+                make_repetition_penalty(repetition_penalty, repetition_context_size)
+            )
+
+        # Generate tokens one by one for streaming
+        generator = generate_step(
+            prompt=prompt_array,
+            model=self.model,  # pyright: ignore
+            max_tokens=effective_max_tokens,
+            sampler=sampler,
+            logits_processors=logits_processors if logits_processors else None,
+        )
+
+        parser = StreamableParser(encoding, Role.ASSISTANT)
+
+        # Collect tokens and yield text
+        generated_tokens = []
+        is_analysis = None
+        is_final = None
+        for token, _ in generator:
+            token_id = token.item() if hasattr(token, "item") else token
+            parser.process(token_id)  # pyright: ignore
+
+            generated_tokens.append(token_id)
+
+            if is_analysis is None and parser.current_channel == "analysis":
+                is_analysis = True
+                yield "**[Reasoning]**\n\n"
+
+            if is_final is None and parser.current_channel == "final":
+                is_final = True
+                yield "\n\n---\n\n**[Answer]**\n\n"
+
+            if ttft is None:
+                ttft = time.time() - start_time
+
+            yield parser.last_content_delta  # pyright: ignore
+
+            tokens_generated += 1
+
+            # Check for EOS token - don't yield it
+
+            if token_id == self.tokenizer.eos_token_id:
+                break
+
+        # Yield metrics at the end
+        total_latency = time.time() - start_time
+        tokens_per_second = tokens_generated / total_latency if total_latency > 0 else 0
+        ttft_ms = (ttft * 1000) if ttft is not None else 0
+        metrics = GenerationMetrics(
+            ttft_ms=ttft_ms,
+            total_tokens=tokens_generated,
+            tokens_per_second=tokens_per_second,
+            total_latency_s=total_latency,
+        )
+        yield metrics
+
+        # Print generation statistics if verbose
+        if self.verbose:
+            generation_time = time.time() - start_time
+            tokens_per_second = (
+                tokens_generated / generation_time if generation_time > 0 else 0
+            )
+            print(
+                f"\n\nGenerated {tokens_generated} tokens in {generation_time:.1f}s ({tokens_per_second:.1f} tokens/s)"
+            )
+
     def generate_streaming(
         self,
         prompt: str,
@@ -670,6 +800,77 @@ class MLXRunner:
                 f"\n\nGenerated {tokens_generated} tokens in {generation_time:.1f}s ({tokens_per_second:.1f} tokens/s)"
             )
 
+    def generate_batch_gpt(
+        self,
+        conversation: Conversation,
+        max_tokens: int = 500,
+        temperature: float = 0.7,
+        top_p: float = 0.9,
+        repetition_penalty: float = 1.0,
+        repetition_context_size: int = 20,
+        use_chat_template: bool = True,
+        interactive: bool = False,
+    ) -> str:
+        """
+        Generate text in batch mode (non-streaming) but for
+        """
+
+        if not self.model or not self.tokenizer:
+            raise RuntimeError("Model not loaded. Call load_model() first.")
+
+        # lets do stuff for harmoy
+        encoding = load_harmony_encoding(HarmonyEncodingName.HARMONY_GPT_OSS)
+        effective_max_tokens = self.get_effective_max_tokens(max_tokens, interactive)
+
+        prompt_tokens = encoding.render_conversation_for_completion(
+            conversation, Role.ASSISTANT
+        )
+
+        prompt_array = mx.array(prompt_tokens)
+        sampler = make_sampler(temp=temperature, top_p=top_p)
+        logits_processors = []
+
+        # TODO: Maybe add repetition penalty
+        generator = generate_step(
+            prompt=prompt_array,
+            model=self.model,
+            max_tokens=effective_max_tokens,
+            sampler=sampler,
+            logits_processors=logits_processors if logits_processors else None,
+        )
+
+        generated_tokens = []
+        all_tokens = []
+
+        for token, _ in generator:
+            # Token might be an array or an int
+            token_id = token.item() if hasattr(token, "item") else token
+            generated_tokens.append(token_id)
+            all_tokens.append(token_id)
+
+            # Check for EOS token - don't yield it
+            if token_id == self.tokenizer.eos_token_id:
+                break
+
+        response = encoding.parse_messages_from_completion_tokens(
+            generated_tokens, Role.ASSISTANT
+        )
+
+        reasoning_texts = [
+            msg.content[0].text for msg in response if msg.channel == "analysis"
+        ]
+        final_texts = [
+            msg.content[0].text for msg in response if msg.channel != "analysis"
+        ]
+
+        # Concatenate the lists and turn into a single string.
+        all_texts = reasoning_texts + final_texts
+        combined_text = "\n\n".join(filter(None, all_texts))
+
+        # if they are 2 different fields, then
+
+        return combined_text
+
     def generate_batch(
         self,
         prompt: str,
@@ -712,6 +913,7 @@ class MLXRunner:
             formatted_prompt = self.tokenizer.apply_chat_template(
                 messages, tokenize=False, add_generation_prompt=True
             )
+
         else:
             formatted_prompt = prompt
 
@@ -753,6 +955,7 @@ class MLXRunner:
             if token_id == self.tokenizer.eos_token_id:
                 break
 
+        print(f"all tokens\n{all_tokens}")
         # Decode all tokens together for proper spacing
         full_response = self.tokenizer.decode(all_tokens)
 
@@ -768,7 +971,6 @@ class MLXRunner:
             response, use_chat_stop_tokens=False
         )
 
-        # Format reasoning models output
         response = self._format_reasoning_response(response)
 
         generation_time = time.time() - start_time

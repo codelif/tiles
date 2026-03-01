@@ -20,7 +20,7 @@ use toml::Table;
 
 use crate::{AccountArgs, AccountCommands};
 
-const FTUE_VERSION_TITLE: &str = "Tiles v0.4.1";
+const FTUE_VERSION_TITLE: &str = "Tiles";
 const FTUE_HEADER: &str = "Initializing local account...";
 const FTUE_ASCII_ART: &str = r#"
               ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
@@ -41,7 +41,7 @@ const FTUE_ASCII_ART: &str = r#"
                  ▓▓▓▓▓▓▓▓
 "#;
 const FTUE_REASSURANCE_LOCAL: &str = "On-device by default.";
-const FTUE_REASSURANCE_NO_CLOUD: &str = "Online models and identity optional.";
+// const FTUE_REASSURANCE_NO_CLOUD: &str = "Online models and identity optional.";
 const FTUE_NICKNAME_PROMPT: &str = "Choose a username:";
 const FTUE_NICKNAME_REQUIRED: &str = "Username is required. Please enter a username:";
 const FTUE_ACCOUNT_CREATED: &str = "✓ Account created";
@@ -52,6 +52,7 @@ const FTUE_DATA_DIR_PROMPT: &str = "Data directory";
 const FTUE_DATA_DIR_CHANGE_HINT: &str = "Change data path later:";
 const FTUE_DATA_DIR_CHANGE_COMMAND: &str = "tiles data set-path <PATH>";
 const FTUE_CUSTOM_DATA_PROMPT: &str = "Use a custom data directory now? [y/N]";
+const FTUE_UPDATE_COMMAND: &str = "tiles update";
 
 pub fn run_setup_for_ftue(run_args: &RunArgs) -> Result<()> {
     // initializes config directory
@@ -62,14 +63,13 @@ pub fn run_setup_for_ftue(run_args: &RunArgs) -> Result<()> {
     let root_config = get_or_create_config()?;
     let root_user_details = get_root_user_details(&root_config)?;
     println!("{}", FTUE_ASCII_ART.blue());
-    println!("{}", FTUE_VERSION_TITLE);
+    println!("{} {}", FTUE_VERSION_TITLE, env!("CARGO_PKG_VERSION"));
     println!();
 
     if root_user_details.id.is_empty() {
         println!("{}", FTUE_HEADER);
         println!();
         println!("{}", FTUE_REASSURANCE_LOCAL);
-        println!("{}", FTUE_REASSURANCE_NO_CLOUD);
         println!();
         // FTUE
         setup_root_account(root_config.clone())?;
@@ -236,9 +236,10 @@ pub async fn try_app_update() -> Result<()> {
         );
 
         println!("{}", update_str.yellow());
-        println!("You can always update via `tiles update` later\n");
+        println!("You can always update Tiles later via:");
+        println!("  {}\n", FTUE_UPDATE_COMMAND.bright_blue().bold());
+        println!("{}", "Do you want to update now? (Y/n)".to_string().green());
 
-        println!("{}", "Do you want to update now? (Y/N)".to_string().green());
         let stdin = io::stdin();
         let mut input = String::new();
         stdin.read_line(&mut input)?;
@@ -341,13 +342,8 @@ mod tests {
 
     #[test]
     fn ftue_copy_matches_expected_constants() {
-        assert_eq!(FTUE_VERSION_TITLE, "Tiles v0.4.1");
         assert_eq!(FTUE_HEADER, "Initializing local account...");
         assert_eq!(FTUE_REASSURANCE_LOCAL, "On-device by default.");
-        assert_eq!(
-            FTUE_REASSURANCE_NO_CLOUD,
-            "Online models and identity optional."
-        );
         assert_eq!(FTUE_NICKNAME_PROMPT, "Choose a username:");
         assert_eq!(FTUE_ACCOUNT_LABEL, "Account");
         assert_eq!(FTUE_ACCOUNT_DETAILS_HINT, "View full details:");
@@ -355,7 +351,7 @@ mod tests {
         assert_eq!(FTUE_DATA_DIR_CHANGE_HINT, "Change data path later:");
         assert_eq!(
             FTUE_CUSTOM_DATA_PROMPT,
-            "Use a custom data directory now? [y/N]"
+            "Use a custom data directory now? [Y/N]"
         );
     }
 
