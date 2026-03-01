@@ -304,7 +304,7 @@ def handle_response_input(request: ResponsesRequest):
         for item in request.input:
             match item:
                 case UserMessageItemParam():
-                    _user_msg_item = item
+                    user_msg_item = item
                     user_input_content = item.content.root  # pyright: ignore
                 case DeveloperMessageItemParam():
                     dev_msg_item = item
@@ -413,7 +413,7 @@ async def generate_response_chat_stream(
             yield f"data: {json.dumps(chunk)}\n\n"
 
     except Exception as e:
-        error = ({"message": str(e), "code": "500"},)
+        error = {"message": str(e), "code": "500"}
         incomplete_details = {"reason": "internal server error"}
 
         error_chunk = {
@@ -487,7 +487,6 @@ async def generate_response_chat_stream(
 async def generate_response_chat(request: ResponsesRequest):
     """Generate chat responses for Responses API"""
 
-    print(f"{request.input}")
     model = request.model
     response_id = f"resp-{uuid.uuid4()}"
     msg_id = f"msg_{uuid.uuid4()}"

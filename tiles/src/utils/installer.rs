@@ -11,7 +11,7 @@ use std::{
 
 use anyhow::{Result, anyhow};
 use reqwest::{Client, header::HeaderMap};
-use semver::{Version, VersionReq};
+use semver::Version;
 use serde::Deserialize;
 
 const RELEASES_BASE_ENDPOINT: &str = "https://api.github.com";
@@ -64,20 +64,19 @@ pub async fn try_update(update_info: Option<UpdateInfo>) -> Result<String> {
 
 pub async fn get_update_info() -> Result<UpdateInfo> {
     let latest_vsn = get_latest_version(RELEASES_BASE_ENDPOINT).await?;
-
-    let req_vsn = VersionReq::parse(&latest_vsn)?;
+    let req_vsn = Version::parse(&latest_vsn)?;
     let current_vsn = Version::parse(env!("CARGO_PKG_VERSION"))
         .map_err(|e| anyhow!("Failed to parse pkg version due to {}", e))?;
 
-    if req_vsn.matches(&current_vsn) {
+    if req_vsn.cmp_precedence(&current_vsn).is_gt() {
         Ok(UpdateInfo {
-            can_update: false,
+            can_update: true,
             latest_version: req_vsn.to_string(),
             current_version: current_vsn.to_string(),
         })
     } else {
         Ok(UpdateInfo {
-            can_update: true,
+            can_update: false,
             latest_version: req_vsn.to_string(),
             current_version: current_vsn.to_string(),
         })

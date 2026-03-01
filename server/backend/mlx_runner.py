@@ -286,7 +286,6 @@ class MLXRunner:
         if hasattr(self.tokenizer, "name_or_path"):
             name_or_path = str(getattr(self.tokenizer, "name_or_path", "")).lower()
             model_type = ReasoningExtractor.detect_model_type(name_or_path)
-            print(f"nane or path {name_or_path} {model_type}")
             if model_type:
                 # This is a reasoning model
                 self._is_reasoning_model = True
@@ -910,12 +909,10 @@ class MLXRunner:
             and hasattr(self.tokenizer, "chat_template")
             and self.tokenizer.chat_template
         ):
-            print("applied chat template")
             messages = [{"role": "user", "content": prompt}]
             formatted_prompt = self.tokenizer.apply_chat_template(
                 messages, tokenize=False, add_generation_prompt=True
             )
-            print(f"prompt\n{formatted_prompt}")
 
         else:
             formatted_prompt = prompt
@@ -974,16 +971,7 @@ class MLXRunner:
             response, use_chat_stop_tokens=False
         )
 
-        # Format reasoning models output
-        # TODO: this is where we are supposed to use harmony
-        print(f"Model response \n{response}")
-
-        # encoding.parse_messages_from_completion_tokens()
-        print(
-            f"\n harmonied response\n{encoding.parse_messages_from_completion_tokens(all_tokens, Role.ASSISTANT)}"
-        )
         response = self._format_reasoning_response(response)
-        print(f"formatted response \n{response}")
 
         generation_time = time.time() - start_time
 

@@ -350,12 +350,12 @@ async fn start_repl(mlx_runtime: &MLXRuntime, modelname: &str, run_args: &RunArg
     }
 }
 
-pub async fn ping() -> Result<(), String> {
+pub async fn ping() -> Result<()> {
     let client = Client::new();
     let res = client.get("http://127.0.0.1:6969/ping").send().await;
 
     match res {
-        Err(_) => Err(String::from("Server is down")),
+        Err(err) => Err(anyhow!("Server down due to {:?}", err)),
         _ => Ok(()),
     }
 }
@@ -419,7 +419,7 @@ async fn chat(
             "role": "developer",
             "content": ""
         }],
-        "reasoning": {"effort": "low"},
+        "reasoning": {"effort": "medium"},
         "chat_start": chat_start,
         "stream": true,
         "previous_response_id": prev_response_id,
@@ -438,15 +438,10 @@ async fn chat(
     });
     let res = if run_args.memory {
         let api_url = "http://127.0.0.1:6969/v1/chat/completions";
-        client
-            .post(api_url)
-            .json(&memory_body)
-            .send()
-            .await
-            .unwrap()
+        client.post(api_url).json(&memory_body).send().await?
     } else {
         let api_url = "http://127.0.0.1:6969/v1/responses";
-        client.post(api_url).json(&body).send().await.unwrap()
+        client.post(api_url).json(&body).send().await?
     };
 
     let mut stream = res.bytes_stream();
@@ -507,6 +502,8 @@ async fn chat(
                             print!("{}", delta);
                         };
                     }
+                } else {
+                    accumulated.push_str(delta);
                 }
                 use std::io::Write;
                 std::io::stdout().flush().ok();
@@ -560,7 +557,7 @@ async fn wait_until_server_is_up() {
             Ok(()) => {
                 break;
             }
-            Err(_) => {
+            Err(_err) => {
                 println!("tiling...");
                 sleep(Duration::from_secs(5)).await;
             }

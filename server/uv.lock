@@ -537,15 +537,8 @@ dependencies = [
     { name = "huggingface-hub" },
     { name = "mlx-lm" },
     { name = "openai-harmony" },
+    { name = "openresponses-types" },
     { name = "uvicorn" },
-]
-
-[package.optional-dependencies]
-dev = [
-    { name = "openresponses-types" },
-]
-typecheck = [
-    { name = "openresponses-types" },
 ]
 
 [package.metadata]
@@ -555,11 +548,9 @@ requires-dist = [
     { name = "huggingface-hub", specifier = ">=0.34.0" },
     { name = "mlx-lm" },
     { name = "openai-harmony", specifier = "==0.0.8" },
-    { name = "openresponses-types", marker = "extra == 'typecheck'" },
-    { name = "server", extras = ["typecheck"], marker = "extra == 'dev'" },
+    { name = "openresponses-types" },
     { name = "uvicorn" },
 ]
-provides-extras = ["typecheck", "dev"]
 
 [[package]]
 name = "sniffio"

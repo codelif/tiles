@@ -9,17 +9,8 @@ dependencies = [
     "mlx-lm",
     "black",
     "huggingface-hub>=0.34.0",
-    "openai-harmony==0.0.8"
-]
-
-[project.optional-dependencies]
-# test = ["pytest"]
-# lint = ["ruff"]
-typecheck = ["openresponses-types"]
-dev = [
-    # "your_project[test]",
-    # "your_project[lint]",
-    "server[typecheck]",
+    "openai-harmony==0.0.8",
+    "openresponses-types"
 ]
 
 [build-system]

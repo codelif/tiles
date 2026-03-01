@@ -27,7 +27,8 @@ requirements = [
     "mlx-lm==0.28.3",
     "black==25.9.0",
     "huggingface-hub==0.35.0",
-    "openai-harmony==0.0.8"
+    "openai-harmony==0.0.8",
+    "openresponses-types"
 ]
 
 [tool.uv]

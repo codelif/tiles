@@ -16,7 +16,7 @@ echo "🚀 Building ${BINARY_NAME} (${TARGET} mode)..."
 
 cargo build -p tiles --${TARGET}
 
-rm -rf "${DIST_DIR}"
+# rm -rf "${DIST_DIR}"
 
 mkdir -p "${DIST_DIR}/tmp"
 cp "target/${TARGET}/${BINARY_NAME}" "${DIST_DIR}/tmp/"
