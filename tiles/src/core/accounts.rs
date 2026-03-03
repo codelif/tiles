@@ -1,10 +1,17 @@
 // Stuff related to account and identity system
 use anyhow::{Result, anyhow};
-use std::fmt::Display;
+use std::{
+    fmt::{Debug, Display},
+    time::{SystemTime, UNIX_EPOCH},
+};
 use tilekit::accounts::create_identity;
 use toml::Table;
+use uuid::Uuid;
 
-use crate::utils::config::save_config;
+use crate::{
+    core::storage::db::{DBTYPE, get_db_conn},
+    utils::config::{get_or_create_config, save_config},
+};
 const ROOT_USER_CONFIG_KEY: &str = "root-user";
 
 const ROOT_PARSE_ERROR: &str = "Failed to parse root user config";
@@ -12,6 +19,36 @@ const ROOT_PARSE_ERROR: &str = "Failed to parse root user config";
 pub struct RootUser {
     pub id: String,
     pub nickname: String,
+}
+
+pub enum ACCOUNT {
+    LOCAL,
+}
+
+impl ToString for ACCOUNT {
+    fn to_string(&self) -> String {
+        match self {
+            Self::LOCAL => String::from("local"),
+        }
+    }
+}
+
+impl Debug for ACCOUNT {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.to_string())
+    }
+}
+//TODO: add doc, mirrors user table schema
+#[derive(Debug)]
+pub struct User {
+    id: uuid::Uuid,
+    user_id: String,
+    username: String,
+    active_profile: bool,
+    account_type: ACCOUNT,
+    root: bool,
+    created_at: u64,
+    updated_at: u64,
 }
 
 impl Display for RootUser {
@@ -133,6 +170,41 @@ pub fn set_nickname(config: &Table, nickname: &str) -> Result<Table> {
             toml::Value::String(nickname.to_owned()),
         );
         Ok(root_user_table)
+    }
+}
+
+pub fn save_root_account_db() -> Result<()> {
+    let conn = get_db_conn(DBTYPE::COMMON)?;
+    let config = get_or_create_config()?;
+    let root_user = get_root_user_details(&config)?;
+    let user = User {
+        id: Uuid::now_v7(),
+        user_id: root_user.id,
+        username: root_user.nickname,
+        account_type: ACCOUNT::LOCAL,
+        active_profile: true,
+        root: true,
+        created_at: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time went backwards")
+            .as_secs(),
+        updated_at: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time went backwards")
+            .as_secs(),
+    };
+
+    let mut fetch_root_user = conn.prepare("select id from users where root = true")?;
+
+    match fetch_root_user.query_one([], |_row| Ok(())) {
+        Err(rusqlite::Error::QueryReturnedNoRows) => {
+            conn.execute("insert into users (id, user_id, username, active_profile, account_type, root) values
+                (?1, ?2, ?3,?4, ?5, ?6)", (&user.id.to_string(), &user.user_id, &user.username, &user.active_profile,
+                    user.account_type.to_string(),  &user.root))?;
+            Ok(())
+        }
+        Err(_err) => return Err(anyhow!("Fetching user from db failed")),
+        _ => Ok(()),
     }
 }
 
