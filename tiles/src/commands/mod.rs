@@ -146,11 +146,6 @@ fn setup_root_account(root_config: Table) -> Result<()> {
 }
 
 fn setup_default_user_data_dir<T: ConfigProvider>(config_provider: &T) -> Result<()> {
-    // gets default data dir -> ~/.local/share/tiles/data
-    // shows this is the data dir
-    // asks if they want to change, if y, asks for new loc, else keep current one
-    // writes the default/new path to in config.toml data->path
-    //
     let user_data_dir = config_provider.get_user_data_dir()?;
     println!("{}", FTUE_DATA_DIR_PROMPT);
     println!("  {}", user_data_dir.display());
