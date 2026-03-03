@@ -1,10 +1,7 @@
 use crate::runtime::RunArgs;
-use crate::utils::config::{
-    ConfigProvider, DefaultProvider, create_default_memory_folder, get_default_memory_path,
-    get_memory_path, set_memory_path,
-};
+use crate::utils::config::{ConfigProvider, DefaultProvider, get_memory_path};
 use crate::utils::hf_model_downloader::*;
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use futures_util::StreamExt;
 use owo_colors::OwoColorize;
 use reqwest::{Client, StatusCode};
@@ -16,12 +13,11 @@ use rustyline::validate::Validator;
 use rustyline::{Config, Editor, Helper};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::fs;
-use std::fs::File;
+use std::fs::OpenOptions;
 use std::path::PathBuf;
+use std::process::Command;
 use std::process::Stdio;
 use std::time::Duration;
-use std::{io, process::Command};
 use tilekit::modelfile::Modelfile;
 use tokio::time::sleep;
 
@@ -51,6 +47,7 @@ pub struct ChatResponse {
     // think: String,
     reply: String,
     code: String,
+    prev_response_id: String,
     metrics: Option<BenchmarkMetrics>,
 }
 
@@ -101,12 +98,16 @@ impl MLXRuntime {
         }
 
         let config_dir = DefaultProvider.get_config_dir()?;
+        let data_dir = DefaultProvider.get_data_dir()?;
         let mut server_dir = DefaultProvider.get_lib_dir()?;
         let pid_file = config_dir.join("server.pid");
-        fs::create_dir_all(&config_dir).context("Failed to create config directory")?;
         server_dir = server_dir.join("server");
-        let stdout_log = File::create(config_dir.join("server.out.log"))?;
-        let stderr_log = File::create(config_dir.join("server.err.log"))?;
+        let stdout_log = OpenOptions::new()
+            .append(true)
+            .open(data_dir.join("logs/server.out.log"))?;
+        let stderr_log = OpenOptions::new()
+            .append(true)
+            .open(data_dir.join("logs/server.err.log"))?;
         let server_path = server_dir.join("stack_export_prod/app-server/bin/python");
         server_dir.pop();
         let child = Command::new(server_path)
@@ -203,13 +204,7 @@ fn handle_slash_command(input: &str, modelname: &str) -> SlashCommand {
 }
 
 fn show_help(model_name: &str) {
-    println!("\n=== Tiles REPL ===\n");
-
-    println!("Model:");
-    println!("  {}", model_name);
-
-    println!("Directory:");
-    println!("  {}\n", get_memory_path().unwrap());
+    let _ = model_name;
 
     println!("Available Commands:");
     println!("  /help       Show this help message");
@@ -235,7 +230,7 @@ async fn run_model_with_server(
         let _ = wait_until_server_is_up().await;
     }
     // loading the model from mem-agent via daemon server
-    let memory_path = get_or_set_memory_path().context("Setting/Retrieving memory_path failed")?;
+    let memory_path = get_memory_path().context("Setting/Retrieving memory_path failed")?;
     let modelname = modelfile.from.as_ref().unwrap();
     match load_model(&modelfile, &default_modelfile, &memory_path).await {
         Ok(_) => start_repl(mlx_runtime, modelname, run_args).await,
@@ -244,84 +239,15 @@ async fn run_model_with_server(
     Ok(())
 }
 
-fn get_or_set_memory_path() -> Result<String> {
-    match get_memory_path() {
-        Ok(memory_path) => Ok(memory_path),
-        Err(_err) => {
-            let stdin = io::stdin();
-            let default_memory_pathbuf = get_default_memory_path()?;
-            let mut default_memory = default_memory_pathbuf
-                .to_str()
-                .ok_or_else(|| anyhow::anyhow!("Invalid path"))?;
-            let mut chose_yes = false;
-
-            println!(
-                "{}",
-                format!(
-                    "Default Memory location will be set at {:?}\n",
-                    default_memory
-                )
-                .yellow()
-            );
-            println!("You can always change the location with `tiles memory set-path <PATH>`\n");
-            println!("Do you want to add a custom memory location right now instead? [Y/N]");
-            let mut input = String::new();
-            loop {
-                input.clear();
-                stdin.read_line(&mut input)?;
-                input = input.trim().to_owned();
-                if (input == "Y" || input == "y") || chose_yes {
-                    if !chose_yes {
-                        chose_yes = true;
-                        println!("Add the path for your custom memory");
-                        continue;
-                    }
-                    match set_memory_path(input.as_str()) {
-                        Ok(msg) => {
-                            default_memory = input.as_str();
-                            println!("{}", msg.green());
-                            println!(
-                                "You can always change the location with `tiles memory set-path <PATH>`\n"
-                            );
-                            break;
-                        }
-                        Err(err) => {
-                            let error_msg =
-                                format!("Try again, Error setting memory path due to {:?}", err);
-                            println!("{}", error_msg.red());
-                            continue;
-                        }
-                    }
-                } else {
-                    create_default_memory_folder()?;
-                    match set_memory_path(default_memory) {
-                        Ok(msg) => {
-                            println!("{}", msg.green());
-                            println!(
-                                "You can always change the location with `tiles memory set-path <PATH>`\n"
-                            );
-                            break;
-                        }
-                        Err(err) => {
-                            let error_msg = format!("Error setting memory path due to {:?}", err);
-                            println!("{}", error_msg.red());
-                            return Err(anyhow::anyhow!("Error setting default memory path"));
-                        }
-                    }
-                }
-            }
-            Ok(default_memory.to_owned())
-        }
-    }
-}
-
 async fn start_repl(mlx_runtime: &MLXRuntime, modelname: &str, run_args: &RunArgs) {
-    println!("Running in interactive mode");
+    println!("Running {} in interactive mode", modelname);
 
     let config = Config::builder().auto_add_history(true).build();
     let mut editor = Editor::<TilesHinter, DefaultHistory>::with_config(config).unwrap();
     editor.set_helper(Some(TilesHinter));
     let mut g_reply: String = "".to_owned();
+    let mut prev_response_id: String = String::from("");
+
     loop {
         let readline = editor.readline(">>> ");
         let input = match readline {
@@ -369,6 +295,7 @@ async fn start_repl(mlx_runtime: &MLXRuntime, modelname: &str, run_args: &RunArg
                     &python_code,
                     &g_reply,
                     run_args,
+                    &prev_response_id,
                 )
                 .await
                 {
@@ -385,6 +312,7 @@ async fn start_repl(mlx_runtime: &MLXRuntime, modelname: &str, run_args: &RunArg
                         if run_args.memory {
                             println!("\n{}", response.reply.trim());
                         } else {
+                            prev_response_id = response.prev_response_id;
                             println!("\n");
                         }
                         // Display benchmark metrics if available
@@ -422,12 +350,12 @@ async fn start_repl(mlx_runtime: &MLXRuntime, modelname: &str, run_args: &RunArg
     }
 }
 
-pub async fn ping() -> Result<(), String> {
+pub async fn ping() -> Result<()> {
     let client = Client::new();
     let res = client.get("http://127.0.0.1:6969/ping").send().await;
 
     match res {
-        Err(_) => Err(String::from("Server is down")),
+        Err(err) => Err(anyhow!("Server down due to {:?}", err)),
         _ => Ok(()),
     }
 }
@@ -442,7 +370,7 @@ async fn load_model(
     let body = json!({
         "model": model_name,
         "memory_path": memory_path,
-        "system_prompt": modelfile.system.clone().unwrap_or(default_modelfile.system.clone().unwrap())
+        "system_prompt": modelfile.system.clone().unwrap_or(default_modelfile.system.clone().unwrap_or("".to_owned()))
     });
 
     let res = client
@@ -476,31 +404,55 @@ async fn chat(
     python_code: &str,
     g_reply: &str,
     run_args: &RunArgs,
-) -> Result<ChatResponse, String> {
+    prev_response_id: &str,
+) -> Result<ChatResponse> {
     let client = Client::new();
-
     let body = json!({
+        "model": model_name,
+        "input": [{
+            "type": "message",
+            "role": "user",
+            "content": input
+        },
+        {
+            "type": "message",
+            "role": "developer",
+            "content": ""
+        }],
+        "reasoning": {"effort": "medium"},
+        "chat_start": chat_start,
+        "stream": true,
+        "previous_response_id": prev_response_id,
+        "python_code": python_code,
+        "messages": [{"role": "assistant", "content": g_reply}, {"role": "user", "content": input}]
+    });
+
+    let memory_body = json!({
         "model": model_name,
         "input": input,
         "chat_start": chat_start,
         "stream": true,
         "python_code": python_code,
         "messages": [{"role": "assistant", "content": g_reply}, {"role": "user", "content": input}]
+
     });
-    let api_url = if run_args.memory {
-        "http://127.0.0.1:6969/v1/chat/completions"
+    let res = if run_args.memory {
+        let api_url = "http://127.0.0.1:6969/v1/chat/completions";
+        client.post(api_url).json(&memory_body).send().await?
     } else {
-        "http://127.0.0.1:6969/v1/responses"
+        let api_url = "http://127.0.0.1:6969/v1/responses";
+        client.post(api_url).json(&body).send().await?
     };
-    let res = client.post(api_url).json(&body).send().await.unwrap();
 
     let mut stream = res.bytes_stream();
     let mut accumulated = String::new();
     println!();
     let mut metrics: Option<BenchmarkMetrics> = None;
     let mut is_answer_start = false;
+    let mut prev_response_id: String = String::from("");
+    let mut output_completed: bool = false;
     while let Some(chunk) = stream.next().await {
-        let chunk = chunk.unwrap();
+        let chunk = chunk?;
         let s = String::from_utf8_lossy(&chunk);
         for line in s.lines() {
             if !line.starts_with("data: ") {
@@ -513,11 +465,12 @@ async fn chat(
                 return Ok(convert_to_chat_response(
                     &accumulated,
                     run_args.memory,
+                    prev_response_id,
                     metrics,
                 ));
             }
 
-            // Parse JSON
+            //TODO: This will break if we ask the model to give an essay and all
             let v: Value = serde_json::from_str(data).unwrap();
             // Check for metrics in the response
             if let Some(metrics_obj) = v.get("metrics") {
@@ -526,35 +479,51 @@ async fn chat(
             let model_text: Option<&str> = if run_args.memory {
                 v["choices"][0]["delta"]["content"].as_str()
             } else {
+                prev_response_id = serde_json::to_string(&v["id"])?;
+                // println!("prev_id {}", prev_response_id);
+                if serde_json::to_string(&v["status"])?.contains("completed") {
+                    output_completed = true;
+                }
+
                 v["output"][0]["content"][0]["text"].as_str()
             };
 
             if let Some(delta) = model_text {
-                accumulated.push_str(delta);
-                if !run_args.memory && delta.contains("**[Answer]**") {
-                    is_answer_start = true;
-                }
-                if !is_answer_start {
-                    print!("{}", delta.dimmed());
+                if !run_args.memory {
+                    // TODO: This doesn't support non-harmonic models, so need to handle it
+                    if delta.contains("**[Answer]**") {
+                        is_answer_start = true
+                    }
+                    if !output_completed {
+                        accumulated.push_str(delta);
+                        if !is_answer_start {
+                            print!("{}", delta.dimmed());
+                        } else {
+                            print!("{}", delta);
+                        };
+                    }
                 } else {
-                    print!("{}", delta);
+                    accumulated.push_str(delta);
                 }
                 use std::io::Write;
                 std::io::stdout().flush().ok();
             }
         }
     }
-    Err(String::from("request failed"))
+
+    Err(anyhow!("Result failed"))
 }
 
 fn convert_to_chat_response(
     content: &str,
     memory_mode: bool,
+    prev_response_id: String,
     metrics: Option<BenchmarkMetrics>,
 ) -> ChatResponse {
     ChatResponse {
         reply: extract_reply(content, memory_mode),
         code: extract_python(content),
+        prev_response_id,
         metrics,
     }
 }
@@ -588,7 +557,7 @@ async fn wait_until_server_is_up() {
             Ok(()) => {
                 break;
             }
-            Err(_) => {
+            Err(_err) => {
                 println!("tiling...");
                 sleep(Duration::from_secs(5)).await;
             }

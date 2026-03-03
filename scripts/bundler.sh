@@ -16,8 +16,13 @@ echo "🚀 Building ${BINARY_NAME} (${TARGET} mode)..."
 
 cargo build -p tiles --${TARGET}
 
+# rm -rf "${DIST_DIR}"
+
 mkdir -p "${DIST_DIR}/tmp"
 cp "target/${TARGET}/${BINARY_NAME}" "${DIST_DIR}/tmp/"
+
+# flushing this folder, else the final zip will have previous app-server zips too (#84)
+rm -rf "${SERVER_DIR}/stack_export_prod"
 
 echo "🔒 Locking the venvstack...."
 

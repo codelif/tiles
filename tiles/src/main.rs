@@ -1,14 +1,20 @@
 use std::error::Error;
 
 use clap::{Args, Parser, Subcommand};
-use tiles::runtime::{RunArgs, build_runtime};
+use tiles::{
+    runtime::{RunArgs, build_runtime},
+    utils::installer,
+};
 mod commands;
 #[derive(Debug, Parser)]
 #[command(name = "tiles")]
 #[command(version, about = "Your private and secure AI assistant for everyday use.", long_about = None, after_help = "Documentation: https://tiles.run/book\nReport issues: https://github.com/tilesprivacy/tiles/issues")]
 struct Cli {
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
+
+    #[command(flatten)]
+    flags: RunFlags,
 }
 
 #[derive(Subcommand, Debug)]
@@ -22,8 +28,8 @@ enum Commands {
         flags: RunFlags,
     },
 
-    /// Configure your memory
-    Memory(MemoryArgs),
+    /// Configure your data
+    Data(DataArgs),
 
     /// Checks the status of dependencies
     Health,
@@ -46,6 +52,9 @@ enum Commands {
     },
     /// Manage user account
     Account(AccountArgs),
+
+    /// Update Tiles to latest version
+    Update,
 }
 
 #[derive(Debug, Args)]
@@ -82,13 +91,13 @@ enum ServerCommands {
 #[derive(Debug, Args)]
 #[command(args_conflicts_with_subcommands = true)]
 #[command(flatten_help = true)]
-struct MemoryArgs {
+struct DataArgs {
     #[command(subcommand)]
-    command: MemoryCommands,
+    command: DataCommands,
 }
 #[derive(Debug, Subcommand)]
-enum MemoryCommands {
-    /// Set Path for the memory
+enum DataCommands {
+    /// Set Path for the user data
     SetPath { path: String },
 }
 
@@ -114,10 +123,22 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
     let runtime = build_runtime();
     match cli.command {
-        Commands::Run {
+        None => {
+            // Running tiles without subcommand - launch default model with flags
+            let run_args = RunArgs {
+                modelfile_path: None,
+                relay_count: cli.flags.relay_count,
+                memory: cli.flags.memory,
+            };
+            commands::run_setup_for_ftue(&run_args)
+                .inspect_err(|e| eprintln!("Failed to setup Tiles due to {:?}", e))?;
+            let _ = commands::try_app_update().await;
+            commands::run(&runtime, run_args).await;
+        }
+        Some(Commands::Run {
             modelfile_path,
             flags,
-        } => {
+        }) => {
             let run_args = RunArgs {
                 modelfile_path,
                 relay_count: flags.relay_count,
@@ -125,28 +146,33 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
             };
             commands::run(&runtime, run_args).await;
         }
-        Commands::Health => {
+        Some(Commands::Health) => {
             commands::check_health().await;
         }
-        Commands::Server(server) => match server.command {
+        Some(Commands::Server(server)) => match server.command {
             Some(ServerCommands::Start) => commands::start_server(&runtime).await,
             Some(ServerCommands::Stop) => commands::stop_server(&runtime).await,
             _ => println!("Expected start or stop"),
         },
-        Commands::Memory(memory) => match memory.command {
-            MemoryCommands::SetPath { path } => commands::set_memory(path.as_str()),
+        Some(Commands::Data(data)) => match data.command {
+            DataCommands::SetPath { path } => commands::set_data(path.as_str()),
         },
-        Commands::Optimize {
+        Some(Commands::Optimize {
             modelfile_path,
             data,
             model,
-        } => {
+        }) => {
             let modelfile = commands::optimize(modelfile_path.clone(), data, model).await?;
             std::fs::write(&modelfile_path, modelfile.to_string())?;
             println!("Successfully updated {}", modelfile_path);
         }
-        Commands::Account(account_args) => {
+        Some(Commands::Account(account_args)) => {
             commands::run_account_commands(account_args)?;
+        }
+        Some(Commands::Update) => {
+            println!("Checking for updates...");
+            let res = installer::try_update(None).await?;
+            println!("{}", res);
         }
     }
     Ok(())

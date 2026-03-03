@@ -1,17 +1,36 @@
-from pydantic import BaseModel, Field
-from typing import Any, Dict, List, Optional, Union
 from dataclasses import dataclass
+from enum import Enum, auto
+from typing import Any, Dict, List, Union, override
+
+from openresponses_types import ReasoningParam, TruncationEnum
+from openresponses_types.types import (
+    AssistantMessageItemParam,
+    DeveloperMessageItemParam,
+    Error,
+    FunctionCallItemParam,
+    FunctionCallOutputItemParam,
+    FunctionToolParam,
+    IncompleteDetails,
+    ItemReferenceParam,
+    ReasoningEffortEnum,
+    ReasoningItemParam,
+    StreamOptionsParam,
+    SystemMessageItemParam,
+    ToolChoiceParam,
+    UserMessageItemParam,
+)
+from pydantic import BaseModel, Field
 
 
 class CompletionRequest(BaseModel):
     model: str
     prompt: Union[str, List[str]]
-    max_tokens: Optional[int] = None
-    temperature: Optional[float] = 0.7
-    top_p: Optional[float] = 0.9
-    stream: Optional[bool] = False
-    stop: Optional[Union[str, List[str]]] = None
-    repetition_penalty: Optional[float] = 1.1
+    max_tokens: int | None = None
+    temperature: float | None = 0.7
+    top_p: float | None = 0.9
+    stream: bool | None = False
+    stop: Union[str, List[str]] | None = None
+    repetition_penalty: float | None = 1.1
 
 
 class ChatMessage(BaseModel):
@@ -24,12 +43,12 @@ class ChatCompletionRequest(BaseModel):
     messages: List[ChatMessage]
     chat_start: bool
     python_code: str
-    max_tokens: Optional[int] = None
-    temperature: Optional[float] = 0.7
-    top_p: Optional[float] = 0.9
-    stream: Optional[bool] = False
-    stop: Optional[Union[str, List[str]]] = None
-    repetition_penalty: Optional[float] = 1.1
+    max_tokens: int | None = None
+    temperature: float | None = 0.7
+    top_p: float | None = 0.9
+    stream: bool | None = False
+    stop: Union[str, List[str]] | None = None
+    repetition_penalty: float | None = 1.1
 
 
 class CompletionResponse(BaseModel):
@@ -55,7 +74,7 @@ class ModelInfo(BaseModel):
     object: str = "model"
     owned_by: str = "mlx-knife"
     permission: List = []
-    context_length: Optional[int] = None
+    context_length: int | None = None
 
 
 class StartRequest(BaseModel):
@@ -69,15 +88,43 @@ class downloadRequest(BaseModel):
 
 
 class ResponsesRequest(BaseModel):
-    model: Optional[str] = None
-    input: Optional[str] = None
-    reasoning: Optional[Dict[str, Any]] = None
-    previous_response_id: Optional[str] = None
-    stream: Optional[bool] = False
-    tools: Optional[List[Dict[str, Any]]] = None
-    temperature: Optional[float] = 1
-    top_p: Optional[float] = 1
-    max_output_tokens: Optional[int] = None
+    model: str = "mlx-community/gpt-oss-20b-MXFP4-Q4"
+    input: (
+        str
+        | list[
+            ItemReferenceParam
+            | ReasoningItemParam
+            | UserMessageItemParam
+            | SystemMessageItemParam
+            | DeveloperMessageItemParam
+            | AssistantMessageItemParam
+            | FunctionCallItemParam
+            | FunctionCallOutputItemParam
+        ]
+    )
+    reasoning: ReasoningParam = ReasoningParam(
+        effort=ReasoningEffortEnum.medium, summary=None
+    )
+    previous_response_id: str | None = None
+    stream: bool | None = False
+    stream_options: StreamOptionsParam | None = None
+    tools: list[FunctionToolParam] | None = None
+    tool_choice: ToolChoiceParam | None = None
+    temperature: float | None = 1
+    top_p: float | None = 1
+    max_output_tokens: int | None = None
+    store: bool = False
+    # other service tiers are default, flex, priority
+    service_tier: str = "auto"
+    top_logprobs: int = 0
+    # can put in the Developer msg if none there
+    instructions: str | None = None
+    # auto/disabled, returns 400 on disabled
+    truncation: TruncationEnum = TruncationEnum.disabled
+    prompt_cache: str | None = None
+    safety_identifier: str | None = None
+    max_tool_calls: int | None = None
+    background: bool = False
 
 
 class ResponsesResponse(BaseModel):
@@ -85,16 +132,16 @@ class ResponsesResponse(BaseModel):
     object: str = "response"
     created_at: int
     status: str
-    completed_at: Optional[int] = None
-    error: Optional[Dict[str, Any]] = None
-    incomplete_details: Optional[Dict[str, Any]] = None
-    instructions: Optional[str] = None
-    max_output_tokens: Optional[int] = None
+    completed_at: int | None = None
+    error: Error | None = None
+    incomplete_details: IncompleteDetails | None = None
+    instructions: str | None = None
+    max_output_tokens: int | None = None
     model: str
-    output: List[Dict[str, Any]]
+    output: list[Dict[str, Any]]
     parallel_tool_calls: bool = True
-    previous_response_id: Optional[str] = None
-    reasoning: Optional[Dict[str, Any]] = Field(default_factory=dict)
+    previous_response_id: str = ""
+    reasoning: Dict[str, Any] | None = Field(default_factory=dict)
     store: bool = True
     temperature: float = 1.0
     text: Dict[str, Any] = Field(default_factory=lambda: {"format": {"type": "text"}})
@@ -103,7 +150,7 @@ class ResponsesResponse(BaseModel):
     top_p: float = 1.0
     truncation: str = "disabled"
     usage: Dict[str, Any]
-    user: Optional[str] = None
+    user: str | None = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
