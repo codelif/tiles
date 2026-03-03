@@ -88,8 +88,28 @@ impl ConfigProvider for DefaultProvider {
     }
 
     fn get_user_data_dir(&self) -> Result<PathBuf> {
-        let data_dir = self.get_data_dir()?;
-        Ok(data_dir.join("data"))
+        let root_config = get_or_create_config()?;
+        let data_config = root_config
+            .get("data")
+            .expect("Failed to get data")
+            .as_table()
+            .expect("Failed to parse to table (data)")
+            .clone();
+
+        if let Some(path) = data_config
+            .get("path")
+            .expect("failed to parse data -> path")
+            .as_str()
+        {
+            if path.is_empty() {
+                let data_dir = self.get_data_dir()?;
+                Ok(data_dir.join("data"))
+            } else {
+                PathBuf::from_str(path).map_err(|_e| anyhow!("Failed to convert to pathbuf"))
+            }
+        } else {
+            Err(anyhow!("Failed to get data path"))
+        }
     }
 
     fn get_lib_dir(&self) -> Result<PathBuf> {
