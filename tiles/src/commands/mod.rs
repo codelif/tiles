@@ -4,11 +4,10 @@ use std::io;
 
 use anyhow::{Result, anyhow};
 use owo_colors::OwoColorize;
+use tiles::core;
 use tiles::core::accounts::{
-    RootUser, create_root_account, get_root_user_details, save_root_account, save_root_account_db,
-    set_nickname,
+    RootUser, create_root_account, get_root_user_details, save_root_account, set_nickname,
 };
-use tiles::core::storage::db::init_db;
 use tiles::runtime::Runtime;
 use tiles::utils::config::{
     ConfigProvider, DefaultProvider, get_or_create_config, set_user_data_path,
@@ -250,8 +249,7 @@ pub async fn try_app_update() -> Result<()> {
 }
 
 pub async fn run(runtime: &Runtime, run_args: RunArgs) {
-    let _ = init_db().inspect_err(|e| eprintln!("Failed to setup database due to {:?}", e));
-    let _ = save_root_account_db();
+    let _ = core::init().inspect_err(|e| eprintln!("Tiles core init failed due to {:?}", e));
     let _ = runtime.run(run_args).await;
 }
 

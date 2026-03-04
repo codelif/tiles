@@ -70,7 +70,7 @@ pub fn get_db_conn(db_type: DBTYPE) -> Result<Connection> {
 fn apply_migrations(common_conn: &mut Connection, chat_conn: &mut Connection) -> Result<()> {
     COMMON_MIGRATIONS
         .to_latest(common_conn)
-        .map_err(|e| <rusqlite_migration::Error as Into<anyhow::Error>>::into(e))?;
+        .map_err(<rusqlite_migration::Error as Into<anyhow::Error>>::into)?;
     CHATS_MIGRATIONS.to_latest(chat_conn).map_err(|e| e.into())
 }
 fn get_db_path(db_type: DBTYPE) -> Result<PathBuf> {

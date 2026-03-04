@@ -1,3 +1,5 @@
+use crate::core::accounts::get_current_user;
+use crate::core::storage::db::get_db_conn;
 use crate::runtime::RunArgs;
 use crate::utils::config::{ConfigProvider, DefaultProvider, get_memory_path};
 use crate::utils::hf_model_downloader::*;
@@ -233,14 +235,16 @@ async fn run_model_with_server(
     let memory_path = get_memory_path().context("Setting/Retrieving memory_path failed")?;
     let modelname = modelfile.from.as_ref().unwrap();
     match load_model(&modelfile, &default_modelfile, &memory_path).await {
-        Ok(_) => start_repl(mlx_runtime, modelname, run_args).await,
+        Ok(_) => start_repl(mlx_runtime, modelname, run_args).await?,
         Err(err) => return Err(anyhow::anyhow!(err)),
     }
     Ok(())
 }
 
-async fn start_repl(mlx_runtime: &MLXRuntime, modelname: &str, run_args: &RunArgs) {
+async fn start_repl(mlx_runtime: &MLXRuntime, modelname: &str, run_args: &RunArgs) -> Result<()> {
     println!("Running {} in interactive mode", modelname);
+    let common_db_conn = get_db_conn(crate::core::storage::db::DBTYPE::COMMON)?;
+    let _get_current_user = get_current_user(&common_db_conn)?;
 
     let config = Config::builder().auto_add_history(true).build();
     let mut editor = Editor::<TilesHinter, DefaultHistory>::with_config(config).unwrap();
@@ -348,6 +352,7 @@ async fn start_repl(mlx_runtime: &MLXRuntime, modelname: &str, run_args: &RunArg
             println!("\nNo reply, try another prompt");
         }
     }
+    Ok(())
 }
 
 pub async fn ping() -> Result<()> {

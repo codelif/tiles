@@ -1,7 +1,9 @@
+//! Accounts
 // Stuff related to account and identity system
 use anyhow::{Result, anyhow};
+use rusqlite::Connection;
 use std::{
-    fmt::{Debug, Display},
+    fmt::Display,
     time::{SystemTime, UNIX_EPOCH},
 };
 use tilekit::accounts::create_identity;
@@ -21,24 +23,30 @@ pub struct RootUser {
     pub nickname: String,
 }
 
+#[derive(Debug)]
 pub enum ACCOUNT {
     LOCAL,
 }
 
-impl ToString for ACCOUNT {
-    fn to_string(&self) -> String {
+impl From<String> for ACCOUNT {
+    fn from(value: String) -> Self {
+        let value_lower = value.to_lowercase();
+        match value_lower.as_str() {
+            "local" => ACCOUNT::LOCAL,
+            _ => panic!("Invalid account type"),
+        }
+    }
+}
+impl Display for ACCOUNT {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::LOCAL => String::from("local"),
+            Self::LOCAL => write!(f, "{}", String::from("local")),
         }
     }
 }
 
-impl Debug for ACCOUNT {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.to_string())
-    }
-}
 //TODO: add doc, mirrors user table schema
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct User {
     id: uuid::Uuid,
@@ -173,6 +181,32 @@ pub fn set_nickname(config: &Table, nickname: &str) -> Result<Table> {
     }
 }
 
+pub fn get_current_user(conn: &Connection) -> Result<User> {
+    let mut fetch_current_user = conn.prepare("select id, user_id, username, account_type, active_profile, root, created_at, updated_at  from users where active_profile= true")?;
+
+    fetch_current_user
+        .query_one([], |row| {
+            let id: String = row.get(0)?;
+            let account_type: String = row.get(3)?;
+            let created_at: f64 = row.get(6)?;
+            let updated_at: f64 = row.get(7)?;
+            Ok(User {
+                id: Uuid::try_parse(&id).map_err(|_e| rusqlite::Error::UnwindingPanic)?,
+                user_id: row.get(1)?,
+                username: row.get(2)?,
+                account_type: ACCOUNT::from(account_type),
+                active_profile: row.get(4)?,
+                root: row.get(5)?,
+
+                created_at: created_at as u64,
+                updated_at: updated_at as u64,
+            })
+        })
+        .map_err(<rusqlite::Error as Into<anyhow::Error>>::into)
+}
+// TODO: when we support multiple accounts
+// make sure that there can't be multiple rows with
+// root true.
 pub fn save_root_account_db() -> Result<()> {
     let conn = get_db_conn(DBTYPE::COMMON)?;
     let config = get_or_create_config()?;
@@ -203,7 +237,7 @@ pub fn save_root_account_db() -> Result<()> {
                     user.account_type.to_string(),  &user.root))?;
             Ok(())
         }
-        Err(_err) => return Err(anyhow!("Fetching user from db failed")),
+        Err(_err) => Err(anyhow!("Fetching user from db failed")),
         _ => Ok(()),
     }
 }
@@ -224,13 +258,14 @@ fn create_root_user(root_user_config: &Table, nickname: Option<String>) -> Resul
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use crate::core::accounts::{
+        RootUser, create_root_account, get_current_user, get_root_user_details, set_nickname,
+    };
     use anyhow::Result;
     use keyring::{mock, set_default_credential_builder};
+    use rusqlite::Connection;
     use toml::Table;
-
-    use crate::utils::accounts::{
-        RootUser, create_root_account, get_root_user_details, set_nickname,
-    };
 
     #[test]
     fn test_get_root_user_details_empty_id() -> Result<()> {
@@ -399,5 +434,72 @@ mod tests {
         .unwrap();
 
         assert!(set_nickname(&config, "madclaws").is_err())
+    }
+
+    fn setup_db_schema() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute(
+            "
+    CREATE TABLE IF NOT EXISTS users (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        username TEXT NOT NULL,
+        active_profile INTEGER NOT NULL DEFAULT 0 CHECK (active_profile IN (0,1)),
+        account_type TEXT NOT NULL,
+        root INTEGER NOT NULL DEFAULT 0 CHECK (root IN (0,1)),
+        created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+        updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+        UNIQUE(account_type, user_id)
+    );
+            ",
+            [],
+        )
+        .unwrap();
+
+        conn
+    }
+
+    #[test]
+    fn test_get_user_when_no_user() {
+        let conn = setup_db_schema();
+        assert!(get_current_user(&conn).is_err())
+    }
+
+    #[test]
+    fn test_get_current_user_valid() {
+        let conn = setup_db_schema();
+        let user = User {
+            id: Uuid::now_v7(),
+            user_id: String::from("did"),
+            username: String::from("nickname"),
+            account_type: ACCOUNT::LOCAL,
+            active_profile: true,
+            root: true,
+            created_at: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time went backwards")
+                .as_secs(),
+            updated_at: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time went backwards")
+                .as_secs(),
+        };
+
+        let mut fetch_root_user = conn
+            .prepare("select id from users where root = true")
+            .unwrap();
+
+        match fetch_root_user.query_one([], |_row| Ok(())) {
+            Err(rusqlite::Error::QueryReturnedNoRows) => {
+                conn.execute("insert into users (id, user_id, username, active_profile, account_type, root) values
+                (?1, ?2, ?3,?4, ?5, ?6)", (&user.id.to_string(), &user.user_id, &user.username, &user.active_profile,
+                    user.account_type.to_string(),  &user.root)).unwrap();
+                ()
+            }
+            Err(_err) => (),
+            _ => (),
+        }
+
+        assert!(get_current_user(&conn).is_ok())
     }
 }
