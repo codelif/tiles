@@ -118,7 +118,7 @@ enum AccountCommands {
     SetNickname { nickname: String },
 }
 
-#[tokio::main(flavor = "current_thread")]
+#[tokio::main]
 pub async fn main() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
     let runtime = build_runtime();
@@ -133,7 +133,9 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
             commands::run_setup_for_ftue(&run_args)
                 .inspect_err(|e| eprintln!("Failed to setup Tiles due to {:?}", e))?;
             let _ = commands::try_app_update().await;
-            commands::run(&runtime, run_args).await;
+            commands::run(&runtime, run_args)
+                .await
+                .inspect_err(|e| eprintln!("Tiles failed to run due to {:?}", e))?;
         }
         Some(Commands::Run {
             modelfile_path,
@@ -144,7 +146,9 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
                 relay_count: flags.relay_count,
                 memory: flags.memory,
             };
-            commands::run(&runtime, run_args).await;
+            commands::run(&runtime, run_args)
+                .await
+                .inspect_err(|e| eprintln!("Tiles failed to run due to {:?}", e))?;
         }
         Some(Commands::Health) => {
             commands::check_health().await;
@@ -171,7 +175,9 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
         }
         Some(Commands::Update) => {
             println!("Checking for updates...");
-            let res = installer::try_update(None).await?;
+            let res = installer::try_update(None)
+                .await
+                .inspect_err(|e| eprintln!("Failed in update process due to #{:?}", e))?;
             println!("{}", res);
         }
     }

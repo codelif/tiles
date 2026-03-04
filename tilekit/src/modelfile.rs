@@ -38,8 +38,8 @@ impl Display for ParamValue {
     }
 }
 
-#[derive(Debug, Clone)]
-enum Role {
+#[derive(Debug, Clone, Copy)]
+pub enum Role {
     System,
     User,
     Assistant,
@@ -70,6 +70,17 @@ impl FromStr for Role {
         }
     }
 }
+
+impl From<Role> for String {
+    fn from(value: Role) -> Self {
+        match value {
+            Role::System => "system".to_owned(),
+            Role::User => "user".to_owned(),
+            Role::Assistant => "assistant".to_owned(),
+        }
+    }
+}
+
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct Parameter {

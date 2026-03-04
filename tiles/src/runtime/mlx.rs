@@ -1,4 +1,5 @@
-use crate::core::accounts::get_current_user;
+use crate::core::accounts::{User, get_current_user};
+use crate::core::chats::save_chat;
 use crate::core::storage::db::get_db_conn;
 use crate::runtime::RunArgs;
 use crate::utils::config::{ConfigProvider, DefaultProvider, get_memory_path};
@@ -7,6 +8,7 @@ use anyhow::{Context, Result, anyhow};
 use futures_util::StreamExt;
 use owo_colors::OwoColorize;
 use reqwest::{Client, StatusCode};
+use rusqlite::Connection;
 use rustyline::completion::Completer;
 use rustyline::highlight::Highlighter;
 use rustyline::hint::Hinter;
@@ -22,8 +24,9 @@ use std::process::Stdio;
 use std::time::Duration;
 use tilekit::modelfile::Modelfile;
 use tokio::time::sleep;
+use uuid::Uuid;
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct BenchmarkMetrics {
     ttft_ms: f64,
     total_tokens: i32,
@@ -45,12 +48,15 @@ impl BenchmarkMetrics {
 pub struct MLXRuntime {}
 
 impl MLXRuntime {}
+
+#[derive(Clone)]
 pub struct ChatResponse {
     // think: String,
-    reply: String,
-    code: String,
-    prev_response_id: String,
-    metrics: Option<BenchmarkMetrics>,
+    pub reply: String,
+    pub code: String,
+    pub prev_response_id: String,
+    pub parent_chat_id: Option<Uuid>,
+    pub metrics: Option<BenchmarkMetrics>,
 }
 
 impl Default for MLXRuntime {
@@ -244,7 +250,8 @@ async fn run_model_with_server(
 async fn start_repl(mlx_runtime: &MLXRuntime, modelname: &str, run_args: &RunArgs) -> Result<()> {
     println!("Running {} in interactive mode", modelname);
     let common_db_conn = get_db_conn(crate::core::storage::db::DBTYPE::COMMON)?;
-    let _get_current_user = get_current_user(&common_db_conn)?;
+    let chat_db_conn = get_db_conn(crate::core::storage::db::DBTYPE::CHAT)?;
+    let current_user = get_current_user(&common_db_conn)?;
 
     let config = Config::builder().auto_add_history(true).build();
     let mut editor = Editor::<TilesHinter, DefaultHistory>::with_config(config).unwrap();
@@ -292,7 +299,8 @@ async fn start_repl(mlx_runtime: &MLXRuntime, modelname: &str, run_args: &RunArg
         loop {
             if remaining_count > 0 {
                 let chat_start = remaining_count == run_args.relay_count;
-                if let Ok(response) = chat(
+
+                match chat(
                     &input,
                     modelname,
                     chat_start,
@@ -300,52 +308,55 @@ async fn start_repl(mlx_runtime: &MLXRuntime, modelname: &str, run_args: &RunArg
                     &g_reply,
                     run_args,
                     &prev_response_id,
+                    &chat_db_conn,
+                    &current_user,
                 )
                 .await
                 {
-                    if response.reply.is_empty() {
-                        if !response.code.is_empty() {
-                            python_code = response.code;
-                        }
-                        if let Some(metrics) = response.metrics {
-                            bench_metrics.update(metrics);
-                        }
-                        remaining_count -= 1;
-                    } else {
-                        g_reply = response.reply.clone();
-                        if run_args.memory {
-                            println!("\n{}", response.reply.trim());
+                    Ok(response) => {
+                        if response.reply.is_empty() {
+                            if !response.code.is_empty() {
+                                python_code = response.code;
+                            }
+                            if let Some(metrics) = response.metrics {
+                                bench_metrics.update(metrics);
+                            }
+                            remaining_count -= 1;
                         } else {
-                            prev_response_id = response.prev_response_id;
-                            println!("\n");
-                        }
-                        // Display benchmark metrics if available
-                        if let Some(metrics) = response.metrics {
-                            bench_metrics.update(metrics);
-                            println!(
-                                "{}",
-                                format!(
-                                    "\n{} {:.1} tok/s | {} tokens | {:.0}s TTFT",
-                                    "💡".yellow(),
-                                    bench_metrics.total_tokens as f64
-                                        / bench_metrics.total_latency_s,
-                                    bench_metrics.total_tokens,
-                                    bench_metrics.ttft_ms / 1000.0
-                                )
-                                .dimmed()
-                            );
-                        }
+                            g_reply = response.reply.clone();
+                            if run_args.memory {
+                                println!("\n{}", response.reply.trim());
+                            } else {
+                                prev_response_id = response.prev_response_id;
+                                println!("\n");
+                            }
+                            // Display benchmark metrics if available
+                            if let Some(metrics) = response.metrics {
+                                bench_metrics.update(metrics);
+                                println!(
+                                    "{}",
+                                    format!(
+                                        "\n{} {:.1} tok/s | {} tokens | {:.0}s TTFT",
+                                        "💡".yellow(),
+                                        bench_metrics.total_tokens as f64
+                                            / bench_metrics.total_latency_s,
+                                        bench_metrics.total_tokens,
+                                        bench_metrics.ttft_ms / 1000.0
+                                    )
+                                    .dimmed()
+                                );
+                            }
 
+                            break;
+                        }
+                    }
+                    Err(err) => {
+                        // if out of relay count, then clear the global_reply and ready for next fresh prompt
+                        println!("{:?}", err);
+                        g_reply.clear();
                         break;
                     }
-                } else {
-                    println!("\nFailed to respond");
-                    break;
                 }
-            } else {
-                // if out of relay count, then clear the global_reply and ready for next fresh prompt
-                g_reply.clear();
-                break;
             }
         }
         if g_reply.is_empty() {
@@ -402,6 +413,7 @@ async fn load_model(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn chat(
     input: &str,
     model_name: &str,
@@ -410,6 +422,8 @@ async fn chat(
     g_reply: &str,
     run_args: &RunArgs,
     prev_response_id: &str,
+    conn: &Connection,
+    user: &User,
 ) -> Result<ChatResponse> {
     let client = Client::new();
     let body = json!({
@@ -449,6 +463,7 @@ async fn chat(
         client.post(api_url).json(&body).send().await?
     };
 
+    let chat = save_chat(conn, user, input, None)?;
     let mut stream = res.bytes_stream();
     let mut accumulated = String::new();
     println!();
@@ -467,12 +482,15 @@ async fn chat(
             let data = line.trim_start_matches("data: ");
 
             if data == "[DONE]" {
-                return Ok(convert_to_chat_response(
+                let mut chat_resp = convert_to_chat_response(
                     &accumulated,
                     run_args.memory,
                     prev_response_id,
                     metrics,
-                ));
+                );
+                chat_resp.parent_chat_id = Some(chat.id);
+                save_chat(conn, user, &accumulated, Some(&chat_resp))?;
+                return Ok(chat_resp);
             }
 
             //TODO: This will break if we ask the model to give an essay and all
@@ -484,8 +502,10 @@ async fn chat(
             let model_text: Option<&str> = if run_args.memory {
                 v["choices"][0]["delta"]["content"].as_str()
             } else {
-                prev_response_id = serde_json::to_string(&v["id"])?;
-                // println!("prev_id {}", prev_response_id);
+                prev_response_id = serde_json::to_string(&v["id"])?
+                    .trim_matches('\"')
+                    .to_owned();
+
                 if serde_json::to_string(&v["status"])?.contains("completed") {
                     output_completed = true;
                 }
@@ -530,6 +550,7 @@ fn convert_to_chat_response(
         code: extract_python(content),
         prev_response_id,
         metrics,
+        parent_chat_id: None,
     }
 }
 

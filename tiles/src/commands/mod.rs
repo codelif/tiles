@@ -224,6 +224,10 @@ fn read_required_nickname() -> Result<String> {
 }
 
 pub async fn try_app_update() -> Result<()> {
+    // no need to check updates in dev mode
+    if cfg!(debug_assertions) {
+        return Ok(());
+    }
     let update_info: UpdateInfo = get_update_info().await?;
     if update_info.can_update {
         let update_str = format!(
@@ -248,9 +252,9 @@ pub async fn try_app_update() -> Result<()> {
     Ok(())
 }
 
-pub async fn run(runtime: &Runtime, run_args: RunArgs) {
-    let _ = core::init().inspect_err(|e| eprintln!("Tiles core init failed due to {:?}", e));
-    let _ = runtime.run(run_args).await;
+pub async fn run(runtime: &Runtime, run_args: RunArgs) -> Result<()> {
+    core::init().inspect_err(|e| eprintln!("Tiles core init failed due to {:?}", e))?;
+    runtime.run(run_args).await
 }
 
 pub fn set_data(path: &str) {

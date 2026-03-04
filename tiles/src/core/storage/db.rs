@@ -41,9 +41,10 @@ const CHATS_MIGRATION_ARRAY: &[M] = &[M::up(
     "CREATE TABLE IF NOT EXISTS chats (
         id TEXT PRIMARY KEY,
         content TEXT NOT NULL,
-        resp_id TEXT NOT NULL,
+        resp_id TEXT,
         role TEXT NOT NULL,
         user_id TEXT NOT NULL,
+        context_id TEXT,
         created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
         updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
     )",

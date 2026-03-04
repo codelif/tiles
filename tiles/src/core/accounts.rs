@@ -1,7 +1,7 @@
 //! Accounts
 // Stuff related to account and identity system
 use anyhow::{Result, anyhow};
-use rusqlite::Connection;
+use rusqlite::{Connection, types::FromSqlError};
 use std::{
     fmt::Display,
     time::{SystemTime, UNIX_EPOCH},
@@ -28,12 +28,26 @@ pub enum ACCOUNT {
     LOCAL,
 }
 
-impl From<String> for ACCOUNT {
-    fn from(value: String) -> Self {
+#[derive(Debug)]
+pub struct AccountError {
+    pub error: String,
+}
+
+impl Display for AccountError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.error)
+    }
+}
+impl std::error::Error for AccountError {}
+impl TryFrom<String> for ACCOUNT {
+    type Error = AccountError;
+    fn try_from(value: String) -> Result<Self, Self::Error> {
         let value_lower = value.to_lowercase();
         match value_lower.as_str() {
-            "local" => ACCOUNT::LOCAL,
-            _ => panic!("Invalid account type"),
+            "local" => Ok(ACCOUNT::LOCAL),
+            _ => Err(AccountError {
+                error: "Invalid account type".to_owned(),
+            }),
         }
     }
 }
@@ -49,14 +63,14 @@ impl Display for ACCOUNT {
 #[allow(dead_code)]
 #[derive(Debug)]
 pub struct User {
-    id: uuid::Uuid,
-    user_id: String,
-    username: String,
-    active_profile: bool,
-    account_type: ACCOUNT,
-    root: bool,
-    created_at: u64,
-    updated_at: u64,
+    pub id: uuid::Uuid,
+    pub user_id: String,
+    pub username: String,
+    pub active_profile: bool,
+    pub account_type: ACCOUNT,
+    pub root: bool,
+    pub created_at: u64,
+    pub updated_at: u64,
 }
 
 impl Display for RootUser {
@@ -191,10 +205,10 @@ pub fn get_current_user(conn: &Connection) -> Result<User> {
             let created_at: f64 = row.get(6)?;
             let updated_at: f64 = row.get(7)?;
             Ok(User {
-                id: Uuid::try_parse(&id).map_err(|_e| rusqlite::Error::UnwindingPanic)?,
+                id: Uuid::try_parse(&id).map_err(FromSqlError::other)?,
                 user_id: row.get(1)?,
                 username: row.get(2)?,
-                account_type: ACCOUNT::from(account_type),
+                account_type: ACCOUNT::try_from(account_type).map_err(FromSqlError::other)?,
                 active_profile: row.get(4)?,
                 root: row.get(5)?,
 
@@ -494,7 +508,6 @@ mod tests {
                 conn.execute("insert into users (id, user_id, username, active_profile, account_type, root) values
                 (?1, ?2, ?3,?4, ?5, ?6)", (&user.id.to_string(), &user.user_id, &user.username, &user.active_profile,
                     user.account_type.to_string(),  &user.root)).unwrap();
-                ()
             }
             Err(_err) => (),
             _ => (),
