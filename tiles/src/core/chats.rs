@@ -71,6 +71,7 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use rusqlite::Connection;
+    use tilekit::modelfile::Role;
     use uuid::Uuid;
 
     use crate::{
@@ -85,24 +86,114 @@ mod tests {
     fn test_valid_input_save_chat() {
         let conn = setup_db_schema();
         let user = create_user();
-        let chat = save_chat(&conn, &user, "2+2", None);
+        let input = "2+2";
+        let chat = save_chat(&conn, &user, input, None).expect("chat should be saved");
 
-        assert!(chat.is_ok())
+        assert_eq!(chat.user_id, user.user_id);
+        assert!(chat.response_id.is_none());
+        assert!(chat.context_id.is_none());
+
+        let saved = fetch_saved_chat_row(&conn, &chat.id);
+        assert_eq!(saved.content, input);
+        assert_eq!(saved.resp_id, None);
+        assert_eq!(saved.role, Into::<String>::into(Role::User));
+        assert_eq!(saved.user_id, user.user_id);
+        assert_eq!(saved.context_id, Uuid::nil().to_string());
     }
 
     #[test]
     fn test_valid_response_save_chat() {
         let conn = setup_db_schema();
         let user = create_user();
+        let parent_chat_id = Uuid::now_v7();
         let chat_resp = ChatResponse {
             reply: "reply".to_owned(),
             code: "code".to_owned(),
             prev_response_id: String::from("resp_prev"),
-            parent_chat_id: Some(Uuid::now_v7()),
+            parent_chat_id: Some(parent_chat_id),
             metrics: None,
         };
-        let chat = save_chat(&conn, &user, "2+2", Some(&chat_resp));
-        assert!(chat.is_ok())
+        let input = "2+2";
+        let chat = save_chat(&conn, &user, input, Some(&chat_resp)).expect("chat should be saved");
+
+        assert_eq!(chat.user_id, user.user_id);
+        assert_eq!(chat.response_id.as_deref(), Some("resp_prev"));
+        assert_eq!(chat.context_id, Some(parent_chat_id));
+
+        let saved = fetch_saved_chat_row(&conn, &chat.id);
+        assert_eq!(saved.content, input);
+        assert_eq!(saved.resp_id, Some(String::from("resp_prev")));
+        assert_eq!(saved.role, Into::<String>::into(Role::Assistant));
+        assert_eq!(saved.user_id, user.user_id);
+        assert_eq!(saved.context_id, parent_chat_id.to_string());
+    }
+
+    #[test]
+    fn test_response_without_parent_chat_id_saves_nil_context() {
+        let conn = setup_db_schema();
+        let user = create_user();
+        let chat_resp = ChatResponse {
+            reply: "reply".to_owned(),
+            code: "code".to_owned(),
+            prev_response_id: String::from("resp_prev"),
+            parent_chat_id: None,
+            metrics: None,
+        };
+
+        let chat =
+            save_chat(&conn, &user, "hello", Some(&chat_resp)).expect("chat should be saved");
+
+        assert_eq!(chat.context_id, None);
+        let saved = fetch_saved_chat_row(&conn, &chat.id);
+        assert_eq!(saved.role, Into::<String>::into(Role::Assistant));
+        assert_eq!(saved.context_id, Uuid::nil().to_string());
+    }
+
+    #[test]
+    fn test_empty_input_is_saved() {
+        let conn = setup_db_schema();
+        let user = create_user();
+
+        let chat = save_chat(&conn, &user, "", None).expect("empty content should still be saved");
+
+        let saved = fetch_saved_chat_row(&conn, &chat.id);
+        assert_eq!(saved.content, "");
+        assert_eq!(saved.role, Into::<String>::into(Role::User));
+    }
+
+    #[test]
+    fn test_save_chat_errors_when_table_missing() {
+        let conn = Connection::open_in_memory().expect("in-memory db should open");
+        let user = create_user();
+
+        let result = save_chat(&conn, &user, "2+2", None);
+
+        assert!(result.is_err());
+    }
+
+    struct SavedChatRow {
+        content: String,
+        resp_id: Option<String>,
+        role: String,
+        user_id: String,
+        context_id: String,
+    }
+
+    fn fetch_saved_chat_row(conn: &Connection, chat_id: &Uuid) -> SavedChatRow {
+        conn.query_row(
+            "SELECT content, resp_id, role, user_id, context_id FROM chats WHERE id = ?1",
+            [chat_id.to_string()],
+            |row| {
+                Ok(SavedChatRow {
+                    content: row.get(0)?,
+                    resp_id: row.get(1)?,
+                    role: row.get(2)?,
+                    user_id: row.get(3)?,
+                    context_id: row.get(4)?,
+                })
+            },
+        )
+        .expect("saved chat row should exist")
     }
 
     fn create_user() -> User {

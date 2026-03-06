@@ -177,7 +177,7 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
             println!("Checking for updates...");
             let res = installer::try_update(None)
                 .await
-                .inspect_err(|e| eprintln!("Failed in update process due to #{:?}", e))?;
+                .inspect_err(|e| eprintln!("Failed in update process due to {:?}", e))?;
             println!("{}", res);
         }
     }
