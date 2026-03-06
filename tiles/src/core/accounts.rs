@@ -450,6 +450,43 @@ mod tests {
         assert!(set_nickname(&config, "madclaws").is_err())
     }
 
+    #[test]
+    fn test_set_nickname_success() {
+        let config: Table = toml::from_str(
+            r#"
+                [root-user]
+                id = 'did:key:xyz'
+                nickname = ''
+            "#,
+        )
+        .unwrap();
+
+        let updated = set_nickname(&config, "madclaws").expect("nickname update should succeed");
+        assert_eq!(
+            updated.get("id").and_then(|v| v.as_str()),
+            Some("did:key:xyz")
+        );
+        assert_eq!(
+            updated.get("nickname").and_then(|v| v.as_str()),
+            Some("madclaws")
+        );
+    }
+
+    #[test]
+    fn test_set_nickname_with_empty_id_fails() {
+        let config: Table = toml::from_str(
+            r#"
+                [root-user]
+                id = ''
+                nickname = ''
+            "#,
+        )
+        .unwrap();
+
+        let err = set_nickname(&config, "madclaws").expect_err("empty id should fail");
+        assert!(err.to_string().contains("No Root user available"));
+    }
+
     fn setup_db_schema() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute(
@@ -514,5 +551,71 @@ mod tests {
         }
 
         assert!(get_current_user(&conn).is_ok())
+    }
+
+    #[test]
+    fn test_get_current_user_invalid_uuid_fails() {
+        let conn = setup_db_schema();
+        conn.execute(
+            "insert into users (id, user_id, username, active_profile, account_type, root, created_at, updated_at)
+            values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            (
+                "not-a-uuid",
+                "did:key:test",
+                "nickname",
+                true,
+                "local",
+                true,
+                1_i64,
+                1_i64,
+            ),
+        )
+        .unwrap();
+
+        assert!(get_current_user(&conn).is_err());
+    }
+
+    #[test]
+    fn test_get_current_user_invalid_account_type_fails() {
+        let conn = setup_db_schema();
+        conn.execute(
+            "insert into users (id, user_id, username, active_profile, account_type, root, created_at, updated_at)
+            values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            (
+                Uuid::now_v7().to_string(),
+                "did:key:test",
+                "nickname",
+                true,
+                "unknown",
+                true,
+                1_i64,
+                1_i64,
+            ),
+        )
+        .unwrap();
+
+        assert!(get_current_user(&conn).is_err());
+    }
+
+    #[test]
+    fn test_get_current_user_inactive_only_rows_fails() {
+        let conn = setup_db_schema();
+        conn.execute(
+            "insert into users (id, user_id, username, active_profile, account_type, root, created_at, updated_at)
+            values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            (
+                Uuid::now_v7().to_string(),
+                "did:key:test",
+                "nickname",
+                false,
+                "local",
+                true,
+                1_i64,
+                1_i64,
+            ),
+        )
+        .unwrap();
+
+        assert!(get_current_user(&conn).is_err());
     }
 }
