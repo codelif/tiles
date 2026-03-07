@@ -1,4 +1,12 @@
-pub mod accounts;
+use std::time::{SystemTime, UNIX_EPOCH};
+
 pub mod config;
 pub mod hf_model_downloader;
 pub mod installer;
+
+pub fn get_unix_time_now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time went backwards")
+        .as_secs()
+}

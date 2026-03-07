@@ -1,3 +1,6 @@
+use crate::core::accounts::{User, get_current_user};
+use crate::core::chats::{Message, save_chat};
+use crate::core::storage::db::get_db_conn;
 use crate::runtime::RunArgs;
 use crate::utils::config::{ConfigProvider, DefaultProvider, get_memory_path};
 use crate::utils::hf_model_downloader::*;
@@ -5,6 +8,7 @@ use anyhow::{Context, Result, anyhow};
 use futures_util::StreamExt;
 use owo_colors::OwoColorize;
 use reqwest::{Client, StatusCode};
+use rusqlite::Connection;
 use rustyline::completion::Completer;
 use rustyline::highlight::Highlighter;
 use rustyline::hint::Hinter;
@@ -19,9 +23,11 @@ use std::process::Command;
 use std::process::Stdio;
 use std::time::Duration;
 use tilekit::modelfile::Modelfile;
+use tilekit::modelfile::Role;
 use tokio::time::sleep;
+use uuid::Uuid;
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct BenchmarkMetrics {
     ttft_ms: f64,
     total_tokens: i32,
@@ -43,12 +49,15 @@ impl BenchmarkMetrics {
 pub struct MLXRuntime {}
 
 impl MLXRuntime {}
+
+#[derive(Clone)]
 pub struct ChatResponse {
     // think: String,
-    reply: String,
-    code: String,
-    prev_response_id: String,
-    metrics: Option<BenchmarkMetrics>,
+    pub reply: String,
+    pub code: String,
+    pub prev_response_id: String,
+    pub parent_chat_id: Option<Uuid>,
+    pub metrics: Option<BenchmarkMetrics>,
 }
 
 impl Default for MLXRuntime {
@@ -231,16 +240,27 @@ async fn run_model_with_server(
     }
     // loading the model from mem-agent via daemon server
     let memory_path = get_memory_path().context("Setting/Retrieving memory_path failed")?;
-    let modelname = modelfile.from.as_ref().unwrap();
     match load_model(&modelfile, &default_modelfile, &memory_path).await {
-        Ok(_) => start_repl(mlx_runtime, modelname, run_args).await,
+        Ok(_) => start_repl(mlx_runtime, &modelfile, run_args).await?,
         Err(err) => return Err(anyhow::anyhow!(err)),
     }
     Ok(())
 }
 
-async fn start_repl(mlx_runtime: &MLXRuntime, modelname: &str, run_args: &RunArgs) {
+async fn start_repl(
+    mlx_runtime: &MLXRuntime,
+    modelfile: &Modelfile,
+    run_args: &RunArgs,
+) -> Result<()> {
+    let modelname = modelfile
+        .from
+        .clone()
+        .ok_or_else(|| anyhow!("Error getting FROM from modelfile due to"))?;
+
     println!("Running {} in interactive mode", modelname);
+    let common_db_conn = get_db_conn(crate::core::storage::db::DBTYPE::COMMON)?;
+    let chat_db_conn = get_db_conn(crate::core::storage::db::DBTYPE::CHAT)?;
+    let current_user = get_current_user(&common_db_conn)?;
 
     let config = Config::builder().auto_add_history(true).build();
     let mut editor = Editor::<TilesHinter, DefaultHistory>::with_config(config).unwrap();
@@ -248,6 +268,7 @@ async fn start_repl(mlx_runtime: &MLXRuntime, modelname: &str, run_args: &RunArg
     let mut g_reply: String = "".to_owned();
     let mut prev_response_id: String = String::from("");
 
+    let mut conversations: Vec<Message> = vec![];
     loop {
         let readline = editor.readline(">>> ");
         let input = match readline {
@@ -262,7 +283,7 @@ async fn start_repl(mlx_runtime: &MLXRuntime, modelname: &str, run_args: &RunArg
             }
         };
 
-        match handle_slash_command(&input, modelname) {
+        match handle_slash_command(&input, modelname.as_str()) {
             SlashCommand::Continue => continue,
             SlashCommand::Exit => {
                 println!("Exiting interactive mode");
@@ -288,66 +309,84 @@ async fn start_repl(mlx_runtime: &MLXRuntime, modelname: &str, run_args: &RunArg
         loop {
             if remaining_count > 0 {
                 let chat_start = remaining_count == run_args.relay_count;
-                if let Ok(response) = chat(
+
+                match chat(
                     &input,
-                    modelname,
+                    modelfile,
                     chat_start,
                     &python_code,
                     &g_reply,
                     run_args,
                     &prev_response_id,
+                    &chat_db_conn,
+                    &current_user,
+                    &conversations,
                 )
                 .await
                 {
-                    if response.reply.is_empty() {
-                        if !response.code.is_empty() {
-                            python_code = response.code;
-                        }
-                        if let Some(metrics) = response.metrics {
-                            bench_metrics.update(metrics);
-                        }
-                        remaining_count -= 1;
-                    } else {
-                        g_reply = response.reply.clone();
-                        if run_args.memory {
-                            println!("\n{}", response.reply.trim());
+                    Ok(response) => {
+                        if response.reply.is_empty() {
+                            if !response.code.is_empty() {
+                                python_code = response.code;
+                            }
+                            if let Some(metrics) = response.metrics {
+                                bench_metrics.update(metrics);
+                            }
+                            remaining_count -= 1;
                         } else {
-                            prev_response_id = response.prev_response_id;
-                            println!("\n");
-                        }
-                        // Display benchmark metrics if available
-                        if let Some(metrics) = response.metrics {
-                            bench_metrics.update(metrics);
-                            println!(
-                                "{}",
-                                format!(
-                                    "\n{} {:.1} tok/s | {} tokens | {:.0}s TTFT",
-                                    "💡".yellow(),
-                                    bench_metrics.total_tokens as f64
-                                        / bench_metrics.total_latency_s,
-                                    bench_metrics.total_tokens,
-                                    bench_metrics.ttft_ms / 1000.0
-                                )
-                                .dimmed()
-                            );
-                        }
+                            g_reply = response.reply.clone();
+                            if run_args.memory {
+                                println!("\n{}", response.reply.trim());
+                            } else {
+                                prev_response_id = response.prev_response_id.clone();
+                                println!("\n");
+                            }
+                            conversations.push(Message {
+                                r#type: String::from("message"),
+                                role: Role::User,
+                                content: input,
+                            });
+                            conversations.push(Message {
+                                r#type: String::from("message"),
+                                role: Role::Assistant,
+                                content: g_reply.clone(),
+                            });
 
+                            save_chat(&chat_db_conn, &current_user, &g_reply, Some(&response))?;
+                            // Display benchmark metrics if available
+                            if let Some(metrics) = response.metrics {
+                                bench_metrics.update(metrics);
+                                println!(
+                                    "{}",
+                                    format!(
+                                        "\n{} {:.1} tok/s | {} tokens | {:.0}s TTFT",
+                                        "💡".yellow(),
+                                        bench_metrics.total_tokens as f64
+                                            / bench_metrics.total_latency_s,
+                                        bench_metrics.total_tokens,
+                                        bench_metrics.ttft_ms / 1000.0
+                                    )
+                                    .dimmed()
+                                );
+                            }
+
+                            break;
+                        }
+                    }
+                    Err(err) => {
+                        // if out of relay count, then clear the global_reply and ready for next fresh prompt
+                        println!("{:?}", err);
+                        g_reply.clear();
                         break;
                     }
-                } else {
-                    println!("\nFailed to respond");
-                    break;
                 }
-            } else {
-                // if out of relay count, then clear the global_reply and ready for next fresh prompt
-                g_reply.clear();
-                break;
             }
         }
         if g_reply.is_empty() {
             println!("\nNo reply, try another prompt");
         }
     }
+    Ok(())
 }
 
 pub async fn ping() -> Result<()> {
@@ -397,28 +436,33 @@ async fn load_model(
     }
 }
 
+//TODO: Have 2 separate chat functions for memory and non-memory
+#[allow(clippy::too_many_arguments)]
 async fn chat(
     input: &str,
-    model_name: &str,
+    modelfile: &Modelfile,
     chat_start: bool,
     python_code: &str,
     g_reply: &str,
     run_args: &RunArgs,
     prev_response_id: &str,
+    conn: &Connection,
+    user: &User,
+    conversations: &[Message],
 ) -> Result<ChatResponse> {
     let client = Client::new();
+    let modelname = modelfile
+        .from
+        .clone()
+        .ok_or_else(|| anyhow!("Failed to get model name"))?;
+    let prompt = modelfile
+        .system
+        .clone()
+        .ok_or_else(|| anyhow!("Failed to get system prompt"))?;
+    let convo_input = create_chat_input(input, prompt.as_str(), conversations);
     let body = json!({
-        "model": model_name,
-        "input": [{
-            "type": "message",
-            "role": "user",
-            "content": input
-        },
-        {
-            "type": "message",
-            "role": "developer",
-            "content": ""
-        }],
+        "model": modelname,
+        "input": convo_input,
         "reasoning": {"effort": "medium"},
         "chat_start": chat_start,
         "stream": true,
@@ -428,7 +472,7 @@ async fn chat(
     });
 
     let memory_body = json!({
-        "model": model_name,
+        "model": modelname,
         "input": input,
         "chat_start": chat_start,
         "stream": true,
@@ -444,9 +488,9 @@ async fn chat(
         client.post(api_url).json(&body).send().await?
     };
 
+    let chat = save_chat(conn, user, input, None)?;
     let mut stream = res.bytes_stream();
     let mut accumulated = String::new();
-    println!();
     let mut metrics: Option<BenchmarkMetrics> = None;
     let mut is_answer_start = false;
     let mut prev_response_id: String = String::from("");
@@ -462,12 +506,14 @@ async fn chat(
             let data = line.trim_start_matches("data: ");
 
             if data == "[DONE]" {
-                return Ok(convert_to_chat_response(
+                let mut chat_resp = convert_to_chat_response(
                     &accumulated,
                     run_args.memory,
                     prev_response_id,
                     metrics,
-                ));
+                );
+                chat_resp.parent_chat_id = Some(chat.id);
+                return Ok(chat_resp);
             }
 
             //TODO: This will break if we ask the model to give an essay and all
@@ -479,8 +525,10 @@ async fn chat(
             let model_text: Option<&str> = if run_args.memory {
                 v["choices"][0]["delta"]["content"].as_str()
             } else {
-                prev_response_id = serde_json::to_string(&v["id"])?;
-                // println!("prev_id {}", prev_response_id);
+                prev_response_id = serde_json::to_string(&v["id"])?
+                    .trim_matches('\"')
+                    .to_owned();
+
                 if serde_json::to_string(&v["status"])?.contains("completed") {
                     output_completed = true;
                 }
@@ -490,7 +538,6 @@ async fn chat(
 
             if let Some(delta) = model_text {
                 if !run_args.memory {
-                    // TODO: This doesn't support non-harmonic models, so need to handle it
                     if delta.contains("**[Answer]**") {
                         is_answer_start = true
                     }
@@ -525,6 +572,7 @@ fn convert_to_chat_response(
         code: extract_python(content),
         prev_response_id,
         metrics,
+        parent_chat_id: None,
     }
 }
 
@@ -572,5 +620,35 @@ fn get_default_modelfile(memory_mode: bool) -> Result<PathBuf> {
     } else {
         let path = DefaultProvider.get_lib_dir()?.join("modelfiles/gpt-oss");
         Ok(path)
+    }
+}
+
+fn create_chat_input(input: &str, prompt: &str, conversations: &[Message]) -> Vec<Message> {
+    let dev_msg = Message {
+        r#type: "message".to_owned(),
+        role: Role::Developer,
+        content: String::from(prompt),
+    };
+
+    let input = Message {
+        r#type: "message".to_owned(),
+        role: Role::User,
+        content: String::from(input),
+    };
+
+    let last_n = if conversations.len() < 10 {
+        conversations
+    } else {
+        &conversations[conversations.len() - 10..]
+    };
+
+    if !conversations.is_empty() {
+        let mut convo: Vec<Message> = vec![];
+        convo.push(dev_msg);
+        convo.append(&mut last_n.to_vec());
+        convo.push(input);
+        convo
+    } else {
+        vec![dev_msg, input]
     }
 }

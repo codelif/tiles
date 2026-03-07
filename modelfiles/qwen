@@ -1,0 +1,1 @@
+FROM mlx-community/Qwen3.5-4B-MLX-4bit

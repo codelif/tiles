@@ -4,10 +4,11 @@ use std::io;
 
 use anyhow::{Result, anyhow};
 use owo_colors::OwoColorize;
-use tiles::runtime::Runtime;
-use tiles::utils::accounts::{
+use tiles::core;
+use tiles::core::accounts::{
     RootUser, create_root_account, get_root_user_details, save_root_account, set_nickname,
 };
+use tiles::runtime::Runtime;
 use tiles::utils::config::{
     ConfigProvider, DefaultProvider, get_or_create_config, set_user_data_path,
 };
@@ -146,11 +147,6 @@ fn setup_root_account(root_config: Table) -> Result<()> {
 }
 
 fn setup_default_user_data_dir<T: ConfigProvider>(config_provider: &T) -> Result<()> {
-    // gets default data dir -> ~/.local/share/tiles/data
-    // shows this is the data dir
-    // asks if they want to change, if y, asks for new loc, else keep current one
-    // writes the default/new path to in config.toml data->path
-    //
     let user_data_dir = config_provider.get_user_data_dir()?;
     println!("{}", FTUE_DATA_DIR_PROMPT);
     println!("  {}", user_data_dir.display());
@@ -228,6 +224,10 @@ fn read_required_nickname() -> Result<String> {
 }
 
 pub async fn try_app_update() -> Result<()> {
+    // no need to check updates in dev mode
+    if cfg!(debug_assertions) {
+        return Ok(());
+    }
     let update_info: UpdateInfo = get_update_info().await?;
     if update_info.can_update {
         let update_str = format!(
@@ -252,8 +252,9 @@ pub async fn try_app_update() -> Result<()> {
     Ok(())
 }
 
-pub async fn run(runtime: &Runtime, run_args: RunArgs) {
-    let _ = runtime.run(run_args).await;
+pub async fn run(runtime: &Runtime, run_args: RunArgs) -> Result<()> {
+    core::init().inspect_err(|e| eprintln!("Tiles core init failed due to {:?}", e))?;
+    runtime.run(run_args).await
 }
 
 pub fn set_data(path: &str) {
