@@ -64,7 +64,7 @@ cp -r "${MODELFILE_DIR}" "${LIBS_PATH}"
 
 
 # Creating .pkg
-pkgbuild --root pkgroot --scripts pkg/scripts --identifier com.tilesprivacy.tiles --version "$VERSION" "tiles-${VERSION}".pkg"
+pkgbuild --root pkgroot --scripts pkg/scripts --identifier com.tilesprivacy.tiles --version "$VERSION" "tiles-${VERSION}".pkg
 
 
 # signing

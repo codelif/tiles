@@ -5,6 +5,22 @@ The format is based on https://keepachangelog.com/en/1.1.0/
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-03-08
+
+### Added
+- Chats are now persisted using sqlite underneath by @madclaws in https://github.com/tilesprivacy/tiles/pull/94
+
+- Release artifacts will have .pkg bundles too for easy installs by @madclaws in https://github.com/tilesprivacy/tiles/pull/96
+
+### Changed
+-  Inference enhancements by @madclaws in https://github.com/tilesprivacy/tiles/pull/95
+   - Support for non-harmony response models
+   - Supports turn conversation with the model
+
+### Fixed
+- fixed venvstack generating multiple app-server tar on build by @madclaws in https://github.com/tilesprivacy/tiles/pull/93
+
+
 ## [0.4.2] - 2026-03-01
 ### Added
 - Added FTUE changes for account setup in https://github.com/tilesprivacy/tiles/pull/88
