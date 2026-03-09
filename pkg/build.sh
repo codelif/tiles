@@ -33,6 +33,13 @@ mkdir -p "${LIBS_PATH}"
 cp "target/${TARGET}/${BINARY_NAME}" "${CLI_BIN_PATH}"
 chmod +x "${CLI_BIN_PATH}/tiles"
 
+# Signing the tiles binary
+codesign --force \
+  --sign "$DEVELOPER_ID_APPLICATION"\
+  --options runtime \
+  --timestamp \
+  --strict \
+  "${CLI_BIN_PATH}/tiles"
 
 # Build venvstack and move to /usr/local/share/tiles
 # 
@@ -68,6 +75,15 @@ pkgbuild --root pkgroot --scripts pkg/scripts --identifier com.tilesprivacy.tile
 
 
 # signing
-
+productsign \
+  --sign "$DEVELOPER_ID_INSTALLER" \
+  "tiles-${VERSION}.pkg" \
+  "tiles-${VERSION}-signed.pkg"
 
 # notarizing
+xcrun notarytool submit "tiles-${VERSION}-signed.pkg"\
+  --keychain-profile "tiles-notary-profile" \
+  --wait
+
+# staple the approval ticket to pkg
+xcrun stapler staple "tiles-${VERSION}-signed.pkg"
