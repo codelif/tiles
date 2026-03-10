@@ -2,7 +2,7 @@ use crate::core::accounts::{User, get_current_user};
 use crate::core::chats::{Message, save_chat};
 use crate::core::storage::db::get_db_conn;
 use crate::runtime::RunArgs;
-use crate::utils::config::{ConfigProvider, DefaultProvider, get_memory_path};
+use crate::utils::config::{ConfigProvider, DefaultProvider, get_memory_path, get_model_cache};
 use crate::utils::hf_model_downloader::*;
 use anyhow::{Context, Result, anyhow};
 use futures_util::StreamExt;
@@ -406,9 +406,11 @@ async fn load_model(
 ) -> Result<()> {
     let client = Client::new();
     let model_name = modelfile.from.clone().unwrap();
+    let model_cache_path = get_model_cache(&model_name)?;
     let body = json!({
         "model": model_name,
         "memory_path": memory_path,
+        "model_cache_path": model_cache_path,
         "system_prompt": modelfile.system.clone().unwrap_or(default_modelfile.system.clone().unwrap_or("".to_owned()))
     });
 

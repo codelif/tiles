@@ -3,7 +3,7 @@ import logging
 import time
 import uuid
 from collections.abc import AsyncGenerator
-
+from pathlib import Path
 from fastapi import HTTPException
 from openai_harmony import (
     Conversation,
@@ -54,15 +54,24 @@ def download_model(model_name: str):
         raise HTTPException(status_code=400, detail="Downloading model failed")
 
 
-def get_or_load_model(model_spec: str, verbose: bool = True) -> MLXRunner:
+def get_or_load_model(
+    model_spec: str, model_cache_path: str | None = None, verbose: bool = True
+) -> MLXRunner:
     """Get model from cache or load it if not cached."""
     global _model_cache, _current_model_path
 
     # Use the existing model path resolution from cache_utils
 
     try:
-        model_path, model_name, commit_hash = get_model_path(model_spec)
-        if not model_path.exists():
+        model_path = ""
+        model_name = model_spec
+        print(f"{model_cache_path}")
+        if isinstance(model_cache_path, str):
+            model_path = Path(model_cache_path)
+        else:
+            model_path, model_name, commit_hash = get_model_path(model_spec)
+
+        if not model_path.exists():  # pyright: ignore
             logger.info(f"Model {model_spec} not found in cache")
             raise HTTPException(
                 status_code=404, detail=f"Model {model_spec} not found in cache"

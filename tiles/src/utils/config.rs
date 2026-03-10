@@ -12,6 +12,7 @@
 /// - /usr/local/share/tiles (lib dir) - Some internal App files, libraries etc go here..
 ///     - /modelfiles
 ///     - /server
+///     - /models - Where the pre-downloaded models.
 use anyhow::{Context, Result, anyhow};
 use std::fs::File;
 use std::path::PathBuf;
@@ -229,6 +230,37 @@ pub fn save_config(config: &Table) -> Result<()> {
     fs::copy(&tmp_path, &config_path)?;
     fs::remove_file(tmp_path)?;
     Ok(())
+}
+
+// Get the apt path where the model lies
+pub fn get_model_cache(model_name: &str) -> Result<PathBuf> {
+    let hf_model_dir = if model_name.starts_with("mlx-community") {
+        let model_spec_parts = model_name.split("/").collect::<Vec<&str>>();
+        format!("models--{}--{}", model_spec_parts[0], model_spec_parts[1])
+    } else {
+        return Err(anyhow!("Not implemented for non-mlx models"));
+    };
+
+    let lib_dir = DefaultProvider.get_lib_dir()?;
+    let pre_downloaded_model_path = lib_dir.join("models/huggingface/hub").join(&hf_model_dir);
+    let data_dir = DefaultProvider.get_user_data_dir()?;
+    let user_data_dir_model_path = data_dir.join("models/huggingface/hub").join(&hf_model_dir);
+
+    let legacy_model_path = PathBuf::from(format!(
+        "{}/.cache/huggingface/hub",
+        env::home_dir().unwrap().to_str().unwrap()
+    ))
+    .join(&hf_model_dir);
+
+    if pre_downloaded_model_path.exists() {
+        return Ok(pre_downloaded_model_path);
+    } else if user_data_dir_model_path.exists() {
+        return Ok(user_data_dir_model_path);
+    } else if legacy_model_path.exists() {
+        return Ok(legacy_model_path);
+    } else {
+        Err(anyhow!("Model doesnt exist"))
+    }
 }
 
 //TODO: Add more tests for config.toml
