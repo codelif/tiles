@@ -73,18 +73,22 @@ cp -r "${MODELFILE_DIR}" "${LIBS_PATH}"
 # Creating .pkg
 pkgbuild --root pkgroot --scripts pkg/scripts --identifier com.tilesprivacy.tiles --version "$VERSION" "tiles-${VERSION}".pkg
 
+# bundling the models
+productbuild --package "tiles-${VERSION}".pkg --package tiles-model.pkg "tiles-${VERSION}-full".pkg
+
 
 # signing
 productsign \
   --sign "$DEVELOPER_ID_INSTALLER" \
-  "tiles-${VERSION}.pkg" \
-  "tiles-${VERSION}-signed.pkg"
+  "tiles-${VERSION}-full.pkg" \
+  "tiles-${VERSION}-full-signed.pkg"
 
 # notarizing
-xcrun notarytool submit "tiles-${VERSION}-signed.pkg"\
+xcrun notarytool submit "tiles-${VERSION}-full-signed.pkg"\
   --keychain-profile "tiles-notary-profile" \
   --wait
 
 # staple the approval ticket to pkg
-xcrun stapler staple "tiles-${VERSION}-signed.pkg"
+xcrun stapler staple "tiles-${VERSION}-full--signed.pkg"
+
 

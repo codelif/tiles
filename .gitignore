@@ -9,3 +9,4 @@ tiles/target
 pkgroot/
 *.pkg
 models/
+pkgroot_models/

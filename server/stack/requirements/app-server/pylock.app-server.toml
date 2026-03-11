@@ -138,16 +138,16 @@ sha256 = "90a2e49ed19515320abb864df570dd766be0662c5d577688f1600170f7f73cf2"
 
 [[packages]]
 name = "filelock"
-version = "3.25.1"
+version = "3.25.2"
 index = "https://pypi.org/simple"
 
 [[packages.wheels]]
-url = "https://files.pythonhosted.org/packages/a9/b8/2f664b56a3b4b32d28d3d106c71783073f712ba43ff6d34b9ea0ce36dc7b/filelock-3.25.1-py3-none-any.whl"
-upload-time = 2026-03-09T19:38:45Z
-size = 26720
+url = "https://files.pythonhosted.org/packages/a4/a5/842ae8f0c08b61d6484b52f99a03510a3a72d23141942d216ebe81fefbce/filelock-3.25.2-py3-none-any.whl"
+upload-time = 2026-03-11T20:45:37Z
+size = 26759
 
 [packages.wheels.hashes]
-sha256 = "18972df45473c4aa2c7921b609ee9ca4925910cc3a0fb226c96b92fc224ef7bf"
+sha256 = "ca8afb0da15f229774c9ad1b455ed96e85a81373065fb10446672f64444ddf70"
 
 [[packages]]
 name = "fsspec"
@@ -177,56 +177,56 @@ sha256 = "63cf8bbe7522de3bf65932fda1d9c2772064ffb3dae62d55932da54b31cb6c86"
 
 [[packages]]
 name = "hf-xet"
-version = "1.3.2"
+version = "1.4.0"
 index = "https://pypi.org/simple"
 
 [[packages.wheels]]
-url = "https://files.pythonhosted.org/packages/35/56/987b0537ddaf88e17192ea09afa8eca853e55f39a4721578be436f8409df/hf_xet-1.3.2-cp313-cp313t-macosx_11_0_arm64.whl"
-upload-time = 2026-02-27T17:25:47Z
-size = 3521565
+url = "https://files.pythonhosted.org/packages/48/3d/3db90ec0afb4e26e3330b1346b89fe0e9a3b7bfc2d6a2b2262787790d25f/hf_xet-1.4.0-cp313-cp313t-macosx_11_0_arm64.whl"
+upload-time = 2026-03-11T18:49:45Z
+size = 3556235
 
 [packages.wheels.hashes]
-sha256 = "c1ae4d3a716afc774e66922f3cac8206bfa707db13f6a7e62dfff74bfc95c9a8"
+sha256 = "76f1f73bee81a6e6f608b583908aa24c50004965358ac92c1dc01080a21bcd09"
 
 [[packages.wheels]]
-url = "https://files.pythonhosted.org/packages/a8/5c/7e4a33a3d689f77761156cc34558047569e54af92e4d15a8f493229f6767/hf_xet-1.3.2-cp313-cp313t-manylinux2014_x86_64.manylinux_2_17_x86_64.whl"
-upload-time = 2026-02-27T17:25:40Z
-size = 4176494
+url = "https://files.pythonhosted.org/packages/57/6e/2a662af2cbc6c0a64ebe9fcdb8faf05b5205753d45a75a3011bb2209d0b4/hf_xet-1.4.0-cp313-cp313t-manylinux2014_x86_64.manylinux_2_17_x86_64.whl"
+upload-time = 2026-03-11T18:49:38Z
+size = 4213145
 
 [packages.wheels.hashes]
-sha256 = "d6dbdf231efac0b9b39adcf12a07f0c030498f9212a18e8c50224d0e84ab803d"
+sha256 = "1818c2e5d6f15354c595d5111c6eb0e5a30a6c5c1a43eeaec20f19607cff0b34"
 
 [[packages.wheels]]
-url = "https://files.pythonhosted.org/packages/e2/e1/3af961f71a40e09bf5ee909842127b6b00f5ab4ee3817599dc0771b79893/hf_xet-1.3.2-cp313-cp313t-musllinux_1_2_x86_64.whl"
-upload-time = 2026-02-27T17:25:58Z
-size = 4394161
+url = "https://files.pythonhosted.org/packages/49/48/0945b5e542ed6c6ce758b589b27895a449deab630dfcdee5a6ee0f699d21/hf_xet-1.4.0-cp313-cp313t-musllinux_1_2_x86_64.whl"
+upload-time = 2026-03-11T18:49:55Z
+size = 4431022
 
 [packages.wheels.hashes]
-sha256 = "35b855024ca37f2dd113ac1c08993e997fbe167b9d61f9ef66d3d4f84015e508"
+sha256 = "06da3797f1fdd9a8f8dbc8c1bddfa0b914789b14580c375d29c32ee35c2c66ca"
 
 [[packages.wheels]]
-url = "https://files.pythonhosted.org/packages/e4/71/b99aed3823c9d1795e4865cf437d651097356a3f38c7d5877e4ac544b8e4/hf_xet-1.3.2-cp37-abi3-macosx_11_0_arm64.whl"
-upload-time = 2026-02-27T17:25:50Z
-size = 3526171
+url = "https://files.pythonhosted.org/packages/5d/30/ee62b0c00412f49a7e6f509f0104ee8808692278d247234336df48029349/hf_xet-1.4.0-cp37-abi3-macosx_11_0_arm64.whl"
+upload-time = 2026-03-11T18:49:48Z
+size = 3560682
 
 [packages.wheels.hashes]
-sha256 = "a85d3d43743174393afe27835bde0cd146e652b5fcfdbcd624602daef2ef3259"
+sha256 = "cc8bd050349d0d7995ce7b3a3a18732a2a8062ce118a82431602088abb373428"
 
 [[packages.wheels]]
-url = "https://files.pythonhosted.org/packages/9d/ca/907890ce6ef5598b5920514f255ed0a65f558f820515b18db75a51b2f878/hf_xet-1.3.2-cp37-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl"
-upload-time = 2026-02-27T17:25:43Z
-size = 4180750
+url = "https://files.pythonhosted.org/packages/93/d0/0fe5c44dbced465a651a03212e1135d0d7f95d19faada692920cb56f8e38/hf_xet-1.4.0-cp37-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl"
+upload-time = 2026-03-11T18:49:40Z
+size = 4218323
 
 [packages.wheels.hashes]
-sha256 = "7c2a054a97c44e136b1f7f5a78f12b3efffdf2eed3abc6746fc5ea4b39511633"
+sha256 = "5d0c38d2a280d814280b8c15eead4a43c9781e7bf6fc37843cffab06dcdc76b9"
 
 [[packages.wheels]]
-url = "https://files.pythonhosted.org/packages/00/b3/7bc1ff91d1ac18420b7ad1e169b618b27c00001b96310a89f8a9294fe509/hf_xet-1.3.2-cp37-abi3-musllinux_1_2_x86_64.whl"
-upload-time = 2026-02-27T17:26:03Z
-size = 4398020
+url = "https://files.pythonhosted.org/packages/8d/c0/346b9aad1474e881e65f998d5c1981695f0af045bc7a99204d9d86759a89/hf_xet-1.4.0-cp37-abi3-musllinux_1_2_x86_64.whl"
+upload-time = 2026-03-11T18:49:58Z
+size = 4434346
 
 [packages.wheels.hashes]
-sha256 = "06cdbde243c85f39a63b28e9034321399c507bcd5e7befdd17ed2ccc06dfe14e"
+sha256 = "b25f06ce42bd2d5f2e79d4a2d72f783d3ac91827c80d34a38cf8e5290dd717b0"
 
 [[packages]]
 name = "huggingface-hub"

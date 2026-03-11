@@ -403,8 +403,6 @@ async fn load_model(
     memory_path: &str,
 ) -> Result<()> {
     let model_name = modelfile.from.clone().unwrap();
-    // TODO: A problem w current approach is this wont work
-    // for rest APIs, since /start is needed for loading memory.
 
     if let Ok(model_cache_path) = get_model_cache(&model_name) {
         load_model_in_py(modelfile, default_modelfile, memory_path, &model_cache_path).await

@@ -17,7 +17,7 @@ use anyhow::{Context, Result, anyhow};
 use std::fs::File;
 use std::path::PathBuf;
 use std::str::FromStr;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::SystemTime;
 use std::{env, fs};
 use toml::Table;
 
@@ -254,16 +254,12 @@ pub fn get_model_cache(model_name: &str) -> Result<PathBuf> {
     ))
     .join(&hf_model_dir);
 
-    println!("pre-downloaded path{:?}", pre_downloaded_model_path);
-    println!("user data download path{:?}", user_data_dir_model_path);
-    println!("legacy path{:?}", legacy_model_path);
-
     if pre_downloaded_model_path.exists() {
-        return Ok(get_commit_path(pre_downloaded_model_path)?);
+        get_commit_path(pre_downloaded_model_path)
     } else if user_data_dir_model_path.exists() {
-        return Ok(get_commit_path(user_data_dir_model_path)?);
+        get_commit_path(user_data_dir_model_path)
     } else if legacy_model_path.exists() {
-        return Ok(get_commit_path(legacy_model_path)?);
+        get_commit_path(legacy_model_path)
     } else {
         Err(anyhow!("Model doesnt exist"))
     }
@@ -274,10 +270,10 @@ fn get_commit_path(base_path: PathBuf) -> Result<PathBuf> {
     let snapshot_path = base_path.join("snapshots");
     if snapshot_path.exists() {
         for entry in snapshot_path.read_dir()? {
-            if let Ok(item) = entry {
-                if item.path().is_dir() {
-                    snapshots.push((item.path(), item.path().metadata()?.modified()?));
-                }
+            if let Ok(item) = entry
+                && item.path().is_dir()
+            {
+                snapshots.push((item.path(), item.path().metadata()?.modified()?));
             }
         }
         if snapshots.is_empty() {
