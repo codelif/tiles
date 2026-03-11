@@ -23,3 +23,9 @@ install:
 
 bundle_pkg:
     ./pkg/build.sh
+
+bundle_model_pkg:
+    ./pkg/build_model.sh
+
+bundle_pkg_full:
+    ./pkg/build_full.sh
