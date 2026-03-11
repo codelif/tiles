@@ -59,60 +59,39 @@ def get_or_load_model(
 ) -> MLXRunner:
     """Get model from cache or load it if not cached."""
     global _model_cache, _current_model_path
+    model_name = model_spec
+    if isinstance(model_cache_path, str):
+        model_path_str = model_cache_path
+        # Check if we need to load a different model
+        if _current_model_path != model_path_str:
+            # Proactively clean up any previously loaded runner to release memory
+            if _model_cache:
+                try:
+                    for _old_runner in list(_model_cache.values()):
+                        try:
+                            _old_runner.cleanup()
+                        except Exception:
+                            pass
+                finally:
+                    _model_cache.clear()
 
-    # Use the existing model path resolution from cache_utils
+            # Load new model
+            if verbose:
+                print(f"Loading model: {model_name}")
 
-    try:
-        model_path = ""
-        model_name = model_spec
-        print(f"{model_cache_path}")
-        if isinstance(model_cache_path, str):
-            model_path = Path(model_cache_path)
+            logger.info(f"Loading model: {model_name}")
+            runner = MLXRunner(model_path_str, verbose=verbose)
+            runner.load_model()
+
+            _model_cache[model_path_str] = runner
+            _current_model_path = model_path_str
+            return runner
         else:
-            model_path, model_name, commit_hash = get_model_path(model_spec)
-
-        if not model_path.exists():  # pyright: ignore
-            logger.info(f"Model {model_spec} not found in cache")
-            raise HTTPException(
-                status_code=404, detail=f"Model {model_spec} not found in cache"
-            )
-    except Exception as e:
-        logger.info(f"Model {model_spec} not found in: {str(e)}")
-        raise HTTPException(
-            status_code=404, detail=f"Model {model_spec} not found: {str(e)}"
-        )
-
-    # Check if it's an MLX model
-
-    model_path_str = str(model_path)
-
-    # Check if we need to load a different model
-    if _current_model_path != model_path_str:
-        # Proactively clean up any previously loaded runner to release memory
-        if _model_cache:
-            try:
-                for _old_runner in list(_model_cache.values()):
-                    try:
-                        _old_runner.cleanup()
-                    except Exception:
-                        pass
-            finally:
-                _model_cache.clear()
-
-        # Load new model
-        if verbose:
-            print(f"Loading model: {model_name}")
-
-        logger.info(f"Loading model: {model_name}")
-        runner = MLXRunner(model_path_str, verbose=verbose)
-        runner.load_model()
-
-        _model_cache[model_path_str] = runner
-        _current_model_path = model_path_str
+            logger.info(f"Model {model_name} already in memory")
+            return _model_cache[_current_model_path]  # pyright: ignore
     else:
-        logger.info(f"Model {model_name} already in memory")
-
-    return _model_cache[model_path_str]
+        logger.info(f"Model Path {_current_model_path} already in memory")
+        return _model_cache[_current_model_path]  # pyright: ignore
 
 
 async def generate_chat_stream(
@@ -123,7 +102,7 @@ async def generate_chat_stream(
     _messages = messages
     completion_id = f"chatcmpl-{uuid.uuid4()}"
     created = int(time.time())
-    runner = get_or_load_model(request.model)
+    runner = get_or_load_model(request.model, None)
     if request.chat_start:
         _messages.extend(request.messages)
     # Convert messages to dict format for runner
@@ -321,7 +300,7 @@ async def generate_response_chat_stream(
     """Generate streaming chat responses for OpenResponses API."""
     model = request.model
     created = int(time.time())
-    runner = get_or_load_model(model)
+    runner = get_or_load_model(model, None)
     metrics = None
 
     user_input_content = ""
@@ -500,7 +479,7 @@ async def generate_response_chat(request: ResponsesRequest):
     response_id = f"resp-{uuid.uuid4()}"
     msg_id = f"msg_{uuid.uuid4()}"
     created = int(time.time())
-    runner = get_or_load_model(model)
+    runner = get_or_load_model(model, None)
 
     user_input_content = ""
 

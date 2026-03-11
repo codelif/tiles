@@ -17,9 +17,11 @@ use anyhow::{Context, Result, anyhow};
 use std::fs::File;
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::time::{SystemTime, UNIX_EPOCH};
 use std::{env, fs};
 use toml::Table;
 
+const MODEL_SUB_PATH: &str = "models/huggingface/hub";
 pub trait ConfigProvider {
     fn get_config_dir(&self) -> Result<PathBuf>;
     fn get_or_create_config_dir(&self) -> Result<PathBuf>;
@@ -116,7 +118,7 @@ impl ConfigProvider for DefaultProvider {
     fn get_lib_dir(&self) -> Result<PathBuf> {
         if cfg!(debug_assertions) {
             let base_dir = env::current_dir().context("Failed to fetch CURRENT_DIR")?;
-            Ok(base_dir)
+            Ok(base_dir.join(".tiles_dev/tiles"))
         } else {
             let data_dir = PathBuf::from_str("/usr/local/share")?;
             Ok(data_dir.join("tiles"))
@@ -242,9 +244,9 @@ pub fn get_model_cache(model_name: &str) -> Result<PathBuf> {
     };
 
     let lib_dir = DefaultProvider.get_lib_dir()?;
-    let pre_downloaded_model_path = lib_dir.join("models/huggingface/hub").join(&hf_model_dir);
+    let pre_downloaded_model_path = lib_dir.join(MODEL_SUB_PATH).join(&hf_model_dir);
     let data_dir = DefaultProvider.get_user_data_dir()?;
-    let user_data_dir_model_path = data_dir.join("models/huggingface/hub").join(&hf_model_dir);
+    let user_data_dir_model_path = data_dir.join(MODEL_SUB_PATH).join(&hf_model_dir);
 
     let legacy_model_path = PathBuf::from(format!(
         "{}/.cache/huggingface/hub",
@@ -252,15 +254,53 @@ pub fn get_model_cache(model_name: &str) -> Result<PathBuf> {
     ))
     .join(&hf_model_dir);
 
+    println!("pre-downloaded path{:?}", pre_downloaded_model_path);
+    println!("user data download path{:?}", user_data_dir_model_path);
+    println!("legacy path{:?}", legacy_model_path);
+
     if pre_downloaded_model_path.exists() {
-        return Ok(pre_downloaded_model_path);
+        return Ok(get_commit_path(pre_downloaded_model_path)?);
     } else if user_data_dir_model_path.exists() {
-        return Ok(user_data_dir_model_path);
+        return Ok(get_commit_path(user_data_dir_model_path)?);
     } else if legacy_model_path.exists() {
-        return Ok(legacy_model_path);
+        return Ok(get_commit_path(legacy_model_path)?);
     } else {
         Err(anyhow!("Model doesnt exist"))
     }
+}
+
+fn get_commit_path(base_path: PathBuf) -> Result<PathBuf> {
+    let mut snapshots: Vec<(PathBuf, SystemTime)> = vec![];
+    let snapshot_path = base_path.join("snapshots");
+    if snapshot_path.exists() {
+        for entry in snapshot_path.read_dir()? {
+            if let Ok(item) = entry {
+                if item.path().is_dir() {
+                    snapshots.push((item.path(), item.path().metadata()?.modified()?));
+                }
+            }
+        }
+        if snapshots.is_empty() {
+            Ok(base_path)
+        } else {
+            let latest_snapshot = snapshots
+                .iter()
+                .max_by_key(|a| a.1)
+                .expect("Failed fetching latest snapshot");
+            Ok(latest_snapshot.0.clone())
+        }
+    } else {
+        Ok(base_path)
+    }
+}
+
+pub fn get_or_create_model_download_path() -> Result<PathBuf> {
+    let data_dir = DefaultProvider.get_user_data_dir()?;
+    let model_dir = data_dir.join(MODEL_SUB_PATH);
+    if !model_dir.exists() {
+        fs::create_dir_all(&model_dir)?;
+    }
+    Ok(model_dir)
 }
 
 //TODO: Add more tests for config.toml

@@ -47,6 +47,7 @@ async def download(request: downloadRequest):
 async def start_model(request: StartRequest):
     """Load the model and start the agent"""
     global _messages, _runner, _memory_path
+    print(f"CACHE PATH{request.model_cache_path}")
 
     _messages = [ChatMessage(role="system", content=request.system_prompt)]
     _memory_path = request.memory_path

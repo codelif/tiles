@@ -8,7 +8,7 @@ TARGET="release"
 MODELFILE_DIR="modelfiles"
 SERVER_DIR="server"
 BINARY_NAME="tiles"
-
+MODELS_DIR="models"
 VERSION=$(grep '^version' tiles/Cargo.toml | head -1 | awk -F'"' '{print $2}')
 OS=$(uname -s | tr '[:upper:]' '[:lower:]')
 ARCH=$(uname -m)
@@ -74,16 +74,16 @@ cp -r "${MODELFILE_DIR}" "${LIBS_PATH}"
 pkgbuild --root pkgroot --scripts pkg/scripts --identifier com.tilesprivacy.tiles --version "$VERSION" "tiles-${VERSION}".pkg
 
 
-# signing
-productsign \
-  --sign "$DEVELOPER_ID_INSTALLER" \
-  "tiles-${VERSION}.pkg" \
-  "tiles-${VERSION}-signed.pkg"
+# # signing
+# productsign \
+#   --sign "$DEVELOPER_ID_INSTALLER" \
+#   "tiles-${VERSION}.pkg" \
+#   "tiles-${VERSION}-signed.pkg"
 
-# notarizing
-xcrun notarytool submit "tiles-${VERSION}-signed.pkg"\
-  --keychain-profile "tiles-notary-profile" \
-  --wait
+# # notarizing
+# xcrun notarytool submit "tiles-${VERSION}-signed.pkg"\
+#   --keychain-profile "tiles-notary-profile" \
+#   --wait
 
-# staple the approval ticket to pkg
-xcrun stapler staple "tiles-${VERSION}-signed.pkg"
+# # staple the approval ticket to pkg
+# xcrun stapler staple "tiles-${VERSION}-signed.pkg"

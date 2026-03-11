@@ -1,13 +1,11 @@
 /// Manages model snapshot downloading from HuggingFace
-use std::{fs, path::PathBuf};
-
 use anyhow::{Result, anyhow};
 use hf_hub::api::{
     Siblings,
     tokio::{ApiBuilder, ApiError},
 };
 
-use crate::utils::config::{ConfigProvider, DefaultProvider};
+use crate::utils::config::get_or_create_model_download_path;
 
 /// Download the entire model (including snapshot) for the given model name
 pub async fn pull_model(model_name: &str) -> Result<()> {
@@ -25,7 +23,7 @@ pub async fn snapshot_download(modelname: &str) -> Result<()> {
     ];
     let api_build_result = ApiBuilder::new()
         .with_progress(true)
-        .with_cache_dir(get_model_download_path()?)
+        .with_cache_dir(get_or_create_model_download_path()?)
         .build();
 
     match api_build_result {
@@ -67,15 +65,6 @@ fn format_hf_api_error(api_error: ApiError) -> String {
         ApiError::TooManyRetries(err) => err.to_string(),
         _err => "Something unexpected happened, check your internet connection".to_owned(),
     }
-}
-
-fn get_model_download_path() -> Result<PathBuf> {
-    let data_dir = DefaultProvider.get_user_data_dir()?;
-    let model_dir = data_dir.join("models/huggingface/hub");
-    if !model_dir.exists() {
-        fs::create_dir_all(&model_dir)?;
-    }
-    Ok(model_dir)
 }
 
 #[cfg(test)]
