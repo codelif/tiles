@@ -75,40 +75,40 @@ sha256 = "027692e4402ad994f1c42e52a4997a9763c646b73e4096e4d5d6db8af1d6f0fa"
 
 [[packages]]
 name = "charset-normalizer"
-version = "3.4.5"
+version = "3.4.6"
 index = "https://pypi.org/simple"
 
 [[packages.wheels]]
-url = "https://files.pythonhosted.org/packages/f5/48/9f34ec4bb24aa3fdba1890c1bddb97c8a4be1bd84ef5c42ac2352563ad05/charset_normalizer-3.4.5-cp313-cp313-macosx_10_13_universal2.whl"
-upload-time = 2026-03-06T06:01:37Z
-size = 280788
+url = "https://files.pythonhosted.org/packages/1e/1d/4fdabeef4e231153b6ed7567602f3b68265ec4e5b76d6024cf647d43d981/charset_normalizer-3.4.6-cp313-cp313-macosx_10_13_universal2.whl"
+upload-time = 2026-03-15T18:51:15Z
+size = 294823
 
 [packages.wheels.hashes]
-sha256 = "ac59c15e3f1465f722607800c68713f9fbc2f672b9eb649fe831da4019ae9b23"
+sha256 = "11afb56037cbc4b1555a34dd69151e8e069bee82e613a73bef6e714ce733585f"
 
 [[packages.wheels]]
-url = "https://files.pythonhosted.org/packages/94/0a/af49691938dfe175d71b8a929bd7e4ace2809c0c5134e28bc535660d5262/charset_normalizer-3.4.5-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl"
-upload-time = 2026-03-06T06:01:43Z
-size = 195572
+url = "https://files.pythonhosted.org/packages/2b/58/a199d245894b12db0b957d627516c78e055adc3a0d978bc7f65ddaf7c399/charset_normalizer-3.4.6-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl"
+upload-time = 2026-03-15T18:51:21Z
+size = 206587
 
 [packages.wheels.hashes]
-sha256 = "0625665e4ebdddb553ab185de5db7054393af8879fb0c87bd5690d14379d6819"
+sha256 = "530e8cebeea0d76bdcf93357aa5e41336f48c3dc709ac52da2bb167c5b8271d9"
 
 [[packages.wheels]]
-url = "https://files.pythonhosted.org/packages/84/31/faa6c5b9d3688715e1ed1bb9d124c384fe2fc1633a409e503ffe1c6398c1/charset_normalizer-3.4.5-cp313-cp313-musllinux_1_2_x86_64.whl"
-upload-time = 2026-03-06T06:01:56Z
-size = 197509
+url = "https://files.pythonhosted.org/packages/53/e9/5f85f6c5e20669dbe56b165c67b0260547dea97dba7e187938833d791687/charset_normalizer-3.4.6-cp313-cp313-musllinux_1_2_x86_64.whl"
+upload-time = 2026-03-15T18:51:34Z
+size = 208652
 
 [packages.wheels.hashes]
-sha256 = "c7a80a9242963416bd81f99349d5f3fce1843c303bd404f204918b6d75a75fd6"
+sha256 = "6cceb5473417d28edd20c6c984ab6fee6c6267d38d906823ebfe20b03d607dc2"
 
 [[packages.wheels]]
-url = "https://files.pythonhosted.org/packages/c5/60/3a621758945513adfd4db86827a5bafcc615f913dbd0b4c2ed64a65731be/charset_normalizer-3.4.5-py3-none-any.whl"
-upload-time = 2026-03-06T06:03:17Z
-size = 55455
+url = "https://files.pythonhosted.org/packages/2a/68/687187c7e26cb24ccbd88e5069f5ef00eba804d36dde11d99aad0838ab45/charset_normalizer-3.4.6-py3-none-any.whl"
+upload-time = 2026-03-15T18:53:23Z
+size = 61455
 
 [packages.wheels.hashes]
-sha256 = "9db5e3fcdcee89a78c04dffb3fe33c79f77bd741a624946db2591c81b2fc85b0"
+sha256 = "947cf925bc916d90adba35a64c82aace04fa39b46b52d4630ece166655905a69"
 
 [[packages]]
 name = "click"

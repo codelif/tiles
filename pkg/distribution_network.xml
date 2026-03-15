@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<installer-gui-script minSpecVersion="1">
+<title>Tiles</title>
+
+
+<!-- <background file="sidebar.png" mime-type="image/png" scaling="proportionally" alignment="left"/> -->
+
+
+<!-- <background-darkAqua file="sidebar.png" mime-type="image/png" scaling="proportionally" alignment="left"/> -->
+
+
+<options customize="never"/>
+
+<welcome file="welcome_network.html"/>
+
+<conclusion file="conclusion.html"/>
+
+<choices-outline>
+    <line choice="app" />
+</choices-outline>
+
+<choice id="app" visible="true" start_selected="true" title="app">
+    <pkg-ref id="com.tilesprivacy.tiles" onConclusion="none">tiles-unsigned.pkg</pkg-ref>
+</choice>
+
+
+</installer-gui-script>
+
+

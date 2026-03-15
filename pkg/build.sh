@@ -71,22 +71,5 @@ cp -r "${MODELFILE_DIR}" "${LIBS_PATH}"
 
 
 # Creating .pkg
-pkgbuild --root pkgroot --scripts pkg/scripts --identifier com.tilesprivacy.tiles --version "$VERSION" "tiles-${VERSION}-unsigned".pkg
-
-
-# signing
-productsign \
-  --sign "$DEVELOPER_ID_INSTALLER" \
-  "tiles-${VERSION}-unsigned.pkg" \
-  "tiles-${VERSION}.pkg"
-
-rm "tiles-${VERSION}-unsigned.pkg"
-
-# notarizing
-xcrun notarytool submit "tiles-${VERSION}.pkg"\
-  --keychain-profile "tiles-notary-profile" \
-  --wait
-
-# staple the approval ticket to pkg
-xcrun stapler staple "tiles-${VERSION}.pkg"
+pkgbuild --root pkgroot --scripts pkg/scripts --identifier com.tilesprivacy.tiles --version "$VERSION" pkg/tiles-unsigned.pkg
 

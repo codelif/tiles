@@ -10,7 +10,7 @@ a user should be able to download from its peers locally too).
 just bundle_pkg
 ```
 
-Creates tiles-<VERSION>.pkg, signs and notarize it
+Creates tiles.pkg, signs and notarize it
 
 
 ### Offline Installer
@@ -40,3 +40,4 @@ the command below.
 just bundle_pkg_full
 
 ```
+Creates tiles-full.pkg, signs and notarize it

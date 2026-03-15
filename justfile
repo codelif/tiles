@@ -23,6 +23,7 @@ install:
 
 bundle_pkg:
     ./pkg/build.sh
+    ./pkg/bundle_network_installer.sh
 
 bundle_model_pkg:
     ./pkg/build_model.sh

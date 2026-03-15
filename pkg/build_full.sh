@@ -4,22 +4,28 @@ set -euo pipefail
 
 VERSION=$(grep '^version' tiles/Cargo.toml | head -1 | awk -F'"' '{print $2}')
 
-# bundling the models
-productbuild --package "tiles-${VERSION}".pkg --package tiles-model.pkg "tiles-${VERSION}-full-unsigned".pkg
+
+productbuild \
+  --distribution pkg/distribution.xml \
+  --resources pkg/resources \
+  --package-path pkg/  \
+  pkg/tiles-full-unsigned.pkg
 
 
 # signing
+# 
 productsign \
   --sign "$DEVELOPER_ID_INSTALLER" \
-  "tiles-${VERSION}-full-unsigned.pkg" \
-  "tiles-${VERSION}-full.pkg"
+  pkg/tiles-full-unsigned.pkg \
+  pkg/tiles-full.pkg
 
 # notarizing
-xcrun notarytool submit "tiles-${VERSION}-full.pkg"\
-  --keychain-profile "tiles-notary-profile" \
-  --wait
+# 
+# xcrun notarytool submit pkg/tiles-full.pkg \
+#   --keychain-profile "tiles-notary-profile" \
+#   --wait
 
-# staple the approval ticket to pkg
-xcrun stapler staple "tiles-${VERSION}-full.pkg"
+# # staple the approval ticket to pkg
+# xcrun stapler staple pkg/tiles-full.pkg
 
-
+rm pkg/tiles-full-unsigned.pkg
