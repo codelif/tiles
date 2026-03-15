@@ -81,6 +81,7 @@ class StartRequest(BaseModel):
     model: str
     memory_path: str
     system_prompt: str
+    model_cache_path: str
 
 
 class downloadRequest(BaseModel):
