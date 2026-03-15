@@ -1,11 +1,11 @@
 <!-- LOGO -->
 <p align="center">
   <a href="https://github.com/tileshq/">
-    <img
-      src="https://avatars.githubusercontent.com/u/210493283?s=400&u=1ee6e44b6a683b16bdb6e9e853c7ebd8c7fd4268&v=4"
-      alt="Tiles Logo"
-      width="128"
-    />
+    <picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://avatars.githubusercontent.com/u/210493283?s=400&u=1ee6e44b6a683b16bdb6e9e853c7ebd8c7fd4268&v=4">
+  <source media="(prefers-color-scheme: light)" srcset="https://github.com/user-attachments/assets/677d3d63-a9b0-4e92-8c7d-f39ceffc1b0d">
+  <img src="https://github.com/user-attachments/assets/677d3d63-a9b0-4e92-8c7d-f39ceffc1b0d" alt="Tiles Logo" width="128">
+</picture>
   </a>
 </p>
 
@@ -30,10 +30,13 @@ There are two primary ways to work with Tiles, depending on whether you are an e
 
 The CLI is the fastest way to get started and will feel familiar if you have used tools like Ollama or LM Studio.
 
-Install and run:
+Install the signed macOS package:
+
+https://download.tiles.run/tiles-0.4.3-signed.pkg
+
+Then run:
 
 ```bash
-curl -fsSL https://tiles.run/install.sh | sh
 tiles
 ```
 
@@ -42,8 +45,8 @@ tiles
 Tilekit is a Rust-based SDK for customizing local models and agent experiences within Tiles.
 
 It provides:
-- A Modelfile specification for defining and sharing models
-- Fast, efficient local deployment across consumer platforms
+- Modelfile specification and tooling for working with models
+- Fast, efficient local deployment of models across consumer platforms
 - Built on open source specifications such as Open Responses API
 - Model composition and chaining, with MIR support currently in development
 
@@ -62,7 +65,7 @@ We strive to deliver the best privacy-focused engineering while also offering un
 
 Tiles is built for privacy conscious users who want intelligence without renting their memory to centralized providers. 
 
-We are seeking design partners for training workloads that align with our goal of a verifiable privacy perimeter. Contact us at hello@tiles.run.
+We are seeking design partners for TEE based cloud workloads that align with our goal of a verifiable privacy perimeter. Contact us at hello@tiles.run.
 
 ## Contributing
 
