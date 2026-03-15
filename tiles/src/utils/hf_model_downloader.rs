@@ -1,17 +1,18 @@
 /// Manages model snapshot downloading from HuggingFace
-use std::{env, path::PathBuf};
-
+use anyhow::{Result, anyhow};
 use hf_hub::api::{
     Siblings,
     tokio::{ApiBuilder, ApiError},
 };
 
+use crate::utils::config::get_or_create_model_download_path;
+
 /// Download the entire model (including snapshot) for the given model name
-pub async fn pull_model(model_name: &str) -> Result<(), String> {
+pub async fn pull_model(model_name: &str) -> Result<()> {
     snapshot_download(model_name).await
 }
 
-pub async fn snapshot_download(modelname: &str) -> Result<(), String> {
+pub async fn snapshot_download(modelname: &str) -> Result<()> {
     let allow_patterns = [
         ".json",
         ".txt",
@@ -22,7 +23,7 @@ pub async fn snapshot_download(modelname: &str) -> Result<(), String> {
     ];
     let api_build_result = ApiBuilder::new()
         .with_progress(true)
-        .with_cache_dir(PathBuf::from(get_model_cache()))
+        .with_cache_dir(get_or_create_model_download_path()?)
         .build();
 
     match api_build_result {
@@ -42,17 +43,17 @@ pub async fn snapshot_download(modelname: &str) -> Result<(), String> {
 
                     for sibling in filtered_siblings {
                         if repo.get(&sibling.rfilename).await.is_err() {
-                            return Err(format!(
+                            return Err(anyhow!(
                                 "{:?} failed to download, retry again",
                                 &sibling.rfilename,
                             ));
                         }
                     }
                 }
-                Err(err) => return Err(format_hf_api_error(err)),
+                Err(err) => return Err(anyhow!(format_hf_api_error(err))),
             };
         }
-        Err(err) => return Err(format_hf_api_error(err)),
+        Err(err) => return Err(anyhow!(format_hf_api_error(err))),
     }
 
     Ok(())
@@ -64,20 +65,6 @@ fn format_hf_api_error(api_error: ApiError) -> String {
         ApiError::TooManyRetries(err) => err.to_string(),
         _err => "Something unexpected happened, check your internet connection".to_owned(),
     }
-}
-
-fn get_model_cache() -> String {
-    let default_cache = format!(
-        "{}/.cache/huggingface",
-        env::home_dir().unwrap().to_str().unwrap()
-    );
-    let cache_root = if let Ok(home) = env::var("HF_HOME") {
-        home.to_owned()
-    } else {
-        default_cache
-    };
-
-    format!("{}/hub", cache_root)
 }
 
 #[cfg(test)]

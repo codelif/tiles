@@ -8,7 +8,7 @@ TARGET="release"
 MODELFILE_DIR="modelfiles"
 SERVER_DIR="server"
 BINARY_NAME="tiles"
-
+MODELS_DIR="models"
 VERSION=$(grep '^version' tiles/Cargo.toml | head -1 | awk -F'"' '{print $2}')
 OS=$(uname -s | tr '[:upper:]' '[:lower:]')
 ARCH=$(uname -m)
@@ -33,6 +33,13 @@ mkdir -p "${LIBS_PATH}"
 cp "target/${TARGET}/${BINARY_NAME}" "${CLI_BIN_PATH}"
 chmod +x "${CLI_BIN_PATH}/tiles"
 
+# Signing the tiles binary
+codesign --force \
+  --sign "$DEVELOPER_ID_APPLICATION"\
+  --options runtime \
+  --timestamp \
+  --strict \
+  "${CLI_BIN_PATH}/tiles"
 
 # Build venvstack and move to /usr/local/share/tiles
 # 
@@ -64,10 +71,5 @@ cp -r "${MODELFILE_DIR}" "${LIBS_PATH}"
 
 
 # Creating .pkg
-pkgbuild --root pkgroot --scripts pkg/scripts --identifier com.tilesprivacy.tiles --version "$VERSION" "tiles-${VERSION}".pkg
+pkgbuild --root pkgroot --scripts pkg/scripts --identifier com.tilesprivacy.tiles --version "$VERSION" pkg/tiles-unsigned.pkg
 
-
-# signing
-
-
-# notarizing

@@ -5,6 +5,16 @@ The format is based on https://keepachangelog.com/en/1.1.0/
 
 ## [Unreleased]
 
+## [0.4.4] - 2026-03-16
+
+### Added
+- Added a core daemon process which will be useful for handling background processes in https://github.com/tilesprivacy/tiles/pull/102
+
+    - Use `tiles daemon stop` and `tiles daemon start` for starting and stopping the daemon explicitly. NOTE: daemon will auto-start when you run `tiles`.
+
+- Added support for fully offline/portable installer in https://github.com/tilesprivacy/tiles/pull/97
+
+
 ## [0.4.3] - 2026-03-08
 
 ### Added
