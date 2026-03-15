@@ -13,22 +13,26 @@ use std::fs::OpenOptions;
 use std::sync::Mutex;
 use tokio::sync::oneshot::{self, Receiver};
 
-use crate::utils::config::{ConfigProvider, DefaultProvider};
+use crate::{
+    core::network,
+    utils::config::{ConfigProvider, DefaultProvider},
+};
 
 struct AppState {
     pub shutdown_sender: Mutex<Option<oneshot::Sender<bool>>>,
 }
 
-pub async fn start_cmd() -> Result<()> {
+const DEFAULT_PORT: u32 = 1729;
+pub async fn start_cmd(port: Option<u32>) -> Result<()> {
     if cfg!(debug_assertions) {
-        start_server().await
+        start_server(port).await
     } else {
         start_daemon().await
     }
 }
 
 pub async fn stop_cmd() -> Result<()> {
-    stop_server().await
+    stop_server(None).await
 }
 async fn root() -> &'static str {
     "Its me luttappi"
@@ -62,7 +66,9 @@ async fn start_daemon() -> Result<()> {
     wait_until_server_is_up().await
 }
 
-pub async fn start_server() -> Result<()> {
+pub async fn start_server(port: Option<u32>) -> Result<()> {
+    let dyn_port: u32 = get_port(port);
+
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<bool>();
 
     let state = AppState {
@@ -72,11 +78,13 @@ pub async fn start_server() -> Result<()> {
     let app = Router::new()
         .route("/", get(root))
         .route("/shutdown", get(shutdown))
+        .route("/link/ping", get(send_ping))
         .with_state(shared_state);
 
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:1729").await?;
+    let addr = format!("127.0.0.1:{}", dyn_port);
+    let listener = tokio::net::TcpListener::bind(addr).await?;
 
-    println!("Daemon server started at 1729");
+    println!("Daemon server started at {}", dyn_port);
     let _ = axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal(shutdown_rx))
         .await;
@@ -95,9 +103,16 @@ async fn shutdown(State(state): State<Arc<AppState>>) {
     let _ = sender_real.send(true);
 }
 
-async fn stop_server() -> Result<()> {
+async fn send_ping(State(_state): State<Arc<AppState>>) {
+    println!("Trying to send ping");
+    let _ = network::init().await;
+}
+
+async fn stop_server(port: Option<u32>) -> Result<()> {
+    let dyn_port = get_port(port);
     let client = Client::new();
-    let res = client.get("http://127.0.0.1:1729/shutdown").send().await;
+    let addr = format!("http://127.0.0.1:{}/shutdown", dyn_port);
+    let res = client.get(addr).send().await;
 
     match res {
         Err(err) => Err(anyhow!("Daemon shutdown failed due to {:?}", err)),
@@ -135,6 +150,14 @@ async fn wait_until_server_is_up() -> Result<()> {
     }
 }
 
+fn get_port(port: Option<u32>) -> u32 {
+    if let Some(port_number) = port {
+        port_number
+    } else {
+        DEFAULT_PORT
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use anyhow::Result;
@@ -146,27 +169,27 @@ mod tests {
     #[serial]
     async fn test_sever_process_started_not_server() -> Result<()> {
         tokio::spawn(async move {
-            let _ = start_server().await;
+            let _ = start_server(None).await;
         });
         assert!(ping().await.is_err());
-        stop_server().await
+        stop_server(None).await
     }
 
     #[tokio::test]
     #[serial]
     async fn test_sever_process_and_server_started() -> Result<()> {
         tokio::spawn(async move {
-            let _ = start_server().await;
+            let _ = start_server(None).await;
         });
         wait_until_server_is_up().await?;
         assert!(ping().await.is_ok());
 
-        stop_server().await
+        stop_server(None).await
     }
 
     #[tokio::test]
     #[serial]
     async fn stop_server_but_server_not_up() {
-        assert!(stop_server().await.is_err())
+        assert!(stop_server(None).await.is_err())
     }
 }

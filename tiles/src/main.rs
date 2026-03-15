@@ -134,7 +134,7 @@ struct DaemonArgs {
 #[derive(Debug, Subcommand)]
 enum DaemonCommands {
     /// Start the daemon
-    Start,
+    Start { port: Option<u32> },
 
     /// Stops the daemon
     Stop,
@@ -158,7 +158,7 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
             // trying to run the tiles daemon in background concurrently
             if !cfg!(debug_assertions) {
                 tokio::spawn(async move {
-                    let _ = start_cmd().await;
+                    let _ = start_cmd(None).await;
                 });
             }
 
@@ -210,14 +210,14 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
             println!("{}", res);
         }
         Some(Commands::Daemon(daemon_args)) => match daemon_args.command {
-            Some(DaemonCommands::Start) => start_cmd()
+            Some(DaemonCommands::Start { port }) => start_cmd(port)
                 .await
                 .inspect_err(|e| eprintln!("Daemon starting failed, reason: {:?}", e))?,
             Some(DaemonCommands::Stop) => stop_cmd()
                 .await
                 .inspect_err(|e| eprintln!("{:?}", e))
                 .inspect(|_| println!("Daemon stopped successfully"))?,
-            _ => start_server().await?,
+            _ => start_server(None).await?,
         },
     }
     Ok(())

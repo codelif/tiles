@@ -10,6 +10,7 @@ use crate::core::{accounts::save_root_account_db, storage::db::init_db};
 pub mod accounts;
 pub mod chats;
 pub mod health;
+pub mod network;
 pub mod storage;
 // Entrypoint of the core
 pub fn init() -> Result<()> {
