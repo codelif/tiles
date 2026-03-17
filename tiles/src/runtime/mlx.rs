@@ -2,7 +2,7 @@ use crate::core::accounts::{User, get_current_user};
 use crate::core::chats::{Message, save_chat};
 use crate::core::storage::db::get_db_conn;
 use crate::runtime::RunArgs;
-use crate::utils::config::{ConfigProvider, DefaultProvider, get_memory_path};
+use crate::utils::config::{ConfigProvider, DefaultProvider, get_memory_path, get_model_cache};
 use crate::utils::hf_model_downloader::*;
 use anyhow::{Context, Result, anyhow};
 use futures_util::StreamExt;
@@ -90,9 +90,7 @@ impl MLXRuntime {
             }
         };
 
-        run_model_with_server(self, modelfile, default_modelfile, &run_args)
-            .await
-            .inspect_err(|e| eprintln!("Failed to run the model due to {e}"))
+        run_model_with_server(self, modelfile, default_modelfile, &run_args).await
     }
 
     #[allow(clippy::zombie_processes)]
@@ -404,35 +402,14 @@ async fn load_model(
     default_modelfile: &Modelfile,
     memory_path: &str,
 ) -> Result<()> {
-    let client = Client::new();
     let model_name = modelfile.from.clone().unwrap();
-    let body = json!({
-        "model": model_name,
-        "memory_path": memory_path,
-        "system_prompt": modelfile.system.clone().unwrap_or(default_modelfile.system.clone().unwrap_or("".to_owned()))
-    });
 
-    let res = client
-        .post("http://127.0.0.1:6969/start")
-        .json(&body)
-        .send()
-        .await?;
-    match res.status() {
-        StatusCode::OK => Ok(()),
-        StatusCode::NOT_FOUND => {
-            println!("Downloading {}\n", model_name);
-            match pull_model(&model_name).await {
-                Ok(_) => {
-                    println!("\nDownloading completed \n");
-                    Ok(())
-                }
-                Err(err) => Err(anyhow::anyhow!(format!("Download failed due to {:?}", err))),
-            }
-        }
-        _ => Err(anyhow::anyhow!(format!(
-            "Failed to load model {} due to {:?}",
-            model_name, res
-        ))),
+    if let Ok(model_cache_path) = get_model_cache(&model_name) {
+        load_model_in_py(modelfile, default_modelfile, memory_path, &model_cache_path).await
+    } else {
+        download_model(&model_name).await?;
+        let model_cache_path = get_model_cache(&model_name)?;
+        load_model_in_py(modelfile, default_modelfile, memory_path, &model_cache_path).await
     }
 }
 
@@ -647,5 +624,43 @@ fn create_chat_input(input: &str, prompt: &str, conversations: &[Message]) -> Ve
         convo
     } else {
         vec![dev_msg, input]
+    }
+}
+
+async fn load_model_in_py(
+    modelfile: &Modelfile,
+    default_modelfile: &Modelfile,
+    memory_path: &str,
+    model_cache_path: &PathBuf,
+) -> Result<()> {
+    let client = Client::new();
+    let model_name = modelfile.from.clone().unwrap();
+    let body = json!({
+        "model": model_name,
+        "memory_path": memory_path,
+        "model_cache_path": model_cache_path,
+        "system_prompt": modelfile.system.clone().unwrap_or(default_modelfile.system.clone().unwrap_or("".to_owned()))
+    });
+    let res = client
+        .post("http://127.0.0.1:6969/start")
+        .json(&body)
+        .send()
+        .await?;
+    match res.status() {
+        StatusCode::OK => Ok(()),
+        _ => Err(anyhow::anyhow!(format!(
+            "Failed to load model {} due to {:?}",
+            model_name, res
+        ))),
+    }
+}
+
+async fn download_model(model_name: &str) -> Result<()> {
+    match pull_model(model_name).await {
+        Ok(_) => {
+            println!("\nDownloading completed \n");
+            Ok(())
+        }
+        Err(err) => Err(anyhow::anyhow!(format!("Download failed due to {:?}", err))),
     }
 }
