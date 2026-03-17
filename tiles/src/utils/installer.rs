@@ -48,7 +48,8 @@ pub async fn try_update(update_info: Option<UpdateInfo>) -> Result<String> {
             .stdout(Stdio::piped())
             .spawn()?;
 
-        let _run_sh_cmd = Command::new("sh")
+        let run_sh_cmd_status = Command::new("sudo")
+            .arg("sh")
             .stdin(
                 curl_process
                     .stdout
@@ -59,10 +60,14 @@ pub async fn try_update(update_info: Option<UpdateInfo>) -> Result<String> {
             .stderr(Stdio::inherit())
             .status()?;
 
-        Ok(format!(
-            "Tiles upgraded to {}",
-            app_update_info.latest_version
-        ))
+        if run_sh_cmd_status.success() {
+            Ok(format!(
+                "Tiles updated to {}",
+                app_update_info.latest_version
+            ))
+        } else {
+            Ok("Tiles failed to update".to_owned())
+        }
     }
 }
 

@@ -21,11 +21,11 @@ productsign \
 
 # notarizing
 # 
-# xcrun notarytool submit pkg/tiles-full.pkg \
-#   --keychain-profile "tiles-notary-profile" \
-#   --wait
+xcrun notarytool submit pkg/tiles-full.pkg \
+  --keychain-profile "tiles-notary-profile" \
+  --wait
 
 # # staple the approval ticket to pkg
-# xcrun stapler staple pkg/tiles-full.pkg
+xcrun stapler staple pkg/tiles-full.pkg
 
 rm pkg/tiles-full-unsigned.pkg
