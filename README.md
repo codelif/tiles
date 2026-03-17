@@ -28,13 +28,13 @@ There are two primary ways to work with Tiles, depending on whether you are an e
 
 ## Tiles CLI
 
-The CLI is the fastest way to get started and will feel familiar if you have used tools like Ollama or LM Studio.
+Tiles is the private and secure AI assistant for everyday use. It will feel familiar if you have used tools like Ollama or LM Studio.
 
 Install the signed macOS package:
 
-https://download.tiles.run/tiles-0.4.3-signed.pkg
+https://tiles.run/download
 
-Then run:
+Then run the following command to start Tiles:
 
 ```bash
 tiles
@@ -43,12 +43,6 @@ tiles
 ## Tilekit SDK
 
 Tilekit is a Rust-based SDK for customizing local models and agent experiences within Tiles.
-
-It provides:
-- Modelfile specification and tooling for working with models
-- Fast, efficient local deployment of models across consumer platforms
-- Built on open source specifications such as Open Responses API
-- Model composition and chaining, with MIR support currently in development
 
 ## Documentation
 
@@ -59,13 +53,13 @@ https://tiles.run/book
 
 Our mission is to bring privacy technology to everyone.
 
-Tiles Privacy emerged from the [User & Agents](https://userandagents.com) community with a simple principle: software should understand you without taking anything from you.
+Tiles Privacy was born from the [User & Agents](https://userandagents.com) community  with a simple idea: software should understand you without taking anything from you.
 
 We strive to deliver the best privacy-focused engineering while also offering unmatched convenience in our consumer products. We believe identity and memory belong together, and Tiles gives you a way to own both through your personal user agent.
 
 Tiles is built for privacy conscious users who want intelligence without renting their memory to centralized providers. 
 
-We are seeking design partners for TEE based cloud workloads that align with our goal of a verifiable privacy perimeter. Contact us at hello@tiles.run.
+We are seeking design partners for TEE based cloud workloads that align with our goal of a verifiable privacy perimeter. Contact us at [mail@tiles.run](mailto:mail@tiles.run).
 
 ## Contributing
 
@@ -79,7 +73,7 @@ Start here:
 
 This project is dual-licensed under MIT and Apache 2.0:
 
-- [MIT License](https://github.com/tilesprivacy/tiles/blob/main/LICENSE-MIT.txt)
-- [Apache License 2.0](https://github.com/tilesprivacy/tiles/blob/main/LICENSE-APACHE.txt)
+- [MIT License](https://github.com/tilesprivacy/tiles/blob/main/LICENSE-MIT)
+- [Apache License 2.0](https://github.com/tilesprivacy/tiles/blob/main/LICENSE-APACHE)
 
 You may choose either license, or both. Apache 2.0 is included for its explicit patent protections.
