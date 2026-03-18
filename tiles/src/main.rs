@@ -2,6 +2,7 @@ use std::error::Error;
 
 use clap::{Args, Parser, Subcommand};
 use tiles::{
+    core::network::link,
     daemon::{start_cmd, start_server, stop_cmd},
     runtime::{RunArgs, build_runtime},
     utils::installer,
@@ -60,6 +61,10 @@ enum Commands {
 
     /// Daemon configurations
     Daemon(DaemonArgs),
+
+    Link {
+        ticket: Option<String>,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -219,6 +224,10 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
                 .inspect(|_| println!("Daemon stopped successfully"))?,
             _ => start_server(None).await?,
         },
+        Some(Commands::Link { ticket }) => {
+            // TODO: Move these direct call to core
+            link(ticket).await?
+        }
     }
     Ok(())
 }

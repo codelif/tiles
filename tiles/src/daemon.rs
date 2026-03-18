@@ -7,7 +7,13 @@ use std::{
 };
 
 use anyhow::{Result, anyhow};
-use axum::{Router, extract::State, routing::get};
+use axum::{
+    Router,
+    extract::{Query, State},
+    response::IntoResponse,
+    routing::get,
+};
+use axum_macros::debug_handler;
 use reqwest::Client;
 use std::fs::OpenOptions;
 use std::sync::Mutex;
@@ -22,12 +28,17 @@ struct AppState {
     pub shutdown_sender: Mutex<Option<oneshot::Sender<bool>>>,
 }
 
+#[derive(serde::Deserialize)]
+pub struct SendParams {
+    ticket: String,
+}
+
 const DEFAULT_PORT: u32 = 1729;
 pub async fn start_cmd(port: Option<u32>) -> Result<()> {
     if cfg!(debug_assertions) {
         start_server(port).await
     } else {
-        start_daemon().await
+        start_daemon(port).await
     }
 }
 
@@ -41,8 +52,8 @@ async fn root() -> &'static str {
 // allow zombie, since this process is expected to be
 // running in background and have commands to stop if needed
 #[allow(clippy::zombie_processes)]
-async fn start_daemon() -> Result<()> {
-    if (ping().await).is_ok() {
+async fn start_daemon(port: Option<u32>) -> Result<()> {
+    if (ping(port).await).is_ok() {
         return Ok(());
     }
     let data_dir = DefaultProvider.get_data_dir()?;
@@ -63,7 +74,7 @@ async fn start_daemon() -> Result<()> {
         .spawn()
         .expect("Failed to start daemon");
 
-    wait_until_server_is_up().await
+    wait_until_server_is_up(port).await
 }
 
 pub async fn start_server(port: Option<u32>) -> Result<()> {
@@ -78,7 +89,8 @@ pub async fn start_server(port: Option<u32>) -> Result<()> {
     let app = Router::new()
         .route("/", get(root))
         .route("/shutdown", get(shutdown))
-        .route("/link/ping", get(send_ping))
+        .route("/link/sender", get(send_ping))
+        .route("/link/receiver", get(receive_ping))
         .with_state(shared_state);
 
     let addr = format!("127.0.0.1:{}", dyn_port);
@@ -103,9 +115,15 @@ async fn shutdown(State(state): State<Arc<AppState>>) {
     let _ = sender_real.send(true);
 }
 
-async fn send_ping(State(_state): State<Arc<AppState>>) {
+#[debug_handler]
+async fn send_ping(State(_state): State<Arc<AppState>>, Query(params): Query<SendParams>) {
     println!("Trying to send ping");
-    let _ = network::init().await;
+    let _ = network::init(Some(&params.ticket)).await;
+}
+
+async fn receive_ping(State(_state): State<Arc<AppState>>) {
+    println!("Trying to receive ping");
+    let _ = network::init(None).await;
 }
 
 async fn stop_server(port: Option<u32>) -> Result<()> {
@@ -119,9 +137,12 @@ async fn stop_server(port: Option<u32>) -> Result<()> {
         _ => Ok(()),
     }
 }
-pub async fn ping() -> Result<(), String> {
+pub async fn ping(port: Option<u32>) -> Result<(), String> {
+    let dyn_port = get_port(port);
     let client = Client::new();
-    let res = client.get("http://127.0.0.1:1729").send().await;
+    let addr = format!("http://127.0.0.1:{}", dyn_port);
+
+    let res = client.get(addr).send().await;
 
     match res {
         Err(err) => Err(format!("Pong failed:  {:?}", err)),
@@ -129,7 +150,7 @@ pub async fn ping() -> Result<(), String> {
     }
 }
 
-async fn wait_until_server_is_up() -> Result<()> {
+async fn wait_until_server_is_up(port: Option<u32>) -> Result<()> {
     let mut retry_count = 5;
     let mut error: String = String::new();
     loop {
@@ -139,7 +160,7 @@ async fn wait_until_server_is_up() -> Result<()> {
             }
             return Err(anyhow!(error));
         }
-        match ping().await {
+        match ping(port).await {
             Ok(()) => return Ok(()),
             Err(err) => {
                 retry_count -= 1;
@@ -171,7 +192,7 @@ mod tests {
         tokio::spawn(async move {
             let _ = start_server(None).await;
         });
-        assert!(ping().await.is_err());
+        assert!(ping(None).await.is_err());
         stop_server(None).await
     }
 
@@ -181,8 +202,8 @@ mod tests {
         tokio::spawn(async move {
             let _ = start_server(None).await;
         });
-        wait_until_server_is_up().await?;
-        assert!(ping().await.is_ok());
+        wait_until_server_is_up(None).await?;
+        assert!(ping(None).await.is_ok());
 
         stop_server(None).await
     }
