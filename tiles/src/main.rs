@@ -62,7 +62,9 @@ enum Commands {
     /// Daemon configurations
     Daemon(DaemonArgs),
 
+    /// Link with other devices p2p
     Link {
+        /// The ticket from a peer which can be used to link to it
         ticket: Option<String>,
     },
 }

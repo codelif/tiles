@@ -3,7 +3,10 @@
 use std::str::FromStr;
 
 use anyhow::Result;
-use ed25519_dalek::{SecretKey, SigningKey, VerifyingKey, ed25519::signature::rand_core::OsRng};
+use ed25519_dalek::{
+    SecretKey, SigningKey,
+    ed25519::signature::rand_core::{OsRng, RngCore},
+};
 use keyring::Entry;
 use ucan::did::Ed25519Did;
 
@@ -47,6 +50,13 @@ pub fn get_public_key_from_did(did: &str) -> Result<[u8; 32]> {
     let ed_did = Ed25519Did::from_str(did)?;
     Ok(ed_did.0.to_bytes())
 }
+
+pub fn get_random_bytes() -> [u8; 16] {
+    let mut value = [0u8; 16];
+    OsRng.fill_bytes(&mut value);
+    value
+}
+
 #[cfg(test)]
 mod tests {
     use keyring::{mock, set_default_credential_builder};

@@ -23,7 +23,7 @@ pub struct RootUser {
     pub nickname: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ACCOUNT {
     LOCAL,
 }
@@ -61,7 +61,7 @@ impl Display for ACCOUNT {
 
 //TODO: add doc, mirrors user table schema
 #[allow(dead_code)]
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct User {
     pub id: uuid::Uuid,
     pub user_id: String,

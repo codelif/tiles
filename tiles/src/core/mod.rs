@@ -12,6 +12,7 @@ pub mod chats;
 pub mod health;
 pub mod network;
 pub mod storage;
+
 // Entrypoint of the core
 pub fn init() -> Result<()> {
     init_db()?;

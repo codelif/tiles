@@ -7,31 +7,22 @@ use std::{
 };
 
 use anyhow::{Result, anyhow};
-use axum::{
-    Router,
-    extract::{Query, State},
-    response::IntoResponse,
-    routing::get,
-};
-use axum_macros::debug_handler;
+use axum::{Router, extract::State, routing::get};
 use reqwest::Client;
 use std::fs::OpenOptions;
 use std::sync::Mutex;
 use tokio::sync::oneshot::{self, Receiver};
 
-use crate::{
-    core::network,
-    utils::config::{ConfigProvider, DefaultProvider},
-};
+use crate::utils::config::{ConfigProvider, DefaultProvider};
 
 struct AppState {
     pub shutdown_sender: Mutex<Option<oneshot::Sender<bool>>>,
 }
 
-#[derive(serde::Deserialize)]
-pub struct SendParams {
-    ticket: String,
-}
+// #[derive(serde::Deserialize)]
+// pub struct SendParams {
+//     ticket: String,
+// }
 
 const DEFAULT_PORT: u32 = 1729;
 pub async fn start_cmd(port: Option<u32>) -> Result<()> {
@@ -89,8 +80,6 @@ pub async fn start_server(port: Option<u32>) -> Result<()> {
     let app = Router::new()
         .route("/", get(root))
         .route("/shutdown", get(shutdown))
-        .route("/link/sender", get(send_ping))
-        .route("/link/receiver", get(receive_ping))
         .with_state(shared_state);
 
     let addr = format!("127.0.0.1:{}", dyn_port);
@@ -115,16 +104,16 @@ async fn shutdown(State(state): State<Arc<AppState>>) {
     let _ = sender_real.send(true);
 }
 
-#[debug_handler]
-async fn send_ping(State(_state): State<Arc<AppState>>, Query(params): Query<SendParams>) {
-    println!("Trying to send ping");
-    let _ = network::init(Some(&params.ticket)).await;
-}
+// #[debug_handler]
+// async fn send_ping(State(_state): State<Arc<AppState>>, Query(params): Query<SendParams>) {
+//     println!("Trying to send ping");
+//     let _ = network::init(Some(&params.ticket)).await;
+// }
 
-async fn receive_ping(State(_state): State<Arc<AppState>>) {
-    println!("Trying to receive ping");
-    let _ = network::init(None).await;
-}
+// async fn receive_ping(State(_state): State<Arc<AppState>>) {
+//     println!("Trying to receive ping");
+//     let _ = network::init(None).await;
+// }
 
 async fn stop_server(port: Option<u32>) -> Result<()> {
     let dyn_port = get_port(port);
