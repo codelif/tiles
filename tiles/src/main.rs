@@ -81,6 +81,10 @@ struct RunFlags {
     // Future flags go here:
     // #[arg(long, default_value_t = 6969)]
     // port: u16,
+
+    // Don't go into the repl
+    #[arg(short = 'x', long)]
+    no_repl: bool,
 }
 
 #[derive(Debug, Args)]
@@ -158,6 +162,7 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
                 relay_count: cli.flags.relay_count,
                 memory: cli.flags.memory,
             };
+
             commands::run_setup_for_ftue(&run_args)
                 .inspect_err(|e| eprintln!("Failed to setup Tiles due to {:?}", e))?;
             let _ = commands::try_app_update().await;
@@ -169,9 +174,11 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
                 });
             }
 
-            commands::run(&runtime, run_args)
-                .await
-                .inspect_err(|e| eprintln!("Tiles failed to run due to {:?}", e))?;
+            if !cli.flags.no_repl {
+                commands::run(&runtime, run_args)
+                    .await
+                    .inspect_err(|e| eprintln!("Tiles failed to run due to {:?}", e))?;
+            }
         }
         Some(Commands::Run {
             modelfile_path,

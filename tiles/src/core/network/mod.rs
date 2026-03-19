@@ -6,7 +6,7 @@ use std::{io, str::FromStr};
 use anyhow::Result;
 use futures_util::TryStreamExt;
 use iroh::{
-    Endpoint, SecretKey,
+    Endpoint, EndpointId, SecretKey,
     endpoint::{BindError, presets},
     protocol::Router,
 };
@@ -16,10 +16,11 @@ use iroh_gossip::{
 };
 use iroh_ping::Ping;
 use iroh_tickets::endpoint::EndpointTicket;
-use tilekit::accounts::{get_random_bytes, get_secret_key};
+use rusqlite::Connection;
+use tilekit::accounts::{get_did_from_public_key, get_random_bytes, get_secret_key};
 
 use crate::core::{
-    accounts::{self, get_current_user},
+    accounts::{self, get_current_user, get_user_by_user_id, save_self_account_db},
     network::ticket::LinkTicket,
     storage::db::{DBTYPE, get_db_conn},
 };
@@ -49,6 +50,7 @@ impl NetworkMessage {
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::enum_variant_names)]
 enum MessageBody {
     LinkRequest { did: String, nickname: String },
     LinkAccepted { did: String, nickname: String },
@@ -97,8 +99,14 @@ pub async fn link(ticket: Option<String>) -> Result<()> {
     let user = get_current_user(&user_db_conn)?;
     if let Some(ticket) = ticket {
         let link_ticket = LinkTicket::from_str(&ticket)?;
-
-        let endpoint = create_endpoint(false, &user).await?;
+        if get_user_by_user_id(&user_db_conn, &link_ticket.did).is_err() {
+            println!(
+                "Device {}({}) already linked",
+                link_ticket.nickname, link_ticket.did
+            );
+            return Ok(());
+        }
+        let endpoint = create_endpoint(&user).await?;
         endpoint.online().await;
         let gossip = Gossip::builder().spawn(endpoint.clone());
 
@@ -116,7 +124,12 @@ pub async fn link(ticket: Option<String>) -> Result<()> {
             link_ticket.nickname, link_ticket.did
         );
         receiver.joined().await?;
-        tokio::spawn(subsribe_loop(receiver, sender.clone(), user.clone()));
+        tokio::spawn(subsribe_loop(
+            receiver,
+            sender.clone(),
+            user.clone(),
+            user_db_conn,
+        ));
 
         let link_req_msg = NetworkMessage::new(MessageBody::LinkRequest {
             did: user.user_id,
@@ -134,7 +147,7 @@ pub async fn link(ticket: Option<String>) -> Result<()> {
         recv_router.shutdown().await?;
         endpoint.close().await;
     } else {
-        let endpoint = create_endpoint(false, &user).await?;
+        let endpoint = create_endpoint(&user).await?;
         endpoint.online().await;
 
         let gossip = Gossip::builder().spawn(endpoint.clone());
@@ -161,7 +174,15 @@ pub async fn link(ticket: Option<String>) -> Result<()> {
 
         println!("Don't close this session until the link process is done\n");
 
-        tokio::spawn(subsribe_loop(receiver, sender.clone(), user.clone()));
+        tokio::spawn(subsribe_loop(
+            receiver,
+            sender.clone(),
+            user.clone(),
+            user_db_conn,
+        ));
+
+        // TODO: Maybe a better way is to use a oneshot channel to exit
+        // the terminal instead of SIGINT
         tokio::signal::ctrl_c().await?;
         recv_router.shutdown().await?;
         endpoint.close().await;
@@ -173,6 +194,7 @@ async fn subsribe_loop(
     mut receiver: GossipReceiver,
     sender: GossipSender,
     user: accounts::User,
+    db_conn: Connection,
 ) -> Result<()> {
     while let Some(event) = receiver.try_next().await? {
         // println!("some event {:?}", event);
@@ -180,7 +202,7 @@ async fn subsribe_loop(
             match NetworkMessage::from_bytes(&msg.content)?.body {
                 MessageBody::LinkRequest { did, nickname } => {
                     println!(
-                        "Received link request from {}({}), Do you want to link Y/N",
+                        "Received link request from {}({}), Do you want to link Y/N ?",
                         nickname, did
                     );
                     let stdin = io::stdin();
@@ -188,8 +210,11 @@ async fn subsribe_loop(
                     stdin.read_line(&mut input)?;
                     input = input.trim().to_owned();
                     let link_res_resp = if input.to_lowercase() == "y" {
-                        // TODO: Add the device to DB
-
+                        save_self_account_db(&db_conn, &did, &nickname)?;
+                        println!(
+                            "Device {}({}) is now linked\nYou can exit now by ctrl-c",
+                            nickname, did
+                        );
                         NetworkMessage::new(MessageBody::LinkAccepted {
                             did: user.user_id.clone(),
                             nickname: user.username.clone(),
@@ -205,9 +230,12 @@ async fn subsribe_loop(
                     sender.broadcast(link_res_resp.to_bytes().into()).await?;
                 }
                 MessageBody::LinkAccepted { did, nickname } => {
+                    save_self_account_db(&db_conn, &did, &nickname)?;
                     println!("Link accepted by {}({})", nickname, did);
-                    // But shouldn't we add the incoming user to DB?
+
                     println!("You can exit now by ctrl-c");
+
+                    return Ok(());
                 }
                 MessageBody::LinkRejected { did, nickname } => {
                     println!(
@@ -221,8 +249,10 @@ async fn subsribe_loop(
     Ok(())
 }
 
-async fn create_endpoint(use_app_key: bool, user: &accounts::User) -> Result<Endpoint> {
-    if use_app_key {
+async fn create_endpoint(user: &accounts::User) -> Result<Endpoint> {
+    // In release mode, we will build the endpoint using
+    // tiles keypair in keychain
+    if !cfg!(debug_assertions) {
         let signing_key = get_secret_key("tiles", &user.user_id)?;
 
         let secret_key = SecretKey::from_bytes(&signing_key);
@@ -245,3 +275,9 @@ fn create_topic_id(topic_name: &str) -> TopicId {
     let topic_id_bytes = hasher.finalize();
     TopicId::from_bytes(topic_id_bytes.into())
 }
+
+fn _get_did_from_endpoint(endpoint_id: EndpointId) -> Result<String> {
+    get_did_from_public_key(endpoint_id.as_bytes())
+}
+
+//TODO: Add tests, can we get some from iroh reference?

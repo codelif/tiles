@@ -4,7 +4,7 @@ use std::str::FromStr;
 
 use anyhow::Result;
 use ed25519_dalek::{
-    SecretKey, SigningKey,
+    SecretKey, SigningKey, VerifyingKey,
     ed25519::signature::rand_core::{OsRng, RngCore},
 };
 use keyring::Entry;
@@ -49,6 +49,13 @@ pub fn get_secret_key(app: &str, did: &Identity) -> Result<SecretKey> {
 pub fn get_public_key_from_did(did: &str) -> Result<[u8; 32]> {
     let ed_did = Ed25519Did::from_str(did)?;
     Ok(ed_did.0.to_bytes())
+}
+
+pub fn get_did_from_public_key(publick_key: &[u8; 32]) -> Result<String> {
+    let verifying_key = VerifyingKey::from_bytes(publick_key)?;
+
+    let ed_did = Ed25519Did::from(verifying_key);
+    Ok(ed_did.to_string())
 }
 
 pub fn get_random_bytes() -> [u8; 16] {

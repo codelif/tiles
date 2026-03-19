@@ -52,3 +52,5 @@ impl LinkTicket {
         }
     }
 }
+
+// TODO: Add tests

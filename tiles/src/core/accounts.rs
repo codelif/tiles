@@ -23,9 +23,14 @@ pub struct RootUser {
     pub nickname: String,
 }
 
+// Type of User account
 #[derive(Debug, Clone)]
 pub enum ACCOUNT {
+    // root account, created in the system
     LOCAL,
+
+    // remote account but same previlege as your local account
+    SELF,
 }
 
 #[derive(Debug)]
@@ -55,6 +60,7 @@ impl Display for ACCOUNT {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::LOCAL => write!(f, "{}", String::from("local")),
+            Self::SELF => write!(f, "{}", String::from("self")),
         }
     }
 }
@@ -218,9 +224,7 @@ pub fn get_current_user(conn: &Connection) -> Result<User> {
         })
         .map_err(<rusqlite::Error as Into<anyhow::Error>>::into)
 }
-// TODO: when we support multiple accounts
-// make sure that there can't be multiple rows with
-// root true.
+
 pub fn save_root_account_db() -> Result<()> {
     let conn = get_db_conn(DBTYPE::COMMON)?;
     let config = get_or_create_config()?;
@@ -253,6 +257,50 @@ pub fn save_root_account_db() -> Result<()> {
         }
         Err(_err) => Err(anyhow!("Fetching user from db failed")),
         _ => Ok(()),
+    }
+}
+
+// TODO: We could add unique user_id constraints, but
+// we will wait for it until we solve the sync part
+pub fn save_self_account_db(db_conn: &Connection, user_id: &str, nickname: &str) -> Result<()> {
+    let user = User {
+        id: Uuid::now_v7(),
+        user_id: String::from(user_id),
+        username: String::from(nickname),
+        account_type: ACCOUNT::SELF,
+        active_profile: false,
+        root: false,
+        created_at: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time went backwards")
+            .as_secs(),
+        updated_at: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time went backwards")
+            .as_secs(),
+    };
+    db_conn.execute(
+        "insert into users (id, user_id, username, active_profile, account_type, root) values
+                (?1, ?2, ?3,?4, ?5, ?6)",
+        (
+            &user.id.to_string(),
+            &user.user_id,
+            &user.username,
+            &user.active_profile,
+            user.account_type.to_string(),
+            &user.root,
+        ),
+    )?;
+    Ok(())
+}
+
+pub fn get_user_by_user_id(conn: &Connection, user_id: &str) -> Result<()> {
+    let mut fetch_root_user = conn.prepare("select id from users where user_id = ?1")?;
+
+    match fetch_root_user.query_one([user_id], |_row| Ok(())) {
+        Ok(_) => Ok(()),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Err(anyhow!("User doesnt exist")),
+        Err(_err) => Err(anyhow!("Fetching user from db failed")),
     }
 }
 
