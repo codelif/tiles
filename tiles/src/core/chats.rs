@@ -3,14 +3,28 @@
 //! Stuff related to chats with the models
 //!
 
+use std::str::FromStr;
+
 use crate::core::accounts::User;
 use crate::runtime::mlx::ChatResponse;
 use crate::utils::get_unix_time_now;
 use anyhow::Result;
-use rusqlite::Connection;
+use rusqlite::types::{FromSql, FromSqlError, FromSqlResult};
+use rusqlite::{Connection, OptionalExtension};
 use tilekit::modelfile::Role;
 use uuid::Uuid;
 // model the chats table
+
+// TODO: foreign types on foreign traits, lul
+// someday we can do this for traits sake
+// https://dev.to/iprosk/generics-in-rust-murky-waters-of-implementing-foreign-traits-on-foreign-types-584n
+
+// impl FromSql for Uuid {
+//     fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
+//         let value_str = String::column_result(value)?;
+//         Uuid::from_str(&value_str).map_err(|_| FromSqlError::InvalidType)
+//     }
+// }
 
 #[derive(serde::Serialize, Clone, Debug)]
 pub struct Message {
@@ -73,6 +87,20 @@ pub fn save_chat(
     }
 }
 
+fn get_last_entry_id(conn: &Connection, user_id: &str) -> Result<Option<Uuid>> {
+    match conn.query_row(
+        "select id from chats where user_id = ?1 order by id desc limit 1",
+        [user_id],
+        |row| row.get::<usize, String>(0),
+    ) {
+        Ok(res) => Uuid::from_str(&res)
+            .map_err(Into::into)
+            .map(|uuid| Some(uuid)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(err) => Err(<rusqlite::Error as Into<anyhow::Error>>::into(err)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -84,7 +112,7 @@ mod tests {
     use crate::{
         core::{
             accounts::{ACCOUNT, User},
-            chats::save_chat,
+            chats::{get_last_entry_id, save_chat},
         },
         runtime::mlx::ChatResponse,
     };
@@ -176,6 +204,30 @@ mod tests {
         let result = save_chat(&conn, &user, "2+2", None);
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_get_last_entry() {
+        let conn = setup_db_schema();
+        let user = create_user();
+        let input = "2+2";
+        let chat = save_chat(&conn, &user, input, None).expect("chat should be saved");
+
+        assert_eq!(chat.user_id, user.user_id);
+        assert!(chat.response_id.is_none());
+        assert!(chat.context_id.is_none());
+
+        let saved = get_last_entry_id(&conn, &user.user_id);
+        assert!(saved.is_ok())
+    }
+
+    #[test]
+    fn test_get_last_entry_without_entry() {
+        let conn = setup_db_schema();
+        let user = create_user();
+        let saved = get_last_entry_id(&conn, &user.user_id);
+        println!("{:?}", saved);
+        assert!(saved.unwrap().is_none())
     }
 
     struct SavedChatRow {
