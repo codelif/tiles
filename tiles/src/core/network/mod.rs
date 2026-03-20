@@ -1,7 +1,11 @@
 //! The main module for networking
 
 pub mod ticket;
-use std::{io, str::FromStr};
+use std::{
+    io,
+    str::FromStr,
+    sync::{Arc, Mutex},
+};
 
 use anyhow::Result;
 use futures_util::TryStreamExt;
@@ -18,6 +22,7 @@ use iroh_ping::Ping;
 use iroh_tickets::endpoint::EndpointTicket;
 use rusqlite::Connection;
 use tilekit::accounts::{get_did_from_public_key, get_random_bytes, get_secret_key};
+use tokio::task::spawn_blocking;
 
 use crate::core::{
     accounts::{self, get_current_user, get_user_by_user_id, save_self_account_db},
@@ -99,7 +104,7 @@ pub async fn link(ticket: Option<String>) -> Result<()> {
     let user = get_current_user(&user_db_conn)?;
     if let Some(ticket) = ticket {
         let link_ticket = LinkTicket::from_str(&ticket)?;
-        if get_user_by_user_id(&user_db_conn, &link_ticket.did).is_err() {
+        if get_user_by_user_id(&user_db_conn, &link_ticket.did).is_ok() {
             println!(
                 "Device {}({}) already linked",
                 link_ticket.nickname, link_ticket.did
@@ -205,11 +210,18 @@ async fn subsribe_loop(
                         "Received link request from {}({}), Do you want to link Y/N ?",
                         nickname, did
                     );
+                    let input: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
+
+                    let input_clone = input.clone();
                     let stdin = io::stdin();
-                    let mut input = String::new();
-                    stdin.read_line(&mut input)?;
-                    input = input.trim().to_owned();
-                    let link_res_resp = if input.to_lowercase() == "y" {
+                    spawn_blocking(move || {
+                        let mut input_clone = input_clone.lock().unwrap();
+                        let _ = stdin.read_line(&mut input_clone);
+                    })
+                    .await?;
+                    let input_resp = input.lock().unwrap().trim().to_owned();
+
+                    let link_res_resp = if input_resp.to_lowercase() == "y" {
                         save_self_account_db(&db_conn, &did, &nickname)?;
                         println!(
                             "Device {}({}) is now linked\nYou can exit now by ctrl-c",
@@ -226,7 +238,8 @@ async fn subsribe_loop(
                             nickname: user.username.clone(),
                         })
                     };
-                    input.clear();
+                    input.lock().unwrap().clear();
+
                     sender.broadcast(link_res_resp.to_bytes().into()).await?;
                 }
                 MessageBody::LinkAccepted { did, nickname } => {

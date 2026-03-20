@@ -18,7 +18,7 @@ impl Ticket for LinkTicket {
     const KIND: &'static str = "link";
 
     fn to_bytes(&self) -> Vec<u8> {
-        postcard::to_stdvec(&self).expect("serde_json to bytes couldnt be done")
+        postcard::to_stdvec(&self).expect("linkTicket to bytes couldnt be done")
     }
 
     fn from_bytes(bytes: &[u8]) -> Result<Self, iroh_tickets::ParseError> {
