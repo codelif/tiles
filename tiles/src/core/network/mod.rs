@@ -5,12 +5,14 @@ use std::{
     io,
     str::FromStr,
     sync::{Arc, Mutex},
+    time::Duration,
 };
 
 use anyhow::Result;
-use futures_util::TryStreamExt;
+use futures_util::{Stream, StreamExt, TryStreamExt};
 use iroh::{
-    Endpoint, EndpointId, SecretKey,
+    Endpoint, EndpointId, NET_REPORT_TIMEOUT, SecretKey,
+    address_lookup::{self, mdns},
     endpoint::{BindError, presets},
     protocol::Router,
 };
@@ -112,7 +114,38 @@ pub async fn link(ticket: Option<String>) -> Result<()> {
             return Ok(());
         }
         let endpoint = create_endpoint(&user).await?;
-        endpoint.online().await;
+        let mut is_online = false;
+        tokio::select! {
+            _ = endpoint.online() => {
+                is_online = true;
+                println!("Yep online")
+            }
+            _ = tokio::time::sleep(Duration::from_secs(NET_REPORT_TIMEOUT)) => {
+                is_online = false;
+                println!("ur offline")
+            }
+        };
+
+        let mdns = address_lookup::mdns::MdnsAddressLookup::builder().build(endpoint.id())?;
+
+        if !is_online {
+            endpoint.address_lookup()?.add(mdns.clone());
+            // let mut mdns_event = mdns.subscribe().await;
+            // while let Some(event) = mdns_event.next().await {
+            //     match event {
+            //         mdns::DiscoveryEvent::Discovered {
+            //             endpoint_info,
+            //             last_updated,
+            //         } => {
+            //             println!("peer discoverd {:?}", endpoint_info)
+            //         }
+            //         mdns::DiscoveryEvent::Expired { endpoint_id } => {
+            //             println!("peer left {:?}", endpoint_id)
+            //         }
+            //     }
+            // }
+            // mdns_event
+        };
         let gossip = Gossip::builder().spawn(endpoint.clone());
 
         let recv_router = Router::builder(endpoint.clone())
@@ -153,8 +186,23 @@ pub async fn link(ticket: Option<String>) -> Result<()> {
         endpoint.close().await;
     } else {
         let endpoint = create_endpoint(&user).await?;
-        endpoint.online().await;
+        let mut is_online = false;
+        tokio::select! {
+            _ = endpoint.online() => {
+                is_online = true;
+                println!("Yep online")
+            }
+            _ = tokio::time::sleep(Duration::from_secs(NET_REPORT_TIMEOUT)) => {
+                is_online = false;
+                println!("ur offline")
+            }
+        };
 
+        let mdns = address_lookup::mdns::MdnsAddressLookup::builder().build(endpoint.id())?;
+
+        if !is_online {
+            endpoint.address_lookup()?.add(mdns.clone());
+        }
         let gossip = Gossip::builder().spawn(endpoint.clone());
 
         let recv_router = Router::builder(endpoint.clone())
@@ -164,15 +212,15 @@ pub async fn link(ticket: Option<String>) -> Result<()> {
         let topic_id = create_topic_id("com.tilesprivacy.tiles.link");
 
         let (sender, receiver) = gossip.subscribe(topic_id, vec![]).await?.split();
-
         let ticket = LinkTicket::new(
             topic_id,
             endpoint.addr(),
             user.user_id.clone(),
             user.username.clone(),
         );
-
+        println!("{:?}", endpoint.addr());
         println!("Link Ticket: {:?}\n", ticket.to_string());
+
         println!(
             "Use this link ticket with `tiles link <ticket>` on the system you want to connect to\n"
         );
@@ -269,14 +317,18 @@ async fn create_endpoint(user: &accounts::User) -> Result<Endpoint> {
         let signing_key = get_secret_key("tiles", &user.user_id)?;
 
         let secret_key = SecretKey::from_bytes(&signing_key);
-
+        let mdns = address_lookup::mdns::MdnsAddressLookup::builder();
         Endpoint::builder(presets::N0)
+            // .address_lookup(mdns)
             .secret_key(secret_key)
             .bind()
             .await
             .map_err(<BindError as Into<anyhow::Error>>::into)
     } else {
-        Endpoint::bind(presets::N0)
+        let mdns = address_lookup::mdns::MdnsAddressLookup::builder();
+        Endpoint::builder(presets::N0)
+            // .address_lookup(mdns)
+            .bind()
             .await
             .map_err(<BindError as Into<anyhow::Error>>::into)
     }
@@ -293,4 +345,5 @@ fn _get_did_from_endpoint(endpoint_id: EndpointId) -> Result<String> {
     get_did_from_public_key(endpoint_id.as_bytes())
 }
 
+// fn subsribe_mdns_events(mdns_events) {}
 //TODO: Add tests, can we get some from iroh reference?
