@@ -9,8 +9,8 @@ use crate::core::accounts::User;
 use crate::runtime::mlx::ChatResponse;
 use crate::utils::get_unix_time_now;
 use anyhow::Result;
-use rusqlite::types::{FromSql, FromSqlError, FromSqlResult};
-use rusqlite::{Connection, OptionalExtension};
+use rusqlite::Connection;
+use rusqlite::types::FromSqlError;
 use tilekit::modelfile::Role;
 use uuid::Uuid;
 // model the chats table
@@ -33,6 +33,7 @@ pub struct Message {
     pub content: String,
 }
 
+#[derive(Debug)]
 pub struct Chats {
     pub id: Uuid,
     content: String,
@@ -101,6 +102,50 @@ fn get_last_entry_id(conn: &Connection, user_id: &str) -> Result<Option<Uuid>> {
     }
 }
 
+/// Return list of rows..
+/// encoding is the job of network modules
+///
+fn get_delta_since_id(conn: &Connection, user_id: &str, last_entry_id: &str) -> Result<Vec<Chats>> {
+    let mut stmt = conn.prepare("select id, user_id, content, resp_id, role, context_id, created_at, updated_at from chats where user_id = ?1 and id > ?2 order by id")?;
+
+    let chat_rows = stmt.query_map([user_id, last_entry_id], |row| {
+        let id: String = row.get(0)?;
+        let role: String = row.get(4)?;
+        let created_at: f64 = row.get(6)?;
+        let updated_at: f64 = row.get(7)?;
+        let ctx_id: String = row.get(5)?;
+        let resp_id: String = row.get(3)?;
+        let resp_id_opt = if resp_id.is_empty() {
+            None
+        } else {
+            Some(resp_id)
+        };
+        let ctx_id_opt = if ctx_id.is_empty() {
+            None
+        } else {
+            Some(Uuid::from_str(&ctx_id).map_err(FromSqlError::other)?)
+        };
+        Ok(Chats {
+            id: Uuid::from_str(&id).map_err(FromSqlError::other)?,
+            content: row.get(2)?,
+            response_id: resp_id_opt,
+            role: Role::from_str(&role).map_err(FromSqlError::other)?,
+            user_id: row.get(1)?,
+            context_id: ctx_id_opt,
+            created_at: created_at as u64,
+            updated_at: updated_at as u64,
+        })
+    })?;
+
+    let mut chats: Vec<Chats> = vec![];
+
+    for chat in chat_rows {
+        chats.push(chat?);
+    }
+
+    Ok(chats)
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -112,7 +157,7 @@ mod tests {
     use crate::{
         core::{
             accounts::{ACCOUNT, User},
-            chats::{get_last_entry_id, save_chat},
+            chats::{get_delta_since_id, get_last_entry_id, save_chat},
         },
         runtime::mlx::ChatResponse,
     };
@@ -228,6 +273,21 @@ mod tests {
         let saved = get_last_entry_id(&conn, &user.user_id);
         println!("{:?}", saved);
         assert!(saved.unwrap().is_none())
+    }
+
+    #[test]
+    fn test_get_delta_diff() {
+        let conn = setup_db_schema();
+
+        let user = create_user();
+        let input = "2+2";
+        let chat_1 = save_chat(&conn, &user, input, None).expect("chat should be saved");
+        let _ = save_chat(&conn, &user, input, None).expect("chat should be saved");
+        let _ = save_chat(&conn, &user, input, None).expect("chat should be saved");
+        let _ = save_chat(&conn, &user, input, None).expect("chat should be saved");
+
+        let rows = get_delta_since_id(&conn, &user.user_id, &chat_1.id.to_string()).unwrap();
+        println!("{:?}", rows);
     }
 
     struct SavedChatRow {
