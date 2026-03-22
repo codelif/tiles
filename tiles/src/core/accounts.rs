@@ -50,6 +50,7 @@ impl TryFrom<String> for ACCOUNT {
         let value_lower = value.to_lowercase();
         match value_lower.as_str() {
             "local" => Ok(ACCOUNT::LOCAL),
+            "self" => Ok(ACCOUNT::SELF),
             _ => Err(AccountError {
                 error: "Invalid account type".to_owned(),
             }),
@@ -225,6 +226,30 @@ pub fn get_current_user(conn: &Connection) -> Result<User> {
         .map_err(<rusqlite::Error as Into<anyhow::Error>>::into)
 }
 
+pub fn get_user(conn: &Connection, did: &str) -> Result<User> {
+    let mut fetch_current_user = conn.prepare("select id, user_id, username, account_type, active_profile, root, created_at, updated_at  from users where user_id= ?1")?;
+
+    fetch_current_user
+        .query_one([did], |row| {
+            let id: String = row.get(0)?;
+            let account_type: String = row.get(3)?;
+            let created_at: f64 = row.get(6)?;
+            let updated_at: f64 = row.get(7)?;
+            Ok(User {
+                id: Uuid::try_parse(&id).map_err(FromSqlError::other)?,
+                user_id: row.get(1)?,
+                username: row.get(2)?,
+                account_type: ACCOUNT::try_from(account_type).map_err(FromSqlError::other)?,
+                active_profile: row.get(4)?,
+                root: row.get(5)?,
+
+                created_at: created_at as u64,
+                updated_at: updated_at as u64,
+            })
+        })
+        .map_err(<rusqlite::Error as Into<anyhow::Error>>::into)
+}
+
 pub fn save_root_account_db() -> Result<()> {
     let conn = get_db_conn(DBTYPE::COMMON)?;
     let config = get_or_create_config()?;
@@ -294,7 +319,7 @@ pub fn save_self_account_db(db_conn: &Connection, user_id: &str, nickname: &str)
     Ok(())
 }
 
-pub fn get_user_by_user_id(conn: &Connection, user_id: &str) -> Result<()> {
+pub fn get_user_by_user_id(conn: &Connection, user_id: String) -> Result<()> {
     let mut fetch_root_user = conn.prepare("select id from users where user_id = ?1")?;
 
     match fetch_root_user.query_one([user_id], |_row| Ok(())) {
@@ -315,6 +340,53 @@ fn create_root_user(root_user_config: &Table, nickname: Option<String>) -> Resul
             Ok(root_user_table)
         }
         Err(err) => Err(err),
+    }
+}
+
+pub fn get_peer_list(db_conn: &Connection) -> Result<Vec<User>> {
+    let mut stmt= db_conn.prepare("select id, user_id, username, account_type, active_profile, root, created_at, updated_at  from users where account_type != \'local\'")?;
+
+    let user_rows = stmt
+        .query_map([], |row| {
+            let id: String = row.get(0)?;
+            let account_type: String = row.get(3)?;
+            let created_at: f64 = row.get(6)?;
+            let updated_at: f64 = row.get(7)?;
+            Ok(User {
+                id: Uuid::try_parse(&id).map_err(FromSqlError::other)?,
+                user_id: row.get(1)?,
+                username: row.get(2)?,
+                account_type: ACCOUNT::try_from(account_type).map_err(FromSqlError::other)?,
+                active_profile: row.get(4)?,
+                root: row.get(5)?,
+
+                created_at: created_at as u64,
+                updated_at: updated_at as u64,
+            })
+        })
+        .map_err(<rusqlite::Error as Into<anyhow::Error>>::into)?;
+
+    let mut peer_list: Vec<User> = vec![];
+
+    for peer in user_rows {
+        peer_list.push(peer?);
+    }
+
+    Ok(peer_list)
+}
+
+pub fn unlink(db_conn: &Connection, user_id: &str) -> Result<()> {
+    let user = get_current_user(db_conn)?;
+    if user.user_id == user_id {
+        return Err(anyhow!("Cannot unlink yourself"));
+    }
+
+    match db_conn.execute(
+        "delete from users where user_id = ?1 and account_type != \'local\'",
+        [user_id],
+    ) {
+        Ok(_res) => Ok(()),
+        Err(err) => Err(anyhow!("Unable to unlink the peer due to {:?}", err)),
     }
 }
 
@@ -665,5 +737,70 @@ mod tests {
         .unwrap();
 
         assert!(get_current_user(&conn).is_err());
+    }
+
+    fn create_user(conn: &Connection, account_type: ACCOUNT) -> User {
+        let user = User {
+            id: Uuid::now_v7(),
+            user_id: String::from("did"),
+            username: String::from("nickname"),
+            account_type,
+            active_profile: true,
+            root: true,
+            created_at: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time went backwards")
+                .as_secs(),
+            updated_at: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time went backwards")
+                .as_secs(),
+        };
+
+        conn.execute("insert into users (id, user_id, username, active_profile, account_type, root) values (?1, ?2, ?3,?4, ?5, ?6)", (&user.id.to_string(), &user.user_id, &user.username, &user.active_profile,
+        user.account_type.to_string(),  &user.root)).unwrap();
+        user
+    }
+
+    #[test]
+    fn test_list_peers_with_atleast_0_peer() {
+        let conn = setup_db_schema();
+        let _local_user = create_user(&conn, ACCOUNT::LOCAL);
+
+        let user_list = get_peer_list(&conn).unwrap();
+
+        assert!(user_list.is_empty())
+    }
+
+    #[test]
+    fn test_list_peers_with_more_than_0_peer() {
+        let conn = setup_db_schema();
+        let _local_user = create_user(&conn, ACCOUNT::LOCAL);
+        save_self_account_db(&conn, "varathan", "did:jey:varathan").unwrap();
+        let user_list = get_peer_list(&conn).unwrap();
+
+        assert!(!user_list.is_empty())
+    }
+
+    #[test]
+    fn test_unlink_valid_peer() {
+        let conn = setup_db_schema();
+        let _local_user = create_user(&conn, ACCOUNT::LOCAL);
+        save_self_account_db(&conn, "did:jey:varathan", "varathan").unwrap();
+        let user_list = get_peer_list(&conn).unwrap();
+
+        assert!(!user_list.is_empty());
+
+        unlink(&conn, "did:jey:varathan").unwrap();
+        let user_list = get_peer_list(&conn).unwrap();
+        assert!(user_list.is_empty());
+    }
+
+    #[test]
+    fn test_try_unlink_local() {
+        let conn = setup_db_schema();
+        let local_user = create_user(&conn, ACCOUNT::LOCAL);
+
+        assert!(unlink(&conn, &local_user.user_id).is_err())
     }
 }

@@ -64,6 +64,12 @@ pub fn get_random_bytes() -> [u8; 16] {
     value
 }
 
+pub fn get_random_bytes_32() -> [u8; 32] {
+    let mut value = [0u8; 32];
+    OsRng.fill_bytes(&mut value);
+    value
+}
+
 #[cfg(test)]
 mod tests {
     use keyring::{mock, set_default_credential_builder};
