@@ -8,6 +8,8 @@ use tiles::{
     utils::installer,
 };
 
+use crate::commands::{show_peers, unlink_peer};
+
 mod commands;
 #[derive(Debug, Parser)]
 #[command(name = "tiles")]
@@ -63,10 +65,7 @@ enum Commands {
     Daemon(DaemonArgs),
 
     /// Link with other devices p2p
-    Link {
-        /// The ticket from a peer which can be used to link to it
-        ticket: Option<String>,
-    },
+    Link(LinkArgs),
 }
 
 #[derive(Debug, Args)]
@@ -149,6 +148,29 @@ enum DaemonCommands {
 
     /// Stops the daemon
     Stop,
+}
+
+#[derive(Debug, Args)]
+#[command(args_conflicts_with_subcommands = true)]
+#[command(flatten_help = true)]
+struct LinkArgs {
+    #[command(subcommand)]
+    command: LinkCommands,
+}
+
+#[derive(Debug, Subcommand)]
+enum LinkCommands {
+    /// Produce link ticket and wait or send link request with ticket
+    Enable {
+        ticket: Option<String>,
+    },
+
+    // Unlink give device
+    Disable {
+        did: String,
+    },
+    /// Start the daemon
+    ListPeers,
 }
 #[tokio::main]
 pub async fn main() -> Result<(), Box<dyn Error>> {
@@ -233,10 +255,13 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
                 .inspect(|_| println!("Daemon stopped successfully"))?,
             _ => start_server(None).await?,
         },
-        Some(Commands::Link { ticket }) => {
-            // TODO: Move these direct call to core
-            link(ticket).await?
-        }
+        Some(Commands::Link(link_args)) => match link_args.command {
+            LinkCommands::Enable { ticket } => link(ticket).await?,
+            LinkCommands::Disable { did } => unlink_peer(&did)?,
+            LinkCommands::ListPeers => {
+                show_peers()?;
+            }
+        },
     }
     Ok(())
 }
