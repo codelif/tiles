@@ -508,32 +508,32 @@ sha256 = "68a9a4619a666ea6439f2ff250c12a853cd1cbd5158d258bd824a7df6be2f868"
 
 [[packages]]
 name = "protobuf"
-version = "7.34.0"
+version = "7.34.1"
 index = "https://pypi.org/simple"
 
 [[packages.wheels]]
-url = "https://files.pythonhosted.org/packages/13/c4/6322ab5c8f279c4c358bc14eb8aefc0550b97222a39f04eb3c1af7a830fa/protobuf-7.34.0-cp310-abi3-macosx_10_9_universal2.whl"
-upload-time = 2026-02-27T00:30:14Z
-size = 429248
+url = "https://files.pythonhosted.org/packages/ec/11/3325d41e6ee15bf1125654301211247b042563bcc898784351252549a8ad/protobuf-7.34.1-cp310-abi3-macosx_10_9_universal2.whl"
+upload-time = 2026-03-20T17:34:37Z
+size = 429247
 
 [packages.wheels.hashes]
-sha256 = "8e329966799f2c271d5e05e236459fe1cbfdb8755aaa3b0914fa60947ddea408"
+sha256 = "d8b2cc79c4d8f62b293ad9b11ec3aebce9af481fa73e64556969f7345ebf9fc7"
 
 [[packages.wheels]]
-url = "https://files.pythonhosted.org/packages/b5/57/89727baef7578897af5ed166735ceb315819f1c184da8c3441271dbcfde7/protobuf-7.34.0-cp310-abi3-manylinux2014_x86_64.whl"
-upload-time = 2026-02-27T00:30:20Z
-size = 324268
+url = "https://files.pythonhosted.org/packages/53/1b/3b431694a4dc6d37b9f653f0c64b0a0d9ec074ee810710c0c3da21d67ba7/protobuf-7.34.1-cp310-abi3-manylinux2014_x86_64.whl"
+upload-time = 2026-03-20T17:34:41Z
+size = 324267
 
 [packages.wheels.hashes]
-sha256 = "964cf977e07f479c0697964e83deda72bcbc75c3badab506fb061b352d991b01"
+sha256 = "8ff40ce8cd688f7265326b38d5a1bed9bfdf5e6723d49961432f83e21d5713e4"
 
 [[packages.wheels]]
-url = "https://files.pythonhosted.org/packages/a4/e7/14dc9366696dcb53a413449881743426ed289d687bcf3d5aee4726c32ebb/protobuf-7.34.0-py3-none-any.whl"
-upload-time = 2026-02-27T00:30:23Z
-size = 170716
+url = "https://files.pythonhosted.org/packages/88/95/608f665226bca68b736b79e457fded9a2a38c4f4379a4a7614303d9db3bc/protobuf-7.34.1-py3-none-any.whl"
+upload-time = 2026-03-20T17:34:45Z
+size = 170715
 
 [packages.wheels.hashes]
-sha256 = "e3b914dd77fa33fa06ab2baa97937746ab25695f389869afdf03e81f34e45dc7"
+sha256 = "bb3812cd53aefea2b028ef42bd780f5b96407247f20c6ef7c679807e9d188f11"
 
 [[packages]]
 name = "pydantic"

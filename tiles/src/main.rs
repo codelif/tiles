@@ -2,10 +2,13 @@ use std::error::Error;
 
 use clap::{Args, Parser, Subcommand};
 use tiles::{
+    core::{self, network::link},
     daemon::{start_cmd, start_server, stop_cmd},
     runtime::{RunArgs, build_runtime},
     utils::installer,
 };
+
+use crate::commands::{show_peers, unlink_peer};
 
 mod commands;
 #[derive(Debug, Parser)]
@@ -60,6 +63,9 @@ enum Commands {
 
     /// Daemon configurations
     Daemon(DaemonArgs),
+
+    /// Link with other devices p2p
+    Link(LinkArgs),
 }
 
 #[derive(Debug, Args)]
@@ -74,6 +80,10 @@ struct RunFlags {
     // Future flags go here:
     // #[arg(long, default_value_t = 6969)]
     // port: u16,
+
+    // Don't go into the repl
+    #[arg(short = 'x', long)]
+    no_repl: bool,
 }
 
 #[derive(Debug, Args)]
@@ -134,10 +144,33 @@ struct DaemonArgs {
 #[derive(Debug, Subcommand)]
 enum DaemonCommands {
     /// Start the daemon
-    Start,
+    Start { port: Option<u32> },
 
     /// Stops the daemon
     Stop,
+}
+
+#[derive(Debug, Args)]
+#[command(args_conflicts_with_subcommands = true)]
+#[command(flatten_help = true)]
+struct LinkArgs {
+    #[command(subcommand)]
+    command: LinkCommands,
+}
+
+#[derive(Debug, Subcommand)]
+enum LinkCommands {
+    /// Produce link ticket and wait or send link request with ticket
+    Enable {
+        ticket: Option<String>,
+    },
+
+    // Unlink give device
+    Disable {
+        did: String,
+    },
+    /// Start the daemon
+    ListPeers,
 }
 #[tokio::main]
 pub async fn main() -> Result<(), Box<dyn Error>> {
@@ -151,6 +184,7 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
                 relay_count: cli.flags.relay_count,
                 memory: cli.flags.memory,
             };
+
             commands::run_setup_for_ftue(&run_args)
                 .inspect_err(|e| eprintln!("Failed to setup Tiles due to {:?}", e))?;
             let _ = commands::try_app_update().await;
@@ -158,13 +192,15 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
             // trying to run the tiles daemon in background concurrently
             if !cfg!(debug_assertions) {
                 tokio::spawn(async move {
-                    let _ = start_cmd().await;
+                    let _ = start_cmd(None).await;
                 });
             }
-
-            commands::run(&runtime, run_args)
-                .await
-                .inspect_err(|e| eprintln!("Tiles failed to run due to {:?}", e))?;
+            core::init().inspect_err(|e| eprintln!("Tiles core init failed due to {:?}", e))?;
+            if !cli.flags.no_repl {
+                commands::run(&runtime, run_args)
+                    .await
+                    .inspect_err(|e| eprintln!("Tiles failed to run due to {:?}", e))?;
+            }
         }
         Some(Commands::Run {
             modelfile_path,
@@ -175,6 +211,7 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
                 relay_count: flags.relay_count,
                 memory: flags.memory,
             };
+            core::init().inspect_err(|e| eprintln!("Tiles core init failed due to {:?}", e))?;
             commands::run(&runtime, run_args)
                 .await
                 .inspect_err(|e| eprintln!("Tiles failed to run due to {:?}", e))?;
@@ -210,14 +247,21 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
             println!("{}", res);
         }
         Some(Commands::Daemon(daemon_args)) => match daemon_args.command {
-            Some(DaemonCommands::Start) => start_cmd()
+            Some(DaemonCommands::Start { port }) => start_cmd(port)
                 .await
                 .inspect_err(|e| eprintln!("Daemon starting failed, reason: {:?}", e))?,
             Some(DaemonCommands::Stop) => stop_cmd()
                 .await
                 .inspect_err(|e| eprintln!("{:?}", e))
                 .inspect(|_| println!("Daemon stopped successfully"))?,
-            _ => start_server().await?,
+            _ => start_server(None).await?,
+        },
+        Some(Commands::Link(link_args)) => match link_args.command {
+            LinkCommands::Enable { ticket } => link(ticket).await?,
+            LinkCommands::Disable { did } => unlink_peer(&did)?,
+            LinkCommands::ListPeers => {
+                show_peers()?;
+            }
         },
     }
     Ok(())
