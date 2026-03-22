@@ -255,7 +255,6 @@ pub async fn try_app_update() -> Result<()> {
 }
 
 pub async fn run(runtime: &Runtime, run_args: RunArgs) -> Result<()> {
-    core::init().inspect_err(|e| eprintln!("Tiles core init failed due to {:?}", e))?;
     runtime.run(run_args).await
 }
 

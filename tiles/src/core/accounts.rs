@@ -385,7 +385,8 @@ pub fn unlink(db_conn: &Connection, user_id: &str) -> Result<()> {
         "delete from users where user_id = ?1 and account_type != \'local\'",
         [user_id],
     ) {
-        Ok(_res) => Ok(()),
+        Ok(0) => Err(anyhow!("A peer with DID {} doesn't exist", user_id)),
+        Ok(_) => Ok(()),
         Err(err) => Err(anyhow!("Unable to unlink the peer due to {:?}", err)),
     }
 }

@@ -2,7 +2,7 @@ use std::error::Error;
 
 use clap::{Args, Parser, Subcommand};
 use tiles::{
-    core::network::link,
+    core::{self, network::link},
     daemon::{start_cmd, start_server, stop_cmd},
     runtime::{RunArgs, build_runtime},
     utils::installer,
@@ -195,7 +195,7 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
                     let _ = start_cmd(None).await;
                 });
             }
-
+            core::init().inspect_err(|e| eprintln!("Tiles core init failed due to {:?}", e))?;
             if !cli.flags.no_repl {
                 commands::run(&runtime, run_args)
                     .await
@@ -211,6 +211,7 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
                 relay_count: flags.relay_count,
                 memory: flags.memory,
             };
+            core::init().inspect_err(|e| eprintln!("Tiles core init failed due to {:?}", e))?;
             commands::run(&runtime, run_args)
                 .await
                 .inspect_err(|e| eprintln!("Tiles failed to run due to {:?}", e))?;
