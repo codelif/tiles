@@ -1,12 +1,13 @@
 //! Accounts
 // Stuff related to account and identity system
 use anyhow::{Result, anyhow};
+use iroh::SecretKey;
 use rusqlite::{Connection, types::FromSqlError};
 use std::{
     fmt::Display,
     time::{SystemTime, UNIX_EPOCH},
 };
-use tilekit::accounts::create_identity;
+use tilekit::accounts::{create_identity, get_secret_key};
 use toml::Table;
 use uuid::Uuid;
 
@@ -29,8 +30,8 @@ pub enum ACCOUNT {
     // root account, created in the system
     LOCAL,
 
-    // remote account but same previlege as your local account
-    SELF,
+    // remote account
+    PEER,
 }
 
 #[derive(Debug)]
@@ -50,7 +51,7 @@ impl TryFrom<String> for ACCOUNT {
         let value_lower = value.to_lowercase();
         match value_lower.as_str() {
             "local" => Ok(ACCOUNT::LOCAL),
-            "self" => Ok(ACCOUNT::SELF),
+            "peer" => Ok(ACCOUNT::PEER),
             _ => Err(AccountError {
                 error: "Invalid account type".to_owned(),
             }),
@@ -61,7 +62,7 @@ impl Display for ACCOUNT {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::LOCAL => write!(f, "{}", String::from("local")),
-            Self::SELF => write!(f, "{}", String::from("self")),
+            Self::PEER => write!(f, "{}", String::from("peer")),
         }
     }
 }
@@ -287,12 +288,12 @@ pub fn save_root_account_db() -> Result<()> {
 
 // TODO: We could add unique user_id constraints, but
 // we will wait for it until we solve the sync part
-pub fn save_self_account_db(db_conn: &Connection, user_id: &str, nickname: &str) -> Result<()> {
+pub fn save_peer_account_db(db_conn: &Connection, user_id: &str, nickname: &str) -> Result<()> {
     let user = User {
         id: Uuid::now_v7(),
         user_id: String::from(user_id),
         username: String::from(nickname),
-        account_type: ACCOUNT::SELF,
+        account_type: ACCOUNT::PEER,
         active_profile: false,
         root: false,
         created_at: SystemTime::now()
@@ -331,7 +332,12 @@ pub fn get_user_by_user_id(conn: &Connection, user_id: String) -> Result<()> {
 
 fn create_root_user(root_user_config: &Table, nickname: Option<String>) -> Result<Table> {
     let mut root_user_table = root_user_config.clone();
-    match create_identity("tiles") {
+    let app_name = if cfg!(debug_assertions) {
+        "tiles_dev"
+    } else {
+        "tiles"
+    };
+    match create_identity(app_name) {
         Ok(did) => {
             root_user_table.insert("id".to_owned(), toml::Value::String(did));
             if let Some(nickname) = nickname {
@@ -389,6 +395,16 @@ pub fn unlink(db_conn: &Connection, user_id: &str) -> Result<()> {
         Ok(_) => Ok(()),
         Err(err) => Err(anyhow!("Unable to unlink the peer due to {:?}", err)),
     }
+}
+
+pub fn get_app_secret_key(did: &str) -> Result<SecretKey> {
+    let app_name = if cfg!(debug_assertions) {
+        "tiles_dev"
+    } else {
+        "tiles"
+    };
+    let signing_key = get_secret_key(app_name, did)?;
+    Ok(SecretKey::from_bytes(&signing_key))
 }
 
 #[cfg(test)]
@@ -777,7 +793,7 @@ mod tests {
     fn test_list_peers_with_more_than_0_peer() {
         let conn = setup_db_schema();
         let _local_user = create_user(&conn, ACCOUNT::LOCAL);
-        save_self_account_db(&conn, "varathan", "did:jey:varathan").unwrap();
+        save_peer_account_db(&conn, "did:jey:varathan", "varathan").unwrap();
         let user_list = get_peer_list(&conn).unwrap();
 
         assert!(!user_list.is_empty())
@@ -787,7 +803,7 @@ mod tests {
     fn test_unlink_valid_peer() {
         let conn = setup_db_schema();
         let _local_user = create_user(&conn, ACCOUNT::LOCAL);
-        save_self_account_db(&conn, "did:jey:varathan", "varathan").unwrap();
+        save_peer_account_db(&conn, "did:jey:varathan", "varathan").unwrap();
         let user_list = get_peer_list(&conn).unwrap();
 
         assert!(!user_list.is_empty());

@@ -22,19 +22,19 @@ mkdir -p "${DIST_DIR}/tmp"
 cp "target/${TARGET}/${BINARY_NAME}" "${DIST_DIR}/tmp/"
 
 # flushing this folder, else the final zip will have previous app-server zips too (#84)
-# rm -rf "${SERVER_DIR}/stack_export_prod"
+rm -rf "${SERVER_DIR}/stack_export_prod"
 
-# echo "🔒 Locking the venvstack...."
+echo "🔒 Locking the venvstack...."
 
-# venvstacks lock server/stack/venvstacks.toml
+venvstacks lock server/stack/venvstacks.toml
 
-# echo "🛠️ Building the venvstack...."
+echo "🛠️ Building the venvstack...."
 
-# venvstacks build server/stack/venvstacks.toml
+venvstacks build server/stack/venvstacks.toml
 
-# echo "📦 Publishing the venvstack...."
+echo "📦 Publishing the venvstack...."
 
-# venvstacks publish --tag-outputs --output-dir ../stack_export_prod server/stack/venvstacks.toml
+venvstacks publish --tag-outputs --output-dir ../stack_export_prod server/stack/venvstacks.toml
 
 cp -r "${SERVER_DIR}" "${DIST_DIR}/tmp/"
 

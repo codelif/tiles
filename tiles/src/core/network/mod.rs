@@ -11,7 +11,7 @@ use std::{
 use anyhow::Result;
 use futures_util::{StreamExt, TryStreamExt};
 use iroh::{
-    Endpoint, EndpointId, NET_REPORT_TIMEOUT, PublicKey, SecretKey,
+    Endpoint, EndpointId, NET_REPORT_TIMEOUT, PublicKey,
     address_lookup::{self, MdnsAddressLookup, mdns},
     endpoint::{BindError, presets},
     endpoint_info::UserData,
@@ -24,14 +24,14 @@ use iroh_gossip::{
 use iroh_ping::Ping;
 use iroh_tickets::endpoint::EndpointTicket;
 use rusqlite::Connection;
-use tilekit::accounts::{
-    get_did_from_public_key, get_random_bytes, get_random_bytes_32, get_secret_key,
-};
+use tilekit::accounts::{get_did_from_public_key, get_random_bytes, get_random_bytes_32};
 use tokio::task::spawn_blocking;
 use uuid::Uuid;
 
 use crate::core::{
-    accounts::{self, get_current_user, get_user_by_user_id, save_self_account_db},
+    accounts::{
+        self, get_app_secret_key, get_current_user, get_user_by_user_id, save_peer_account_db,
+    },
     network::ticket::{EndpointUserData, LinkTicket},
     storage::db::{DBTYPE, get_db_conn},
 };
@@ -289,7 +289,7 @@ async fn subsribe_loop(
                         }
 
                         if let Err(err) =
-                            save_self_account_db(&db_conn, &msg.from_did, &msg.from_nickname)
+                            save_peer_account_db(&db_conn, &msg.from_did, &msg.from_nickname)
                         {
                             println!("Failed to add the peer locally due to {:?}", err);
 
@@ -319,7 +319,7 @@ async fn subsribe_loop(
                     println!("\nLink accepted by {}({})", msg.from_nickname, msg.from_did);
 
                     if let Err(err) =
-                        save_self_account_db(&db_conn, &msg.from_did, &msg.from_nickname)
+                        save_peer_account_db(&db_conn, &msg.from_did, &msg.from_nickname)
                     {
                         println!("Failed to add the peer locally due to {:?}", err);
                         return Ok(());
@@ -346,8 +346,7 @@ async fn create_endpoint(user: &accounts::User) -> Result<Endpoint> {
     // tiles keypair in keychain
     let usr_data = EndpointUserData::new(&user.user_id, &user.username);
     if !cfg!(debug_assertions) {
-        let signing_key = get_secret_key("tiles", &user.user_id)?;
-        let secret_key = SecretKey::from_bytes(&signing_key);
+        let secret_key = get_app_secret_key(&user.user_id)?;
         Endpoint::builder(presets::N0)
             .user_data_for_address_lookup(UserData::try_from(usr_data.to_string())?)
             .secret_key(secret_key)
@@ -435,7 +434,7 @@ async fn create_gossip_network(
 }
 
 // We handle the parsing in this way since ticket can be an encoded `LinkTicket`
-// or just a 5 byte hex if linking over mDNS
+// or just a 4 byte hex if linking over mDNS
 fn parse_link_ticket(
     ticket: &str,
 ) -> Result<(Option<EndpointId>, String, String, Option<TopicId>)> {
@@ -456,7 +455,13 @@ fn parse_link_ticket(
 }
 
 fn is_did_valid(did: &str, pub_key: PublicKey) -> Result<bool> {
-    Ok(get_did_from_public_key(&pub_key)? != did)
+    // on debug mode, we skip the auth check, since we will be testing
+    // with random endpoitns but w DID from config atp
+    if cfg!(debug_assertions) {
+        Ok(true)
+    } else {
+        Ok(get_did_from_public_key(&pub_key)? == did)
+    }
 }
 // fn subsribe_mdns_events(mdns_events) {}
 //TODO: Add tests, can we get some from iroh reference?
