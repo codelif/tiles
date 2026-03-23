@@ -6,8 +6,10 @@ use anyhow::{Result, anyhow};
 use owo_colors::OwoColorize;
 use tiles::core;
 use tiles::core::accounts::{
-    RootUser, create_root_account, get_root_user_details, save_root_account, set_nickname,
+    RootUser, create_root_account, get_peer_list, get_root_user_details, save_root_account,
+    set_nickname, unlink,
 };
+use tiles::core::storage::db::get_db_conn;
 use tiles::runtime::Runtime;
 use tiles::utils::config::{
     ConfigProvider, DefaultProvider, get_or_create_config, set_user_data_path,
@@ -253,7 +255,6 @@ pub async fn try_app_update() -> Result<()> {
 }
 
 pub async fn run(runtime: &Runtime, run_args: RunArgs) -> Result<()> {
-    core::init().inspect_err(|e| eprintln!("Tiles core init failed due to {:?}", e))?;
     runtime.run(run_args).await
 }
 
@@ -335,6 +336,29 @@ fn get_account_not_created_msg() -> String {
         "Local Identity not created yet, use {}",
         "tiles account create".yellow()
     )
+}
+
+pub fn show_peers() -> Result<()> {
+    let db_conn = get_db_conn(core::storage::db::DBTYPE::COMMON)?;
+
+    let peers = get_peer_list(&db_conn)?;
+
+    println!("DID\tNickname\n");
+    for peer in peers {
+        println!("{}\t{}", peer.user_id, peer.username)
+    }
+    Ok(())
+}
+
+pub fn unlink_peer(user_id: &str) -> Result<()> {
+    let db_conn = get_db_conn(core::storage::db::DBTYPE::COMMON)?;
+
+    if let Err(err) = unlink(&db_conn, user_id) {
+        println!("{:?}", err)
+    } else {
+        println!("Succesfully disabled the peer")
+    }
+    Ok(())
 }
 
 #[cfg(test)]

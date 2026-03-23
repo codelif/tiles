@@ -35,7 +35,7 @@ pub fn create_identity(app: &str) -> Result<Identity> {
 ///
 /// - `app`- The service for which Identity is made (for ex: tiles)
 /// - `did` - The `Identity` of the service
-pub fn get_secret_key(app: &str, did: &Identity) -> Result<SecretKey> {
+pub fn get_secret_key(app: &str, did: &str) -> Result<SecretKey> {
     let entry = Entry::new(app, did)?;
     let mut bytes: [u8; 64] = [0u8; 64];
     let secret_pair = entry.get_secret()?;
@@ -60,6 +60,12 @@ pub fn get_did_from_public_key(publick_key: &[u8; 32]) -> Result<String> {
 
 pub fn get_random_bytes() -> [u8; 16] {
     let mut value = [0u8; 16];
+    OsRng.fill_bytes(&mut value);
+    value
+}
+
+pub fn get_random_bytes_32() -> [u8; 32] {
+    let mut value = [0u8; 32];
     OsRng.fill_bytes(&mut value);
     value
 }

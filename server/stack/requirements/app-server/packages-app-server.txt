@@ -23,7 +23,7 @@ openresponses-types==2.3.0.post1
 packaging==26.0
 pathspec==1.0.4
 platformdirs==4.9.4
-protobuf==7.34.0
+protobuf==7.34.1
 pydantic==2.12.5
 pydantic-core==2.41.5
 pytokens==0.4.1

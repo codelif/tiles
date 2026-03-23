@@ -5,13 +5,16 @@ use std::{
     io,
     str::FromStr,
     sync::{Arc, Mutex},
+    time::Duration,
 };
 
 use anyhow::Result;
-use futures_util::TryStreamExt;
+use futures_util::{StreamExt, TryStreamExt};
 use iroh::{
-    Endpoint, EndpointId, SecretKey,
+    Endpoint, EndpointId, NET_REPORT_TIMEOUT, PublicKey,
+    address_lookup::{self, MdnsAddressLookup, mdns},
     endpoint::{BindError, presets},
+    endpoint_info::UserData,
     protocol::Router,
 };
 use iroh_gossip::{
@@ -21,27 +24,36 @@ use iroh_gossip::{
 use iroh_ping::Ping;
 use iroh_tickets::endpoint::EndpointTicket;
 use rusqlite::Connection;
-use tilekit::accounts::{get_did_from_public_key, get_random_bytes, get_secret_key};
+use tilekit::accounts::{get_did_from_public_key, get_random_bytes, get_random_bytes_32};
 use tokio::task::spawn_blocking;
+use uuid::Uuid;
 
 use crate::core::{
-    accounts::{self, get_current_user, get_user_by_user_id, save_self_account_db},
-    network::ticket::LinkTicket,
+    accounts::{
+        self, get_app_secret_key, get_current_user, get_user_by_user_id, save_peer_account_db,
+    },
+    network::ticket::{EndpointUserData, LinkTicket},
     storage::db::{DBTYPE, get_db_conn},
 };
 use sha2::{Digest, Sha256};
 
+const DEVICE_LINK_LOCAL_TOPIC: &str = "com.tilesprivacy.tiles.link";
 #[derive(serde::Serialize, serde::Deserialize)]
 struct NetworkMessage {
+    from_did: String,
+    from_nickname: String,
+    is_online: bool,
     body: MessageBody,
-
     // to prevent iroh's deduplication on same msg
     nonce: [u8; 16],
 }
 
 impl NetworkMessage {
-    fn new(body: MessageBody) -> Self {
+    fn new(user: &accounts::User, is_online: bool, body: MessageBody) -> Self {
         Self {
+            from_did: user.user_id.clone(),
+            from_nickname: user.username.clone(),
+            is_online,
             body,
             nonce: get_random_bytes(),
         }
@@ -57,9 +69,9 @@ impl NetworkMessage {
 #[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::enum_variant_names)]
 enum MessageBody {
-    LinkRequest { did: String, nickname: String },
-    LinkAccepted { did: String, nickname: String },
-    LinkRejected { did: String, nickname: String },
+    LinkRequest { ticket: String },
+    LinkAccepted,
+    LinkRejected { reason: String },
 }
 
 // Entrypoint of network connection
@@ -102,80 +114,105 @@ pub async fn init(ticket: Option<&str>) -> Result<()> {
 pub async fn link(ticket: Option<String>) -> Result<()> {
     let user_db_conn = get_db_conn(DBTYPE::COMMON)?;
     let user = get_current_user(&user_db_conn)?;
+    let endpoint = create_endpoint(&user).await?;
+    let is_online = is_online(&endpoint).await;
+    let mut bootstrap_ids: Vec<EndpointId> = vec![];
+    // if ticket's there, then this is link enable sender's  command, e;se receiver end
     if let Some(ticket) = ticket {
-        let link_ticket = LinkTicket::from_str(&ticket)?;
-        if get_user_by_user_id(&user_db_conn, &link_ticket.did).is_ok() {
-            println!(
-                "Device {}({}) already linked",
-                link_ticket.nickname, link_ticket.did
-            );
+        let (endpoint_id, mut did, mut nickname, topic_value) = parse_link_ticket(&ticket)?;
+
+        let topic_id = if is_online {
+            topic_value.expect("Expected topicId")
+        } else {
+            create_topic_id(DEVICE_LINK_LOCAL_TOPIC)
+        };
+
+        if is_online {
+            bootstrap_ids.push(endpoint_id.expect("Expected an EndpointId as bootstrapId "))
+        } else {
+            println!("Searching for peers in the local network..");
+            let mdns = address_lookup::mdns::MdnsAddressLookup::builder().build(endpoint.id())?;
+            let (new_bootstrap_ids, user_data) =
+                find_offline_bootstrap_peers(&endpoint, mdns).await?;
+            bootstrap_ids = new_bootstrap_ids;
+            let endpoint_user_data = EndpointUserData::try_from(user_data.to_string())?;
+            did = endpoint_user_data.did;
+            nickname = endpoint_user_data.nickname;
+        };
+        if get_user_by_user_id(&user_db_conn, did.to_owned()).is_ok() {
+            println!("Device {}({}) already linked", nickname, did);
             return Ok(());
         }
-        let endpoint = create_endpoint(&user).await?;
-        endpoint.online().await;
-        let gossip = Gossip::builder().spawn(endpoint.clone());
+        let (sender, mut receiver, recv_router) =
+            create_gossip_network(&endpoint, topic_id, bootstrap_ids).await?;
 
-        let recv_router = Router::builder(endpoint.clone())
-            .accept(iroh_gossip::ALPN, gossip.clone())
-            .spawn();
+        println!("\nConnecting to {}({}).....", nickname, did);
 
-        let (sender, mut receiver) = gossip
-            .subscribe(link_ticket.topic_id, vec![link_ticket.addr.id])
-            .await?
-            .split();
-
-        println!(
-            "Connecting to {}({}).....",
-            link_ticket.nickname, link_ticket.did
-        );
         receiver.joined().await?;
+
         tokio::spawn(subsribe_loop(
             receiver,
             sender.clone(),
             user.clone(),
             user_db_conn,
+            None,
         ));
 
-        let link_req_msg = NetworkMessage::new(MessageBody::LinkRequest {
-            did: user.user_id,
-            nickname: user.username,
-        });
+        let link_req_msg =
+            NetworkMessage::new(&user, is_online, MessageBody::LinkRequest { ticket });
         sender.broadcast(link_req_msg.to_bytes().into()).await?;
 
-        println!(
-            "Sent link request to {}({})",
-            link_ticket.nickname, link_ticket.did
-        );
+        println!("\nSent link request to {}({})", nickname, did);
 
-        println!("Waiting for response...");
+        println!("\nWaiting for response...");
+
         tokio::signal::ctrl_c().await?;
         recv_router.shutdown().await?;
-        endpoint.close().await;
     } else {
-        let endpoint = create_endpoint(&user).await?;
-        endpoint.online().await;
+        // RECEIVER BLOCK
+        if !is_online {
+            let mdns = address_lookup::mdns::MdnsAddressLookup::builder().build(endpoint.id())?;
+            endpoint.address_lookup()?.add(mdns.clone());
+        }
 
-        let gossip = Gossip::builder().spawn(endpoint.clone());
+        // Its better to have unique session'ed channels while
+        // when the communication is over internet
+        let topic_id = if is_online {
+            TopicId::from_bytes(get_random_bytes_32())
+        } else {
+            create_topic_id(DEVICE_LINK_LOCAL_TOPIC)
+        };
 
-        let recv_router = Router::builder(endpoint.clone())
-            .accept(iroh_gossip::ALPN, gossip.clone())
-            .spawn();
+        let (sender, receiver, recv_router) =
+            create_gossip_network(&endpoint, topic_id, bootstrap_ids).await?;
 
-        let topic_id = create_topic_id("com.tilesprivacy.tiles.link");
+        let generated_ticket = if is_online {
+            let ticket = LinkTicket::new(
+                topic_id,
+                endpoint.addr(),
+                user.user_id.clone(),
+                user.username.clone(),
+            );
+            println!("Generated link ticket: \n{:?}\n", ticket.to_string());
 
-        let (sender, receiver) = gossip.subscribe(topic_id, vec![]).await?.split();
+            println!(
+                "Use this ticket with `tiles link enable <ticket>` on the system you want to connect to\n"
+            );
+            ticket.to_string()
+        } else {
+            // generate a code
+            let uuid = Uuid::new_v4().to_string();
 
-        let ticket = LinkTicket::new(
-            topic_id,
-            endpoint.addr(),
-            user.user_id.clone(),
-            user.username.clone(),
-        );
+            let ticket = uuid.split('-').collect::<Vec<&str>>()[0];
 
-        println!("Link Ticket: {:?}\n", ticket.to_string());
-        println!(
-            "Use this link ticket with `tiles link <ticket>` on the system you want to connect to\n"
-        );
+            println!("Generated link code: {}\n", ticket);
+
+            println!(
+                "Use this link code with `tiles link enable {}` on the system you want to connect to\n",
+                ticket
+            );
+            ticket.to_string()
+        };
 
         println!("Don't close this session until the link process is done\n");
 
@@ -184,14 +221,15 @@ pub async fn link(ticket: Option<String>) -> Result<()> {
             sender.clone(),
             user.clone(),
             user_db_conn,
+            Some(generated_ticket),
         ));
 
         // TODO: Maybe a better way is to use a oneshot channel to exit
         // the terminal instead of SIGINT
         tokio::signal::ctrl_c().await?;
         recv_router.shutdown().await?;
-        endpoint.close().await;
     }
+    endpoint.close().await;
     Ok(())
 }
 
@@ -200,15 +238,27 @@ async fn subsribe_loop(
     sender: GossipSender,
     user: accounts::User,
     db_conn: Connection,
+    generated_ticket: Option<String>,
 ) -> Result<()> {
     while let Some(event) = receiver.try_next().await? {
-        // println!("some event {:?}", event);
+        if cfg!(debug_assertions) {
+            println!("In {}:, some event {:?}", user.username, event);
+        }
         if let Event::Received(msg) = event {
-            match NetworkMessage::from_bytes(&msg.content)?.body {
-                MessageBody::LinkRequest { did, nickname } => {
+            let pub_key = msg.delivered_from;
+            let msg = NetworkMessage::from_bytes(&msg.content)?;
+            if !is_did_valid(&msg.from_did, pub_key)? {
+                eprintln!(
+                    "Incoming peer DID {} invalid, blocking request",
+                    msg.from_did
+                );
+                continue;
+            }
+            match msg.body {
+                MessageBody::LinkRequest { ticket } => {
                     println!(
                         "Received link request from {}({}), Do you want to link Y/N ?",
-                        nickname, did
+                        msg.from_nickname, msg.from_did
                     );
                     let input: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
 
@@ -222,38 +272,67 @@ async fn subsribe_loop(
                     let input_resp = input.lock().unwrap().trim().to_owned();
 
                     let link_res_resp = if input_resp.to_lowercase() == "y" {
-                        save_self_account_db(&db_conn, &did, &nickname)?;
+                        if let Some(gen_ticket) = &generated_ticket
+                            && !msg.is_online
+                            && *gen_ticket != ticket.to_lowercase()
+                        {
+                            println!("\nVerifying code does not match, please try again");
+                            let response = NetworkMessage::new(
+                                &user,
+                                msg.is_online,
+                                MessageBody::LinkRejected {
+                                    reason: String::from("Link code mismatch"),
+                                },
+                            );
+                            sender.broadcast(response.to_bytes().into()).await?;
+                            continue;
+                        }
+
+                        if let Err(err) =
+                            save_peer_account_db(&db_conn, &msg.from_did, &msg.from_nickname)
+                        {
+                            println!("Failed to add the peer locally due to {:?}", err);
+
+                            continue;
+                        }
+
                         println!(
                             "Device {}({}) is now linked\nYou can exit now by ctrl-c",
-                            nickname, did
+                            msg.from_nickname, msg.from_did
                         );
-                        NetworkMessage::new(MessageBody::LinkAccepted {
-                            did: user.user_id.clone(),
-                            nickname: user.username.clone(),
-                        })
+                        NetworkMessage::new(&user, msg.is_online, MessageBody::LinkAccepted)
                     } else {
                         println!("You can exit now by ctrl-c");
-                        NetworkMessage::new(MessageBody::LinkRejected {
-                            did: user.user_id.clone(),
-                            nickname: user.username.clone(),
-                        })
+                        NetworkMessage::new(
+                            &user,
+                            msg.is_online,
+                            MessageBody::LinkRejected {
+                                reason: String::from("Peer rejected the request"),
+                            },
+                        )
                     };
                     input.lock().unwrap().clear();
 
                     sender.broadcast(link_res_resp.to_bytes().into()).await?;
                 }
-                MessageBody::LinkAccepted { did, nickname } => {
-                    save_self_account_db(&db_conn, &did, &nickname)?;
-                    println!("Link accepted by {}({})", nickname, did);
+                MessageBody::LinkAccepted => {
+                    println!("\nLink accepted by {}({})", msg.from_nickname, msg.from_did);
 
-                    println!("You can exit now by ctrl-c");
+                    if let Err(err) =
+                        save_peer_account_db(&db_conn, &msg.from_did, &msg.from_nickname)
+                    {
+                        println!("Failed to add the peer locally due to {:?}", err);
+                        return Ok(());
+                    }
 
-                    return Ok(());
+                    println!("\nYou can exit now by ctrl-c");
+
+                    continue;
                 }
-                MessageBody::LinkRejected { did, nickname } => {
+                MessageBody::LinkRejected { reason } => {
                     println!(
-                        "Oops looks like your link request has been rejected by {}({}), exit (ctrl-c) and try again",
-                        nickname, did
+                        "Oops looks like your link request has been rejected by {}({}),\nreason: {},\nexit (ctrl-c) and try again",
+                        msg.from_nickname, msg.from_did, reason
                     );
                 }
             }
@@ -265,18 +344,19 @@ async fn subsribe_loop(
 async fn create_endpoint(user: &accounts::User) -> Result<Endpoint> {
     // In release mode, we will build the endpoint using
     // tiles keypair in keychain
+    let usr_data = EndpointUserData::new(&user.user_id, &user.username);
     if !cfg!(debug_assertions) {
-        let signing_key = get_secret_key("tiles", &user.user_id)?;
-
-        let secret_key = SecretKey::from_bytes(&signing_key);
-
+        let secret_key = get_app_secret_key(&user.user_id)?;
         Endpoint::builder(presets::N0)
+            .user_data_for_address_lookup(UserData::try_from(usr_data.to_string())?)
             .secret_key(secret_key)
             .bind()
             .await
             .map_err(<BindError as Into<anyhow::Error>>::into)
     } else {
-        Endpoint::bind(presets::N0)
+        Endpoint::builder(presets::N0)
+            .user_data_for_address_lookup(UserData::try_from(usr_data.to_string())?)
+            .bind()
             .await
             .map_err(<BindError as Into<anyhow::Error>>::into)
     }
@@ -293,4 +373,95 @@ fn _get_did_from_endpoint(endpoint_id: EndpointId) -> Result<String> {
     get_did_from_public_key(endpoint_id.as_bytes())
 }
 
+async fn is_online(endpoint: &Endpoint) -> bool {
+    tokio::select! {
+        _ = endpoint.online() => {
+            true
+        }
+        _ = tokio::time::sleep(Duration::from_secs(NET_REPORT_TIMEOUT)) => {
+            false
+        }
+    }
+}
+
+// As of now we exit asap when we see a peer. This is subjected to change
+// as the scale
+async fn find_offline_bootstrap_peers(
+    endpoint: &Endpoint,
+    mdns: MdnsAddressLookup,
+) -> Result<(Vec<EndpointId>, UserData)> {
+    let mut bootstrap_ids: Vec<EndpointId> = vec![];
+    endpoint.address_lookup()?.add(mdns.clone());
+    let mut mdns_event = mdns.subscribe().await;
+    let mut user_data = UserData::from_str("")?;
+    while let Some(event) = mdns_event.next().await {
+        match event {
+            mdns::DiscoveryEvent::Discovered {
+                endpoint_info,
+                last_updated: _,
+            } => {
+                if cfg!(debug_assertions) {
+                    println!("peer discoverd {:?}", endpoint_info);
+                }
+                bootstrap_ids.push(endpoint_info.endpoint_id);
+                user_data = endpoint_info.user_data().unwrap().clone();
+                break;
+            }
+            mdns::DiscoveryEvent::Expired { endpoint_id } => {
+                if cfg!(debug_assertions) {
+                    println!("peer left {:?}", endpoint_id)
+                }
+            }
+        }
+    }
+
+    Ok((bootstrap_ids, user_data))
+}
+
+async fn create_gossip_network(
+    endpoint: &Endpoint,
+    topic_id: TopicId,
+    bootstrap_ids: Vec<iroh::PublicKey>,
+) -> Result<(GossipSender, GossipReceiver, Router)> {
+    let gossip = Gossip::builder().spawn(endpoint.clone());
+    let recv_router = Router::builder(endpoint.clone())
+        .accept(iroh_gossip::ALPN, gossip.clone())
+        .spawn();
+
+    let (goss_sender, goss_receiver) = gossip.subscribe(topic_id, bootstrap_ids).await?.split();
+
+    Ok((goss_sender, goss_receiver, recv_router))
+}
+
+// We handle the parsing in this way since ticket can be an encoded `LinkTicket`
+// or just a 4 byte hex if linking over mDNS
+fn parse_link_ticket(
+    ticket: &str,
+) -> Result<(Option<EndpointId>, String, String, Option<TopicId>)> {
+    if let Ok(parsed_ticket) = LinkTicket::from_str(ticket) {
+        Ok((
+            Some(parsed_ticket.addr.id),
+            parsed_ticket.did,
+            parsed_ticket.nickname,
+            Some(parsed_ticket.topic_id),
+        ))
+    } else if ticket.len() == 8 {
+        // NOTE: We only have len check as a "parser" for the offline code
+        // but this will surely change once we fix the code format
+        Ok((None, String::from(""), String::from(""), None))
+    } else {
+        Err(anyhow::anyhow!("Invalid Ticket"))
+    }
+}
+
+fn is_did_valid(did: &str, pub_key: PublicKey) -> Result<bool> {
+    // on debug mode, we skip the auth check, since we will be testing
+    // with random endpoitns but w DID from config atp
+    if cfg!(debug_assertions) {
+        Ok(true)
+    } else {
+        Ok(get_did_from_public_key(&pub_key)? == did)
+    }
+}
+// fn subsribe_mdns_events(mdns_events) {}
 //TODO: Add tests, can we get some from iroh reference?

@@ -5,6 +5,20 @@ The format is based on https://keepachangelog.com/en/1.1.0/
 
 ## [Unreleased]
 
+## [0.4.5] - 2026-03-23
+
+### Added
+- Added P2P device linking v1 in [#106](https://github.com/tilesprivacy/tiles/pull/106).
+  - Works both online and in offline networks
+  - Utility Commands for device linking
+    - `tiles link enable` - creates the ticket and listens for an link requests
+    - `tiles link enable <ticket>`- Device that need to join will run this command with the ticket from the sender. **NOTE**: The ticket sharing is out-of-band.
+    - `tiles link list-peers` - Shows the info (DID, nickname etc) of the linked devices.
+    - `tiles link disable <DID>` - Unlinks a linked device 
+
+### Fixed
+- Fixed the permission issues while trying to update Tiles using `tiles update` in [$104](https://github.com/tilesprivacy/tiles/pull/104). This was due to new binary location is in `/usr/` instead of `~/.local/`. Running the internal script with `sudo` fixed it.
+
 ## [0.4.4] - 2026-03-16
 
 ### Added

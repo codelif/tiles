@@ -2,11 +2,13 @@ use std::error::Error;
 
 use clap::{Args, Parser, Subcommand};
 use tiles::{
-    core::network::link,
+    core::{self, network::link},
     daemon::{start_cmd, start_server, stop_cmd},
     runtime::{RunArgs, build_runtime},
     utils::installer,
 };
+
+use crate::commands::{show_peers, unlink_peer};
 
 mod commands;
 #[derive(Debug, Parser)]
@@ -63,10 +65,7 @@ enum Commands {
     Daemon(DaemonArgs),
 
     /// Link with other devices p2p
-    Link {
-        /// The ticket from a peer which can be used to link to it
-        ticket: Option<String>,
-    },
+    Link(LinkArgs),
 }
 
 #[derive(Debug, Args)]
@@ -150,6 +149,29 @@ enum DaemonCommands {
     /// Stops the daemon
     Stop,
 }
+
+#[derive(Debug, Args)]
+#[command(args_conflicts_with_subcommands = true)]
+#[command(flatten_help = true)]
+struct LinkArgs {
+    #[command(subcommand)]
+    command: LinkCommands,
+}
+
+#[derive(Debug, Subcommand)]
+enum LinkCommands {
+    /// Produce link ticket and wait or send link request with ticket
+    Enable {
+        ticket: Option<String>,
+    },
+
+    // Unlink give device
+    Disable {
+        did: String,
+    },
+    /// Start the daemon
+    ListPeers,
+}
 #[tokio::main]
 pub async fn main() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
@@ -173,7 +195,7 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
                     let _ = start_cmd(None).await;
                 });
             }
-
+            core::init().inspect_err(|e| eprintln!("Tiles core init failed due to {:?}", e))?;
             if !cli.flags.no_repl {
                 commands::run(&runtime, run_args)
                     .await
@@ -189,6 +211,7 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
                 relay_count: flags.relay_count,
                 memory: flags.memory,
             };
+            core::init().inspect_err(|e| eprintln!("Tiles core init failed due to {:?}", e))?;
             commands::run(&runtime, run_args)
                 .await
                 .inspect_err(|e| eprintln!("Tiles failed to run due to {:?}", e))?;
@@ -233,10 +256,13 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
                 .inspect(|_| println!("Daemon stopped successfully"))?,
             _ => start_server(None).await?,
         },
-        Some(Commands::Link { ticket }) => {
-            // TODO: Move these direct call to core
-            link(ticket).await?
-        }
+        Some(Commands::Link(link_args)) => match link_args.command {
+            LinkCommands::Enable { ticket } => link(ticket).await?,
+            LinkCommands::Disable { did } => unlink_peer(&did)?,
+            LinkCommands::ListPeers => {
+                show_peers()?;
+            }
+        },
     }
     Ok(())
 }
