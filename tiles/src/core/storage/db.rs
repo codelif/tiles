@@ -37,8 +37,9 @@ const COMMON_MIGRATION_ARRAY: &[M] = &[M::up(
 const COMMON_MIGRATIONS: Migrations = Migrations::from_slice(COMMON_MIGRATION_ARRAY);
 
 // TODO: add the schema doc
-const CHATS_MIGRATION_ARRAY: &[M] = &[M::up(
-    "CREATE TABLE IF NOT EXISTS chats (
+const CHATS_MIGRATION_ARRAY: &[M] = &[
+    M::up(
+        "CREATE TABLE IF NOT EXISTS chats (
         id TEXT PRIMARY KEY,
         content TEXT NOT NULL,
         resp_id TEXT,
@@ -48,7 +49,21 @@ const CHATS_MIGRATION_ARRAY: &[M] = &[M::up(
         created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
         updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
     )",
-)];
+    ),
+    // After creating row_counter, we backfill the row_counter for existing rows
+    // which doesnt have any
+    M::up(
+        "
+        ALTER TABLE CHATS ADD COLUMN row_counter INTEGER;
+        UPDATE chats SET row_counter = (
+            SELECT rn FROM (
+                SELECT id, ROW_NUMBER() OVER ( PARTITION BY user_id ORDER BY id ) as rn FROM chats
+            ) t WHERE t.id = chats.id );
+
+        ALTER TABLE CHATS ADD COLUMN session_id TEXT;
+        ",
+    ),
+];
 
 const CHATS_MIGRATIONS: Migrations = Migrations::from_slice(CHATS_MIGRATION_ARRAY);
 

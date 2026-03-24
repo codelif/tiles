@@ -35,7 +35,7 @@ pub struct Message {
 
 #[derive(Debug)]
 pub struct Chats {
-    pub id: Uuid,
+    pub id: String,
     content: String,
     // The id of the responses api obj
     response_id: Option<String>,
@@ -43,9 +43,10 @@ pub struct Chats {
     role: Role,
     user_id: String,
     // The parent Id of a model's reply
-    context_id: Option<Uuid>,
+    context_id: Option<String>,
     created_at: u64,
     updated_at: u64,
+    row_counter: i64,
 }
 
 pub fn save_chat(
@@ -54,10 +55,12 @@ pub fn save_chat(
     input: &str,
     chat_resp: Option<&ChatResponse>,
 ) -> Result<Chats> {
+    let row_counter = get_last_row_counter(&conn, &user.user_id)?;
     if let Some(chat_response) = chat_resp {
         let chat_resp_cloned = chat_response.clone();
+
         let chat = Chats {
-            id: Uuid::now_v7(),
+            id: Uuid::now_v7().to_string(),
             user_id: user.user_id.clone(),
             content: input.to_owned(),
             response_id: Some(chat_resp_cloned.prev_response_id),
@@ -65,14 +68,15 @@ pub fn save_chat(
             context_id: chat_resp_cloned.parent_chat_id,
             created_at: get_unix_time_now(),
             updated_at: get_unix_time_now(),
+            row_counter: row_counter + 1,
         };
 
-        conn.execute("insert into chats(id, user_id, content, resp_id, role, context_id, created_at, updated_at) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)", (&chat.id.to_string(), &chat.user_id, &chat.content, &chat.response_id, Into::<String>::into(chat.role),  &chat.context_id.unwrap_or(Uuid::nil()).to_string(), &chat.created_at.to_string(), &chat.updated_at.to_string()))?;
+        conn.execute("insert into chats(id, user_id, content, resp_id, role, context_id, created_at, updated_at, row_counter) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)", (&chat.id.to_string(), &chat.user_id, &chat.content, &chat.response_id, Into::<String>::into(chat.role),  &chat.context_id, &chat.created_at.to_string(), &chat.updated_at.to_string(), &chat.row_counter))?;
 
         Ok(chat)
     } else {
         let chat = Chats {
-            id: Uuid::now_v7(),
+            id: Uuid::now_v7().to_string(),
             user_id: user.user_id.clone(),
             content: input.to_owned(),
             response_id: None,
@@ -80,60 +84,70 @@ pub fn save_chat(
             context_id: None,
             created_at: get_unix_time_now(),
             updated_at: get_unix_time_now(),
+            row_counter: row_counter + 1,
         };
 
-        conn.execute("insert into chats(id, user_id, content, resp_id, role, context_id, created_at, updated_at) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)", (&chat.id.to_string(), &chat.user_id, &chat.content, &chat.response_id, Into::<String>::into(chat.role),  &chat.context_id.unwrap_or(Uuid::nil()).to_string(), &chat.created_at.to_string(), &chat.updated_at.to_string()))?;
+        conn.execute("insert into chats(id, user_id, content, resp_id, role, context_id, created_at, updated_at, row_counter) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)", (&chat.id,  &chat.user_id, &chat.content, &chat.response_id, Into::<String>::into(chat.role), &chat.context_id, &chat.created_at.to_string(), &chat.updated_at.to_string(), &chat.row_counter))?;
 
         Ok(chat)
     }
 }
 
-fn get_last_entry_id(conn: &Connection, user_id: &str) -> Result<Option<Uuid>> {
+/// Returns the `id` of the last entry of the given user_id
+/// Used as the offset point for fetching the chat delta from the user_id
+pub fn get_last_entry_id(conn: &Connection, user_id: &str) -> Result<Option<Uuid>> {
     match conn.query_row(
         "select id from chats where user_id = ?1 order by id desc limit 1",
         [user_id],
         |row| row.get::<usize, String>(0),
     ) {
-        Ok(res) => Uuid::from_str(&res)
-            .map_err(Into::into)
-            .map(|uuid| Some(uuid)),
+        Ok(res) => Uuid::from_str(&res).map_err(Into::into).map(Some),
         Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
         Err(err) => Err(<rusqlite::Error as Into<anyhow::Error>>::into(err)),
     }
 }
 
+/// Returns the `row_counter` of the last entry of the given user_id
+/// Used as the offset point for fetching the chat delta from the user_id
+pub fn get_last_row_counter(conn: &Connection, user_id: &str) -> Result<i64> {
+    match conn.query_row(
+        "select max(row_counter) from chats where user_id = ?1",
+        [user_id],
+        |row| row.get::<usize, i64>(0),
+    ) {
+        Ok(res) => Ok(res),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(0),
+        // It returns NULL, if there are now no rows
+        Err(rusqlite::Error::InvalidColumnType(_, _, _)) => Ok(0),
+        Err(err) => Err(<rusqlite::Error as Into<anyhow::Error>>::into(err)),
+    }
+}
 /// Return list of rows..
 /// encoding is the job of network modules
-///
-fn get_delta_since_id(conn: &Connection, user_id: &str, last_entry_id: &str) -> Result<Vec<Chats>> {
-    let mut stmt = conn.prepare("select id, user_id, content, resp_id, role, context_id, created_at, updated_at from chats where user_id = ?1 and id > ?2 order by id")?;
+pub fn get_delta_since_id(
+    conn: &Connection,
+    user_id: &str,
+    last_entry_id: &str,
+) -> Result<Vec<Chats>> {
+    let mut stmt = conn.prepare("select id, user_id, content, resp_id, role, context_id, created_at, updated_at , row_counter from chats where user_id = ?1 and id > ?2 order by id")?;
 
     let chat_rows = stmt.query_map([user_id, last_entry_id], |row| {
         let id: String = row.get(0)?;
         let role: String = row.get(4)?;
         let created_at: f64 = row.get(6)?;
         let updated_at: f64 = row.get(7)?;
-        let ctx_id: String = row.get(5)?;
-        let resp_id: String = row.get(3)?;
-        let resp_id_opt = if resp_id.is_empty() {
-            None
-        } else {
-            Some(resp_id)
-        };
-        let ctx_id_opt = if ctx_id.is_empty() {
-            None
-        } else {
-            Some(Uuid::from_str(&ctx_id).map_err(FromSqlError::other)?)
-        };
+        let resp_id: Option<String> = row.get(3)?;
+        let ctx_id = row.get(5)?;
         Ok(Chats {
-            id: Uuid::from_str(&id).map_err(FromSqlError::other)?,
+            id,
             content: row.get(2)?,
-            response_id: resp_id_opt,
+            response_id: resp_id,
             role: Role::from_str(&role).map_err(FromSqlError::other)?,
             user_id: row.get(1)?,
-            context_id: ctx_id_opt,
+            context_id: ctx_id,
             created_at: created_at as u64,
             updated_at: updated_at as u64,
+            row_counter: row.get(8)?,
         })
     })?;
 
@@ -144,6 +158,12 @@ fn get_delta_since_id(conn: &Connection, user_id: &str, last_entry_id: &str) -> 
     }
 
     Ok(chats)
+}
+
+fn apply_delta() -> Result<()> {
+    // bulk insert
+
+    unimplemented!()
 }
 
 #[cfg(test)]
@@ -157,7 +177,7 @@ mod tests {
     use crate::{
         core::{
             accounts::{ACCOUNT, User},
-            chats::{get_delta_since_id, get_last_entry_id, save_chat},
+            chats::{get_delta_since_id, get_last_row_counter, save_chat},
         },
         runtime::mlx::ChatResponse,
     };
@@ -178,19 +198,19 @@ mod tests {
         assert_eq!(saved.resp_id, None);
         assert_eq!(saved.role, Into::<String>::into(Role::User));
         assert_eq!(saved.user_id, user.user_id);
-        assert_eq!(saved.context_id, Uuid::nil().to_string());
+        assert_eq!(saved.context_id, None);
     }
 
     #[test]
     fn test_valid_response_save_chat() {
         let conn = setup_db_schema();
         let user = create_user();
-        let parent_chat_id = Uuid::now_v7();
+        let parent_chat_id = Uuid::now_v7().to_string();
         let chat_resp = ChatResponse {
             reply: "reply".to_owned(),
             code: "code".to_owned(),
             prev_response_id: String::from("resp_prev"),
-            parent_chat_id: Some(parent_chat_id),
+            parent_chat_id: Some(parent_chat_id.clone()),
             metrics: None,
         };
         let input = "2+2";
@@ -198,14 +218,14 @@ mod tests {
 
         assert_eq!(chat.user_id, user.user_id);
         assert_eq!(chat.response_id.as_deref(), Some("resp_prev"));
-        assert_eq!(chat.context_id, Some(parent_chat_id));
+        assert_eq!(chat.context_id, Some(parent_chat_id.clone()));
 
         let saved = fetch_saved_chat_row(&conn, &chat.id);
         assert_eq!(saved.content, input);
         assert_eq!(saved.resp_id, Some(String::from("resp_prev")));
         assert_eq!(saved.role, Into::<String>::into(Role::Assistant));
         assert_eq!(saved.user_id, user.user_id);
-        assert_eq!(saved.context_id, parent_chat_id.to_string());
+        assert_eq!(saved.context_id, Some(parent_chat_id.clone()));
     }
 
     #[test]
@@ -216,17 +236,17 @@ mod tests {
             reply: "reply".to_owned(),
             code: "code".to_owned(),
             prev_response_id: String::from("resp_prev"),
-            parent_chat_id: None,
+            parent_chat_id: Some(Uuid::now_v7().to_string()),
             metrics: None,
         };
 
         let chat =
             save_chat(&conn, &user, "hello", Some(&chat_resp)).expect("chat should be saved");
 
-        assert_eq!(chat.context_id, None);
+        assert!(chat.context_id.is_some());
         let saved = fetch_saved_chat_row(&conn, &chat.id);
         assert_eq!(saved.role, Into::<String>::into(Role::Assistant));
-        assert_eq!(saved.context_id, Uuid::nil().to_string());
+        assert!(saved.context_id.is_some());
     }
 
     #[test]
@@ -252,7 +272,7 @@ mod tests {
     }
 
     #[test]
-    fn test_get_last_entry() {
+    fn test_last_row_counter() {
         let conn = setup_db_schema();
         let user = create_user();
         let input = "2+2";
@@ -262,23 +282,21 @@ mod tests {
         assert!(chat.response_id.is_none());
         assert!(chat.context_id.is_none());
 
-        let saved = get_last_entry_id(&conn, &user.user_id);
-        assert!(saved.is_ok())
+        let saved = get_last_row_counter(&conn, &user.user_id);
+        assert_eq!(saved.unwrap(), 1);
     }
 
     #[test]
-    fn test_get_last_entry_without_entry() {
+    fn test_get_last_row_counter_without_entry() {
         let conn = setup_db_schema();
         let user = create_user();
-        let saved = get_last_entry_id(&conn, &user.user_id);
-        println!("{:?}", saved);
-        assert!(saved.unwrap().is_none())
+        let saved = get_last_row_counter(&conn, &user.user_id);
+        assert_eq!(saved.unwrap(), 0)
     }
 
     #[test]
     fn test_get_delta_diff() {
         let conn = setup_db_schema();
-
         let user = create_user();
         let input = "2+2";
         let chat_1 = save_chat(&conn, &user, input, None).expect("chat should be saved");
@@ -287,7 +305,35 @@ mod tests {
         let _ = save_chat(&conn, &user, input, None).expect("chat should be saved");
 
         let rows = get_delta_since_id(&conn, &user.user_id, &chat_1.id.to_string()).unwrap();
-        println!("{:?}", rows);
+        assert_eq!(rows.len(), 3);
+    }
+
+    #[test]
+    fn test_get_delta_diff_empty_last_entry_id() {
+        let conn = setup_db_schema();
+        let user = create_user();
+        let input = "2+2";
+        let _chat_1 = save_chat(&conn, &user, input, None).expect("chat should be saved");
+        let _ = save_chat(&conn, &user, input, None).expect("chat should be saved");
+        let _ = save_chat(&conn, &user, input, None).expect("chat should be saved");
+        let _ = save_chat(&conn, &user, input, None).expect("chat should be saved");
+
+        let rows = get_delta_since_id(&conn, &user.user_id, "").unwrap();
+        assert_eq!(rows.len(), 4);
+    }
+
+    #[test]
+    fn test_get_delta_diff_empty_wrong_user_id() {
+        let conn = setup_db_schema();
+        let user = create_user();
+        let input = "2+2";
+        let _chat_1 = save_chat(&conn, &user, input, None).expect("chat should be saved");
+        let _ = save_chat(&conn, &user, input, None).expect("chat should be saved");
+        let _ = save_chat(&conn, &user, input, None).expect("chat should be saved");
+        let _ = save_chat(&conn, &user, input, None).expect("chat should be saved");
+
+        let rows = get_delta_since_id(&conn, "", "").unwrap();
+        assert_eq!(rows.len(), 0);
     }
 
     struct SavedChatRow {
@@ -295,10 +341,10 @@ mod tests {
         resp_id: Option<String>,
         role: String,
         user_id: String,
-        context_id: String,
+        context_id: Option<String>,
     }
 
-    fn fetch_saved_chat_row(conn: &Connection, chat_id: &Uuid) -> SavedChatRow {
+    fn fetch_saved_chat_row(conn: &Connection, chat_id: &str) -> SavedChatRow {
         conn.query_row(
             "SELECT content, resp_id, role, user_id, context_id FROM chats WHERE id = ?1",
             [chat_id.to_string()],
@@ -344,7 +390,9 @@ mod tests {
         user_id TEXT NOT NULL,
         context_id TEXT ,
         created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
-        updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+        updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+        row_counter INTEGER,
+        session_id TEXT
     );",
             [],
         )

@@ -3203,18 +3203,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "iroh-ping"
-version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ae0d3040396ce546281e3716e3fa88bcc425a99ab2fd2715484a86f050a5d36e"
-dependencies = [
- "anyhow",
- "iroh",
- "iroh-metrics",
- "n0-error",
-]
-
-[[package]]
 name = "iroh-relay"
 version = "0.97.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6096,7 +6084,6 @@ dependencies = [
  "hf-hub",
  "iroh",
  "iroh-gossip",
- "iroh-ping",
  "iroh-tickets",
  "keyring",
  "owo-colors",

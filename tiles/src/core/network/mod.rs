@@ -21,8 +21,6 @@ use iroh_gossip::{
     Gossip, TopicId,
     api::{Event, GossipReceiver, GossipSender},
 };
-use iroh_ping::Ping;
-use iroh_tickets::endpoint::EndpointTicket;
 use rusqlite::Connection;
 use tilekit::accounts::{get_did_from_public_key, get_random_bytes, get_random_bytes_32};
 use tokio::task::spawn_blocking;
@@ -75,41 +73,41 @@ enum MessageBody {
 }
 
 // Entrypoint of network connection
-pub async fn init(ticket: Option<&str>) -> Result<()> {
-    if let Some(ticket_addr) = ticket {
-        let sender_endpoint = Endpoint::bind(presets::N0).await?;
-        println!("{:?}", sender_endpoint.addr());
-        let se_clone = sender_endpoint.clone();
-        let send_pinger = Ping::new();
-        let rtt = send_pinger
-            .ping(
-                &sender_endpoint,
-                EndpointTicket::from_str(ticket_addr)?
-                    .endpoint_addr()
-                    .clone(),
-            )
-            .await?;
+// pub async fn init(ticket: Option<&str>) -> Result<()> {
+//     if let Some(ticket_addr) = ticket {
+//         let sender_endpoint = Endpoint::bind(presets::N0).await?;
+//         println!("{:?}", sender_endpoint.addr());
+//         let se_clone = sender_endpoint.clone();
+//         let send_pinger = Ping::new();
+//         let rtt = send_pinger
+//             .ping(
+//                 &sender_endpoint,
+//                 EndpointTicket::from_str(ticket_addr)?
+//                     .endpoint_addr()
+//                     .clone(),
+//             )
+//             .await?;
 
-        println!("ping took: {:?} to complete", rtt);
-        se_clone.close().await;
-    } else {
-        let endpoint = Endpoint::bind(presets::N0).await?;
-        let ep = endpoint.clone();
-        let ep2 = endpoint.clone();
-        endpoint.online().await;
+//         println!("ping took: {:?} to complete", rtt);
+//         se_clone.close().await;
+//     } else {
+//         let endpoint = Endpoint::bind(presets::N0).await?;
+//         let ep = endpoint.clone();
+//         let ep2 = endpoint.clone();
+//         endpoint.online().await;
 
-        let ping = Ping::new();
+//         let ping = Ping::new();
 
-        let ticket = EndpointTicket::new(endpoint.addr());
+//         let ticket = EndpointTicket::new(endpoint.addr());
 
-        println!("ticket\n{:?}", ticket.to_string());
+//         println!("ticket\n{:?}", ticket.to_string());
 
-        let recv_router = Router::builder(ep).accept(iroh_ping::ALPN, ping).spawn();
-        ep2.close().await;
-        recv_router.shutdown().await?;
-    }
-    Ok(())
-}
+//         let recv_router = Router::builder(ep).accept(iroh_ping::ALPN, ping).spawn();
+//         ep2.close().await;
+//         recv_router.shutdown().await?;
+//     }
+//     Ok(())
+// }
 
 pub async fn link(ticket: Option<String>) -> Result<()> {
     let user_db_conn = get_db_conn(DBTYPE::COMMON)?;
