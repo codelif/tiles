@@ -9,8 +9,8 @@ use crate::core::accounts::User;
 use crate::runtime::mlx::ChatResponse;
 use crate::utils::get_unix_time_now;
 use anyhow::Result;
-use rusqlite::Connection;
 use rusqlite::types::FromSqlError;
+use rusqlite::{Connection, params};
 use tilekit::modelfile::Role;
 use uuid::Uuid;
 // model the chats table
@@ -55,7 +55,7 @@ pub fn save_chat(
     input: &str,
     chat_resp: Option<&ChatResponse>,
 ) -> Result<Chats> {
-    let row_counter = get_last_row_counter(&conn, &user.user_id)?;
+    let row_counter = get_last_row_counter(conn, &user.user_id)?;
     if let Some(chat_response) = chat_resp {
         let chat_resp_cloned = chat_response.clone();
 
@@ -124,14 +124,10 @@ pub fn get_last_row_counter(conn: &Connection, user_id: &str) -> Result<i64> {
 }
 /// Return list of rows..
 /// encoding is the job of network modules
-pub fn get_delta_since_id(
-    conn: &Connection,
-    user_id: &str,
-    last_entry_id: &str,
-) -> Result<Vec<Chats>> {
-    let mut stmt = conn.prepare("select id, user_id, content, resp_id, role, context_id, created_at, updated_at , row_counter from chats where user_id = ?1 and id > ?2 order by id")?;
+pub fn get_delta(conn: &Connection, user_id: &str, last_row_couter: i64) -> Result<Vec<Chats>> {
+    let mut stmt = conn.prepare("select id, user_id, content, resp_id, role, context_id, created_at, updated_at , row_counter from chats where user_id = ?1 and row_counter > ?2 order by id")?;
 
-    let chat_rows = stmt.query_map([user_id, last_entry_id], |row| {
+    let chat_rows = stmt.query_map(params![user_id, last_row_couter], |row| {
         let id: String = row.get(0)?;
         let role: String = row.get(4)?;
         let created_at: f64 = row.get(6)?;
@@ -160,10 +156,31 @@ pub fn get_delta_since_id(
     Ok(chats)
 }
 
-fn apply_delta() -> Result<()> {
+pub fn apply_delta(chat_conn: &mut Connection, delta_chats: Vec<Chats>) -> Result<()> {
     // bulk insert
+    // TODO: Handle primary key conflict, for now upsert it, later
+    // do LWW based on iss of UCAN
+    let txn = chat_conn.transaction()?;
+    {
+        let mut stmt = txn.prepare("insert into chats(id, user_id, content, resp_id, role, context_id, created_at, updated_at, row_counter) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)")?;
 
-    unimplemented!()
+        for chat in delta_chats {
+            stmt.execute(params![
+                &chat.id.to_string(),
+                &chat.user_id,
+                &chat.content,
+                &chat.response_id,
+                Into::<String>::into(chat.role),
+                &chat.context_id,
+                &chat.created_at.to_string(),
+                &chat.updated_at.to_string(),
+                &chat.row_counter,
+            ])?;
+        }
+    }
+    txn.commit()?;
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -177,7 +194,7 @@ mod tests {
     use crate::{
         core::{
             accounts::{ACCOUNT, User},
-            chats::{get_delta_since_id, get_last_row_counter, save_chat},
+            chats::{apply_delta, get_delta, get_last_row_counter, save_chat},
         },
         runtime::mlx::ChatResponse,
     };
@@ -304,7 +321,7 @@ mod tests {
         let _ = save_chat(&conn, &user, input, None).expect("chat should be saved");
         let _ = save_chat(&conn, &user, input, None).expect("chat should be saved");
 
-        let rows = get_delta_since_id(&conn, &user.user_id, &chat_1.id.to_string()).unwrap();
+        let rows = get_delta(&conn, &user.user_id, chat_1.row_counter).unwrap();
         assert_eq!(rows.len(), 3);
     }
 
@@ -318,7 +335,7 @@ mod tests {
         let _ = save_chat(&conn, &user, input, None).expect("chat should be saved");
         let _ = save_chat(&conn, &user, input, None).expect("chat should be saved");
 
-        let rows = get_delta_since_id(&conn, &user.user_id, "").unwrap();
+        let rows = get_delta(&conn, &user.user_id, 0).unwrap();
         assert_eq!(rows.len(), 4);
     }
 
@@ -332,8 +349,26 @@ mod tests {
         let _ = save_chat(&conn, &user, input, None).expect("chat should be saved");
         let _ = save_chat(&conn, &user, input, None).expect("chat should be saved");
 
-        let rows = get_delta_since_id(&conn, "", "").unwrap();
+        let rows = get_delta(&conn, "", 0).unwrap();
         assert_eq!(rows.len(), 0);
+    }
+
+    #[test]
+    fn test_apply_delta() {
+        let conn = setup_db_schema();
+        let mut conn_2 = setup_db_schema();
+        let user = create_user();
+        let input = "2+2";
+        let _chat_1 = save_chat(&conn, &user, input, None).expect("chat should be saved");
+        let _ = save_chat(&conn, &user, input, None).expect("chat should be saved");
+        let _ = save_chat(&conn, &user, input, None).expect("chat should be saved");
+        let _ = save_chat(&conn, &user, input, None).expect("chat should be saved");
+
+        let rows = get_delta(&conn, &user.user_id, 0).unwrap();
+        assert_eq!(rows.len(), 4);
+        assert!(apply_delta(&mut conn_2, rows).is_ok());
+        let rows = get_delta(&conn_2, &user.user_id, 0).unwrap();
+        assert_eq!(rows.len(), 4);
     }
 
     struct SavedChatRow {
