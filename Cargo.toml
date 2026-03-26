@@ -5,3 +5,6 @@ members = [
     "tiles",
 ]
 
+
+[workspace.lints.clippy]
+pedantic = "warn"

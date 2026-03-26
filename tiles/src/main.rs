@@ -1,8 +1,13 @@
+#![warn(clippy::pedantic)]
+
 use std::error::Error;
 
 use clap::{Args, Parser, Subcommand};
 use tiles::{
-    core::{self, network::link},
+    core::{
+        self,
+        network::{link, sync},
+    },
     daemon::{start_cmd, start_server, stop_cmd},
     runtime::{RunArgs, build_runtime},
     utils::installer,
@@ -66,6 +71,12 @@ enum Commands {
 
     /// Link with other devices p2p
     Link(LinkArgs),
+
+    /// Syncs the chats to peers
+    Sync {
+        /// The DID of the peer you want to sync
+        did: Option<String>,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -174,6 +185,7 @@ enum LinkCommands {
 }
 #[tokio::main]
 pub async fn main() -> Result<(), Box<dyn Error>> {
+    env_logger::init();
     let cli = Cli::parse();
     let runtime = build_runtime();
     match cli.command {
@@ -232,7 +244,7 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
             data,
             model,
         }) => {
-            let modelfile = commands::optimize(modelfile_path.clone(), data, model).await?;
+            let modelfile = commands::optimize(&modelfile_path, data, &model).await?;
             std::fs::write(&modelfile_path, modelfile.to_string())?;
             println!("Successfully updated {}", modelfile_path);
         }
@@ -263,6 +275,7 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
                 show_peers()?;
             }
         },
+        Some(Commands::Sync { did }) => sync(did).await?,
     }
     Ok(())
 }

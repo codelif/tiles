@@ -10,3 +10,7 @@ pub fn get_unix_time_now() -> u64 {
         .expect("time went backwards")
         .as_secs()
 }
+
+pub fn test_logger() {
+    let _ = env_logger::builder().is_test(true).try_init();
+}

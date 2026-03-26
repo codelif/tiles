@@ -9,6 +9,7 @@ use std::{
 };
 
 use anyhow::Result;
+use axum::body::Bytes;
 use futures_util::{StreamExt, TryStreamExt};
 use iroh::{
     Endpoint, EndpointId, NET_REPORT_TIMEOUT, PublicKey,
@@ -17,12 +18,16 @@ use iroh::{
     endpoint_info::UserData,
     protocol::Router,
 };
+use iroh_blobs::{BlobsProtocol, store::mem::MemStore, ticket::BlobTicket};
 use iroh_gossip::{
     Gossip, TopicId,
     api::{Event, GossipReceiver, GossipSender},
 };
+
 use rusqlite::Connection;
-use tilekit::accounts::{get_did_from_public_key, get_random_bytes, get_random_bytes_32};
+use tilekit::accounts::{
+    get_did_from_public_key, get_public_key_from_did, get_random_bytes, get_random_bytes_32,
+};
 use tokio::task::spawn_blocking;
 use uuid::Uuid;
 
@@ -30,6 +35,7 @@ use crate::core::{
     accounts::{
         self, get_app_secret_key, get_current_user, get_user_by_user_id, save_peer_account_db,
     },
+    chats::{get_delta, get_encoded_delta, get_last_row_counter},
     network::ticket::{EndpointUserData, LinkTicket},
     storage::db::{DBTYPE, get_db_conn},
 };
@@ -64,50 +70,25 @@ impl NetworkMessage {
     }
 }
 
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize, Debug)]
 #[allow(clippy::enum_variant_names)]
 enum MessageBody {
-    LinkRequest { ticket: String },
+    LinkRequest {
+        ticket: String,
+    },
     LinkAccepted,
-    LinkRejected { reason: String },
+    LinkRejected {
+        reason: String,
+    },
+    SyncStart {
+        last_row_counter: Option<i64>,
+    },
+    SyncSendDeltaInfo {
+        blob_ticket: String,
+        last_row_counter: Option<i64>,
+    },
+    SyncEnd,
 }
-
-// Entrypoint of network connection
-// pub async fn init(ticket: Option<&str>) -> Result<()> {
-//     if let Some(ticket_addr) = ticket {
-//         let sender_endpoint = Endpoint::bind(presets::N0).await?;
-//         println!("{:?}", sender_endpoint.addr());
-//         let se_clone = sender_endpoint.clone();
-//         let send_pinger = Ping::new();
-//         let rtt = send_pinger
-//             .ping(
-//                 &sender_endpoint,
-//                 EndpointTicket::from_str(ticket_addr)?
-//                     .endpoint_addr()
-//                     .clone(),
-//             )
-//             .await?;
-
-//         println!("ping took: {:?} to complete", rtt);
-//         se_clone.close().await;
-//     } else {
-//         let endpoint = Endpoint::bind(presets::N0).await?;
-//         let ep = endpoint.clone();
-//         let ep2 = endpoint.clone();
-//         endpoint.online().await;
-
-//         let ping = Ping::new();
-
-//         let ticket = EndpointTicket::new(endpoint.addr());
-
-//         println!("ticket\n{:?}", ticket.to_string());
-
-//         let recv_router = Router::builder(ep).accept(iroh_ping::ALPN, ping).spawn();
-//         ep2.close().await;
-//         recv_router.shutdown().await?;
-//     }
-//     Ok(())
-// }
 
 pub async fn link(ticket: Option<String>) -> Result<()> {
     let user_db_conn = get_db_conn(DBTYPE::COMMON)?;
@@ -115,7 +96,7 @@ pub async fn link(ticket: Option<String>) -> Result<()> {
     let endpoint = create_endpoint(&user).await?;
     let is_online = is_online(&endpoint).await;
     let mut bootstrap_ids: Vec<EndpointId> = vec![];
-    // if ticket's there, then this is link enable sender's  command, e;se receiver end
+    // if ticket's there, then this is link enable sender's  command, else receiver end
     if let Some(ticket) = ticket {
         let (endpoint_id, mut did, mut nickname, topic_value) = parse_link_ticket(&ticket)?;
 
@@ -242,6 +223,7 @@ async fn subsribe_loop(
         if cfg!(debug_assertions) {
             println!("In {}:, some event {:?}", user.username, event);
         }
+        // TODO: Damn refactor the loop, its getting bigger
         if let Event::Received(msg) = event {
             let pub_key = msg.delivered_from;
             let msg = NetworkMessage::from_bytes(&msg.content)?;
@@ -333,12 +315,63 @@ async fn subsribe_loop(
                         msg.from_nickname, msg.from_did, reason
                     );
                 }
+                msg_body => {
+                    eprintln!("Invalid link message {:?}", msg_body)
+                }
             }
         }
     }
     Ok(())
 }
 
+async fn sync_subscribe_loop(
+    mut receiver: GossipReceiver,
+    sender: GossipSender,
+    user: accounts::User,
+    user_db_conn: Connection,
+    store: MemStore,
+    endpoint: Endpoint,
+) -> Result<()> {
+    while let Some(event) = receiver.try_next().await? {
+        if cfg!(debug_assertions) {
+            println!("SYNC_LOOP: In {}:, some event {:?}", user.username, event);
+        }
+        if let Event::Received(msg) = event {
+            let pub_key = msg.delivered_from;
+            let msg = NetworkMessage::from_bytes(&msg.content)?;
+            if !is_did_valid(&msg.from_did, pub_key)? {
+                eprintln!(
+                    "Incoming peer DID {} invalid, blocking request",
+                    msg.from_did
+                );
+                continue;
+            }
+            match msg.body {
+                MessageBody::SyncStart {
+                    last_row_counter: _,
+                } => {
+                    // TODO: REJECT SYNC_REQUESTS FROM NON_PEERS
+                    println!("Received sync start");
+                    on_sync_start_event(&sender, &store, &msg, pub_key, &user).await?;
+                }
+                MessageBody::SyncSendDeltaInfo {
+                    blob_ticket: _,
+                    last_row_counter: _,
+                } => {
+                    on_sync_send_delta_info(&sender, &store, &msg, pub_key, &user, &endpoint)
+                        .await?;
+                }
+                MessageBody::SyncEnd => {
+                    println!("sync end, can close");
+                }
+                msg_body => {
+                    println!("Invalid sync message {:?}", msg_body)
+                }
+            }
+        }
+    }
+    Ok(())
+}
 async fn create_endpoint(user: &accounts::User) -> Result<Endpoint> {
     // In release mode, we will build the endpoint using
     // tiles keypair in keychain
@@ -358,6 +391,115 @@ async fn create_endpoint(user: &accounts::User) -> Result<Endpoint> {
             .await
             .map_err(<BindError as Into<anyhow::Error>>::into)
     }
+}
+
+pub async fn sync(did: Option<String>) -> Result<()> {
+    let user_db_conn = get_db_conn(DBTYPE::COMMON)?;
+    let user = get_current_user(&user_db_conn)?;
+    let chat_db_conn = get_db_conn(DBTYPE::CHAT)?;
+    let endpoint = create_endpoint(&user).await?;
+    let is_online = is_online(&endpoint).await;
+    if let Some(receiver_did) = did {
+        // INITIATOR BLOCK
+        // The sync gossip topic is basically derived from the receiver's
+        // DID, so that initiator's can directly connect w/o any
+        // initial handshake
+        let receiver_pub_key = get_public_key_from_did(&receiver_did)?;
+        let receiver_endpoint_id = PublicKey::from_bytes(&receiver_pub_key)?;
+        println!("receiver endpoint id {:?}", receiver_endpoint_id);
+        let sync_topic = format!("sync:{}", receiver_did);
+        let sync_topic_id = create_topic_id(&sync_topic);
+
+        let (sender, mut receiver, recv_router, store) =
+            create_sync_network(&endpoint, sync_topic_id, vec![receiver_endpoint_id]).await?;
+        println!("\nConnecting to {}.....", receiver_did);
+        receiver.joined().await?;
+        tokio::spawn(sync_subscribe_loop(
+            receiver,
+            sender.clone(),
+            user.clone(),
+            user_db_conn,
+            store,
+            endpoint.clone(),
+        ));
+
+        // get the last_row_counter
+        //
+        let receiver_last_row_counter = get_last_row_counter(&chat_db_conn, &receiver_did)?;
+        let sync_start_msg = NetworkMessage::new(
+            &user,
+            is_online,
+            MessageBody::SyncStart {
+                last_row_counter: Some(receiver_last_row_counter),
+            },
+        );
+        sender.broadcast(sync_start_msg.to_bytes().into()).await?;
+
+        println!(
+            "\nSent sync start request to {}({})",
+            user.username, user.user_id
+        );
+        tokio::signal::ctrl_c().await?;
+        recv_router.shutdown().await?;
+    } else {
+        // RECEIVER BLOCK
+        // The sync gossip topic is basically derived from the receiver's
+        // public-key, so that initiator's can directly connect w/o any
+        // initial handshake
+
+        println!("endpointId {:?}", endpoint.id());
+        let did = if cfg!(debug_assertions) {
+            let pub_key = endpoint.id();
+            &get_did_from_public_key(pub_key.as_bytes())?
+        } else {
+            &user.user_id
+        };
+
+        let sync_topic = format!("sync:{}", did);
+        let sync_topic_id = create_topic_id(&sync_topic);
+        let (sender, receiver, recv_router, store) =
+            create_sync_network(&endpoint, sync_topic_id, vec![]).await?;
+
+        tokio::spawn(sync_subscribe_loop(
+            receiver,
+            sender.clone(),
+            user.clone(),
+            user_db_conn,
+            store,
+            endpoint.clone(),
+        ));
+        println!("Ready to accept sync requests from peers...");
+
+        // Since in dev, we use create endpoints, at the initiator side
+        // we can use the DID derived from this, instead of actual ones
+        // for the network to form correctly
+        if cfg!(debug_assertions) {
+            println!("Use this DID {} in dev for testing", did);
+        }
+        tokio::signal::ctrl_c().await?;
+        recv_router.shutdown().await?;
+    }
+    endpoint.close().await;
+    Ok(())
+}
+
+// Router with gossip and blob protocol
+async fn create_sync_network(
+    endpoint: &Endpoint,
+    topic_id: TopicId,
+    bootstrap_ids: Vec<iroh::PublicKey>,
+) -> Result<(GossipSender, GossipReceiver, Router, MemStore)> {
+    let gossip = Gossip::builder().spawn(endpoint.clone());
+    let store = MemStore::new();
+    let blobs = BlobsProtocol::new(&store, None);
+    let recv_router = Router::builder(endpoint.clone())
+        .accept(iroh_gossip::ALPN, gossip.clone())
+        .accept(iroh_blobs::ALPN, blobs.clone())
+        .spawn();
+
+    let (goss_sender, goss_receiver) = gossip.subscribe(topic_id, bootstrap_ids).await?.split();
+
+    Ok((goss_sender, goss_receiver, recv_router, store))
 }
 
 fn create_topic_id(topic_name: &str) -> TopicId {
@@ -461,5 +603,94 @@ fn is_did_valid(did: &str, pub_key: PublicKey) -> Result<bool> {
         Ok(get_did_from_public_key(&pub_key)? == did)
     }
 }
-// fn subsribe_mdns_events(mdns_events) {}
-//TODO: Add tests, can we get some from iroh reference?
+
+async fn on_sync_start_event(
+    sender: &GossipSender,
+    store: &MemStore,
+    msg: &NetworkMessage,
+    delivered_from: PublicKey,
+    user: &accounts::User,
+    // chat_db_conn: &Connection,
+) -> Result<()> {
+    println!("Received sync start");
+    if let MessageBody::SyncStart {
+        last_row_counter: lrc,
+    } = &msg.body
+    {
+        // let chat_delta = get_encoded_delta(
+        //     &chat_db_conn,
+        //     &user.user_id,
+        //     lrc.expect("Expected a valid last row counter"),
+        // );
+        // let chat_delta_bytes =
+        let rand_bytes = get_random_bytes_32().to_vec();
+        println!("rand bytes\n{:?}", rand_bytes);
+        let tag = store
+            .blobs()
+            .add_bytes(Into::<Bytes>::into(rand_bytes))
+            .await?;
+
+        let ticket = BlobTicket::new(delivered_from.into(), tag.hash, tag.format);
+        let delta_info = NetworkMessage::new(
+            &user,
+            msg.is_online,
+            MessageBody::SyncSendDeltaInfo {
+                blob_ticket: ticket.to_string(),
+                last_row_counter: Some(0),
+            },
+        );
+        sender.broadcast(delta_info.to_bytes().into()).await?;
+        println!("Sent blob ticket {}", ticket.to_string());
+    }
+    Ok(())
+}
+
+async fn on_sync_send_delta_info(
+    sender: &GossipSender,
+    store: &MemStore,
+    msg: &NetworkMessage,
+    delivered_from: PublicKey,
+    user: &accounts::User,
+    endpoint: &Endpoint,
+) -> Result<()> {
+    if let MessageBody::SyncSendDeltaInfo {
+        blob_ticket,
+        last_row_counter,
+    } = &msg.body
+    {
+        let ticket: BlobTicket = blob_ticket.parse()?;
+        let downloader = store.downloader(&endpoint);
+        downloader
+            .download(ticket.hash(), Some(delivered_from))
+            .await?;
+
+        let data = store.blobs().get_bytes(ticket.hash()).await?;
+        println!("rand bytes received {:?}", data.to_vec());
+
+        println!("finished download");
+        if let Some(_row_counter) = last_row_counter {
+            let rand_bytes = get_random_bytes_32().to_vec();
+            println!("rand bytes\n{:?}", rand_bytes);
+            let tag = store
+                .blobs()
+                .add_bytes(Into::<Bytes>::into(rand_bytes))
+                .await?;
+
+            let ticket = BlobTicket::new(delivered_from.into(), tag.hash, tag.format);
+            let delta_info = NetworkMessage::new(
+                &user,
+                msg.is_online,
+                MessageBody::SyncSendDeltaInfo {
+                    blob_ticket: ticket.to_string(),
+                    last_row_counter: None,
+                },
+            );
+            sender.broadcast(delta_info.to_bytes().into()).await?;
+        } else {
+            let stop_req = NetworkMessage::new(&user, msg.is_online, MessageBody::SyncEnd);
+            sender.broadcast(stop_req.to_bytes().into()).await?;
+            println!("sync end, can close");
+        }
+    }
+    Ok(())
+}
