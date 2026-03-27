@@ -420,6 +420,10 @@ pub async fn sync(did: Option<String>) -> Result<()> {
     let user = get_current_user(&user_db_conn)?;
     let endpoint = create_endpoint(&user).await?;
     let is_online = is_online(&endpoint).await;
+    if !is_online {
+        let mdns = address_lookup::mdns::MdnsAddressLookup::builder().build(endpoint.id())?;
+        endpoint.address_lookup()?.add(mdns.clone());
+    }
     let tx = create_sync_channel();
     if let Some(receiver_did) = did {
         // INITIATOR BLOCK
