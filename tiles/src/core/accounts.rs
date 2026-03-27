@@ -353,7 +353,7 @@ fn parse_user_from_row(row: &Row<'_>) -> Result<User, rusqlite::Error> {
         updated_at: updated_at as u64,
     })
 }
-/// Gets a peer by its DID
+/// Gets a user account by its DID
 pub fn get_user_info(conn: &Connection, did: &str) -> Result<User> {
     let mut fetch_user = conn.prepare("select id, user_id, username, account_type, active_profile, root, created_at, updated_at from users    where user_id = ?1")?;
 

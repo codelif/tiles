@@ -4,7 +4,3 @@ members = [
     "tilekit",
     "tiles",
 ]
-
-
-[workspace.lints.clippy]
-pedantic = "warn"

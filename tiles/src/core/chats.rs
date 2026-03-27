@@ -199,12 +199,13 @@ pub fn apply_delta(chat_conn: &mut Connection, delta_chats: &Vec<Chats>) -> Resu
                 Err(rusqlite::Error::SqliteFailure(_, Some(reason)))
                     if reason == "UNIQUE constraint failed: chats.id" =>
                 {
-                    log::warn!(
+                    log::error!(
                         "err in writing row {:?}, already exists, skipping",
                         &chat.id
                     );
                 }
-                _ => (),
+                Err(err) => log::error!("err in writing row due to {:?}", err),
+                Ok(_) => (),
             }
         }
     }

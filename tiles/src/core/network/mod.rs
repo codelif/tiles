@@ -47,6 +47,9 @@ use crate::core::{
 use owo_colors::OwoColorize;
 use sha2::{Digest, Sha256};
 
+// 50 mb
+const MAX_DOWNLOADED_BYTES: usize = 50 * 1024 * 1024;
+
 const DEVICE_LINK_LOCAL_TOPIC: &str = "com.tilesprivacy.tiles.link";
 #[derive(serde::Serialize, serde::Deserialize)]
 struct NetworkMessage {
@@ -424,6 +427,7 @@ pub async fn sync(did: Option<String>) -> Result<()> {
         let mdns = address_lookup::mdns::MdnsAddressLookup::builder().build(endpoint.id())?;
         endpoint.address_lookup()?.add(mdns.clone());
     }
+
     let tx = create_sync_channel();
     if let Some(receiver_did) = did {
         // INITIATOR BLOCK
@@ -735,8 +739,16 @@ async fn on_sync_send_delta_info(
             .await?;
 
         let data = store.blobs().get_bytes(ticket.hash()).await?;
-
         info!("Downloaded data diff");
+
+        if data.len() > MAX_DOWNLOADED_BYTES {
+            log::error!(
+                "Downloaded delta is greater than {}, skipping the sync",
+                MAX_DOWNLOADED_BYTES
+            );
+            return Ok(());
+        }
+
         let (sendx, recvx) = oneshot::channel();
         let sync_op_msg = SyncOp::ApplyDelta {
             delta: data.to_vec(),
