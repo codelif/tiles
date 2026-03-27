@@ -31,3 +31,5 @@ bundle_model_pkg:
 bundle_pkg_full:
     ./pkg/build.sh
     ./pkg/build_full.sh
+
+# runtiles: RUST_LOG=tiles=info,iroh=off cargo run

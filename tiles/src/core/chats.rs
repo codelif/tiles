@@ -6,12 +6,16 @@
 use std::str::FromStr;
 
 use crate::core::accounts::User;
+use crate::core::storage::db::get_db_conn;
 use crate::runtime::mlx::ChatResponse;
 use crate::utils::get_unix_time_now;
-use anyhow::Result;
+use anyhow::{Result, anyhow};
+use log::info;
 use rusqlite::types::FromSqlError;
 use rusqlite::{Connection, params};
 use tilekit::modelfile::Role;
+use tokio::sync::mpsc::{self, Sender};
+use tokio::sync::oneshot;
 use uuid::Uuid;
 // model the chats table
 
@@ -47,6 +51,23 @@ pub struct Chats {
     created_at: u64,
     updated_at: u64,
     row_counter: i64,
+}
+
+type Responder<T> = oneshot::Sender<T>;
+pub enum SyncOp {
+    GetLastRowCounter {
+        user_id: String,
+        resp: Responder<Result<i64>>,
+    },
+    GetEncodedData {
+        user_id: String,
+        last_row_counter: i64,
+        resp: Responder<Result<Vec<u8>>>,
+    },
+    ApplyDelta {
+        delta: Vec<u8>,
+        resp: Responder<Result<()>>,
+    },
 }
 
 pub fn save_chat(
@@ -178,7 +199,7 @@ pub fn apply_delta(chat_conn: &mut Connection, delta_chats: &Vec<Chats>) -> Resu
                 Err(rusqlite::Error::SqliteFailure(_, Some(reason)))
                     if reason == "UNIQUE constraint failed: chats.id" =>
                 {
-                    log::error!(
+                    log::warn!(
                         "err in writing row {:?}, already exists, skipping",
                         &chat.id
                     );
@@ -199,6 +220,41 @@ pub fn get_encoded_delta(
 ) -> Result<Vec<u8>> {
     let delta = get_delta(conn, user_id, last_row_couter)?;
     Ok(encode_delta_to_bytes(&delta))
+}
+
+pub fn create_sync_channel() -> Sender<SyncOp> {
+    let (tx, mut rx) = mpsc::channel::<SyncOp>(32);
+
+    tokio::spawn(async move {
+        let mut chat_db_conn = get_db_conn(super::storage::db::DBTYPE::CHAT)?;
+        info!("DB sync channel ready..");
+        while let Some(msg) = rx.recv().await {
+            match msg {
+                SyncOp::GetLastRowCounter { user_id, resp } => {
+                    let counter = get_last_row_counter(&chat_db_conn, &user_id);
+                    resp.send(counter)
+                        .map_err(|_op| anyhow!("Error sending counter"))?;
+                }
+                SyncOp::GetEncodedData {
+                    user_id,
+                    last_row_counter,
+                    resp,
+                } => {
+                    let encoded_res = get_encoded_delta(&chat_db_conn, &user_id, last_row_counter);
+                    resp.send(encoded_res)
+                        .map_err(|_op| anyhow!("Error sending encoded_delta"))?;
+                }
+                SyncOp::ApplyDelta { delta, resp } => {
+                    let chat_rows = decode_delta_from_bytes(&delta)?;
+                    let apply_res = apply_delta(&mut chat_db_conn, &chat_rows);
+                    resp.send(apply_res)
+                        .map_err(|_| anyhow!("Error sending apply delta response"))?;
+                }
+            }
+        }
+        Ok::<(), anyhow::Error>(())
+    });
+    tx
 }
 
 fn encode_delta_to_bytes(delta_chats: &Vec<Chats>) -> Vec<u8> {
@@ -597,7 +653,7 @@ mod tests {
 
     fn create_user() -> User {
         User {
-            id: Uuid::now_v7(),
+            id: Uuid::now_v7().to_string(),
             user_id: String::from("did"),
             username: String::from("nickname"),
             account_type: ACCOUNT::LOCAL,
@@ -615,7 +671,7 @@ mod tests {
     }
     fn create_user_by_id(user_id: &str) -> User {
         User {
-            id: Uuid::now_v7(),
+            id: Uuid::now_v7().to_string(),
             user_id: String::from(user_id),
             username: String::from("nickname"),
             account_type: ACCOUNT::LOCAL,

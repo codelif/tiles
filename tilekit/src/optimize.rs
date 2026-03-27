@@ -120,7 +120,7 @@ pub async fn optimize(
     println!("Optimizing Modelfile: {}", modelfile_path);
 
     // 1. Read Modelfile
-    let content = fs::read_to_string(&modelfile_path)
+    let content = fs::read_to_string(modelfile_path)
         .map_err(|e| format!("Error reading Modelfile: {}", e))?;
 
     let mut modelfile: Modelfile = content

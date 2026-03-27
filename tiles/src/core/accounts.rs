@@ -2,7 +2,7 @@
 // Stuff related to account and identity system
 use anyhow::{Result, anyhow};
 use iroh::SecretKey;
-use rusqlite::{Connection, types::FromSqlError};
+use rusqlite::{Connection, Row, types::FromSqlError};
 use std::{
     fmt::Display,
     time::{SystemTime, UNIX_EPOCH},
@@ -71,7 +71,7 @@ impl Display for ACCOUNT {
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct User {
-    pub id: uuid::Uuid,
+    pub id: String,
     pub user_id: String,
     pub username: String,
     pub active_profile: bool,
@@ -208,12 +208,11 @@ pub fn get_current_user(conn: &Connection) -> Result<User> {
 
     fetch_current_user
         .query_one([], |row| {
-            let id: String = row.get(0)?;
             let account_type: String = row.get(3)?;
             let created_at: f64 = row.get(6)?;
             let updated_at: f64 = row.get(7)?;
             Ok(User {
-                id: Uuid::try_parse(&id).map_err(FromSqlError::other)?,
+                id: row.get(0)?,
                 user_id: row.get(1)?,
                 username: row.get(2)?,
                 account_type: ACCOUNT::try_from(account_type).map_err(FromSqlError::other)?,
@@ -232,12 +231,11 @@ pub fn get_user(conn: &Connection, did: &str) -> Result<User> {
 
     fetch_current_user
         .query_one([did], |row| {
-            let id: String = row.get(0)?;
             let account_type: String = row.get(3)?;
             let created_at: f64 = row.get(6)?;
             let updated_at: f64 = row.get(7)?;
             Ok(User {
-                id: Uuid::try_parse(&id).map_err(FromSqlError::other)?,
+                id: row.get(0)?,
                 user_id: row.get(1)?,
                 username: row.get(2)?,
                 account_type: ACCOUNT::try_from(account_type).map_err(FromSqlError::other)?,
@@ -256,7 +254,7 @@ pub fn save_root_account_db() -> Result<()> {
     let config = get_or_create_config()?;
     let root_user = get_root_user_details(&config)?;
     let user = User {
-        id: Uuid::now_v7(),
+        id: Uuid::now_v7().to_string(),
         user_id: root_user.id,
         username: root_user.nickname,
         account_type: ACCOUNT::LOCAL,
@@ -290,7 +288,7 @@ pub fn save_root_account_db() -> Result<()> {
 // we will wait for it until we solve the sync part
 pub fn save_peer_account_db(db_conn: &Connection, user_id: &str, nickname: &str) -> Result<()> {
     let user = User {
-        id: Uuid::now_v7(),
+        id: Uuid::now_v7().to_string(),
         user_id: String::from(user_id),
         username: String::from(nickname),
         account_type: ACCOUNT::PEER,
@@ -320,16 +318,6 @@ pub fn save_peer_account_db(db_conn: &Connection, user_id: &str, nickname: &str)
     Ok(())
 }
 
-pub fn get_user_by_user_id(conn: &Connection, user_id: String) -> Result<()> {
-    let mut fetch_root_user = conn.prepare("select id from users where user_id = ?1")?;
-
-    match fetch_root_user.query_one([user_id], |_row| Ok(())) {
-        Ok(_) => Ok(()),
-        Err(rusqlite::Error::QueryReturnedNoRows) => Err(anyhow!("User doesnt exist")),
-        Err(_err) => Err(anyhow!("Fetching user from db failed")),
-    }
-}
-
 fn create_root_user(root_user_config: &Table, nickname: Option<String>) -> Result<Table> {
     let mut root_user_table = root_user_config.clone();
     let app_name = if cfg!(debug_assertions) {
@@ -349,27 +337,41 @@ fn create_root_user(root_user_config: &Table, nickname: Option<String>) -> Resul
     }
 }
 
+fn parse_user_from_row(row: &Row<'_>) -> Result<User, rusqlite::Error> {
+    let account_type: String = row.get(3)?;
+    let created_at: f64 = row.get(6)?;
+    let updated_at: f64 = row.get(7)?;
+    Ok(User {
+        id: row.get(0)?,
+        user_id: row.get(1)?,
+        username: row.get(2)?,
+        account_type: ACCOUNT::try_from(account_type).map_err(FromSqlError::other)?,
+        active_profile: row.get(4)?,
+        root: row.get(5)?,
+
+        created_at: created_at as u64,
+        updated_at: updated_at as u64,
+    })
+}
+/// Gets a peer by its DID
+pub fn get_user_info(conn: &Connection, did: &str) -> Result<User> {
+    let mut fetch_user = conn.prepare("select id, user_id, username, account_type, active_profile, root, created_at, updated_at from users    where user_id = ?1")?;
+
+    match fetch_user.query_one([did], parse_user_from_row) {
+        Ok(user) => Ok(user),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Err(anyhow!("Peer doesnt exist")),
+        Err(err) => {
+            log::error!("{:?}", err);
+            Err(anyhow!("Fetching user from db failed due to {:?}", err))
+        }
+    }
+}
+
 pub fn get_peer_list(db_conn: &Connection) -> Result<Vec<User>> {
     let mut stmt= db_conn.prepare("select id, user_id, username, account_type, active_profile, root, created_at, updated_at  from users where account_type != \'local\'")?;
 
     let user_rows = stmt
-        .query_map([], |row| {
-            let id: String = row.get(0)?;
-            let account_type: String = row.get(3)?;
-            let created_at: f64 = row.get(6)?;
-            let updated_at: f64 = row.get(7)?;
-            Ok(User {
-                id: Uuid::try_parse(&id).map_err(FromSqlError::other)?,
-                user_id: row.get(1)?,
-                username: row.get(2)?,
-                account_type: ACCOUNT::try_from(account_type).map_err(FromSqlError::other)?,
-                active_profile: row.get(4)?,
-                root: row.get(5)?,
-
-                created_at: created_at as u64,
-                updated_at: updated_at as u64,
-            })
-        })
+        .query_map([], parse_user_from_row)
         .map_err(<rusqlite::Error as Into<anyhow::Error>>::into)?;
 
     let mut peer_list: Vec<User> = vec![];
@@ -407,6 +409,28 @@ pub fn get_app_secret_key(did: &str) -> Result<SecretKey> {
     Ok(SecretKey::from_bytes(&signing_key))
 }
 
+pub fn create_dummy_user() -> User {
+    let id = Uuid::now_v7().to_string();
+    let chunk = id.split('-').collect::<Vec<&str>>()[0];
+    let user_id = format!("did:key:{}", id.split('-').collect::<Vec<&str>>()[0]);
+    let username = format!("nickname-{}", chunk);
+    User {
+        id,
+        user_id,
+        username,
+        account_type: ACCOUNT::PEER,
+        active_profile: true,
+        root: true,
+        created_at: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time went backwards")
+            .as_secs(),
+        updated_at: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time went backwards")
+            .as_secs(),
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -657,7 +681,7 @@ mod tests {
     fn test_get_current_user_valid() {
         let conn = setup_db_schema();
         let user = User {
-            id: Uuid::now_v7(),
+            id: Uuid::now_v7().to_string(),
             user_id: String::from("did"),
             username: String::from("nickname"),
             account_type: ACCOUNT::LOCAL,
@@ -688,28 +712,6 @@ mod tests {
         }
 
         assert!(get_current_user(&conn).is_ok())
-    }
-
-    #[test]
-    fn test_get_current_user_invalid_uuid_fails() {
-        let conn = setup_db_schema();
-        conn.execute(
-            "insert into users (id, user_id, username, active_profile, account_type, root, created_at, updated_at)
-            values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-            (
-                "not-a-uuid",
-                "did:key:test",
-                "nickname",
-                true,
-                "local",
-                true,
-                1_i64,
-                1_i64,
-            ),
-        )
-        .unwrap();
-
-        assert!(get_current_user(&conn).is_err());
     }
 
     #[test]
@@ -758,7 +760,7 @@ mod tests {
 
     fn create_user(conn: &Connection, account_type: ACCOUNT) -> User {
         let user = User {
-            id: Uuid::now_v7(),
+            id: Uuid::now_v7().to_string(),
             user_id: String::from("did"),
             username: String::from("nickname"),
             account_type,
@@ -819,5 +821,14 @@ mod tests {
         let local_user = create_user(&conn, ACCOUNT::LOCAL);
 
         assert!(unlink(&conn, &local_user.user_id).is_err())
+    }
+
+    #[test]
+    fn test_get_user_info() {
+        let conn = setup_db_schema();
+        let _local_user = create_user(&conn, ACCOUNT::LOCAL);
+        save_peer_account_db(&conn, "did:jey:varathan", "varathan").unwrap();
+        let user_info = get_user_info(&conn, "did:jey:varathan");
+        assert!(user_info.is_ok())
     }
 }

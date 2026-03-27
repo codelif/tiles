@@ -1,4 +1,4 @@
-#![warn(clippy::pedantic)]
+// #![warn(clippy::pedantic)]
 
 use std::error::Error;
 
@@ -185,7 +185,7 @@ enum LinkCommands {
 }
 #[tokio::main]
 pub async fn main() -> Result<(), Box<dyn Error>> {
-    env_logger::init();
+    env_logger::try_init()?;
     let cli = Cli::parse();
     let runtime = build_runtime();
     match cli.command {
@@ -279,3 +279,11 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
     }
     Ok(())
 }
+
+// fn build_logger() -> Result<(), SetLoggerError> {
+//     let mut env_builder = env_logger::Builder::new();
+//     if !cfg!(debug_assertions) {
+//         env_builder.filter_module("iroh", log::LevelFilter::Off);
+//     }
+//     env_builder.try_init()
+// }
