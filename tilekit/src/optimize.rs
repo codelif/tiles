@@ -113,14 +113,14 @@ impl Evaluator for PromptOptimizerModule {
 }
 
 pub async fn optimize(
-    modelfile_path: String,
+    modelfile_path: &str,
     data_path: Option<String>,
-    model: String,
+    model: &str,
 ) -> Result<Modelfile, String> {
     println!("Optimizing Modelfile: {}", modelfile_path);
 
     // 1. Read Modelfile
-    let content = fs::read_to_string(&modelfile_path)
+    let content = fs::read_to_string(modelfile_path)
         .map_err(|e| format!("Error reading Modelfile: {}", e))?;
 
     let mut modelfile: Modelfile = content
@@ -136,12 +136,16 @@ pub async fn optimize(
     println!("Current SYSTEM prompt: \"{}\"", system_prompt);
 
     // 2. Configure DSRs
-    let lm = LM::builder().model(model).build().await.map_err(|e| {
-        format!(
-            "Error configuring LM: {}. Make sure appropriate API keys are set.",
-            e
-        )
-    })?;
+    let lm = LM::builder()
+        .model(model.to_owned())
+        .build()
+        .await
+        .map_err(|e| {
+            format!(
+                "Error configuring LM: {}. Make sure appropriate API keys are set.",
+                e
+            )
+        })?;
 
     configure(lm, ChatAdapter);
 
@@ -336,12 +340,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_optimize_missing_file() {
-        let result = optimize(
-            "nonexistent_file.modelfile".to_string(),
-            None,
-            "openai:gpt-4o-mini".to_string(),
-        )
-        .await;
+        let result = optimize("nonexistent_file.modelfile", None, "openai:gpt-4o-mini").await;
 
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Error reading Modelfile"));
@@ -355,9 +354,9 @@ mod tests {
         std::fs::write(&temp_file, "FROM llama3.2\n").unwrap();
 
         let result = optimize(
-            temp_file.to_string_lossy().to_string(),
+            temp_file.to_str().expect("File path is invalid"),
             None,
-            "openai:gpt-4o-mini".to_string(),
+            "openai:gpt-4o-mini",
         )
         .await;
 

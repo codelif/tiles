@@ -38,7 +38,7 @@ impl Display for ParamValue {
     }
 }
 
-#[derive(Debug, Clone, Copy, serde::Serialize)]
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Role {
     System,
@@ -61,14 +61,28 @@ impl<'a> Display for Output<'a> {
     }
 }
 
+#[derive(Debug)]
+pub struct RoleError {
+    pub error: String,
+}
+
+impl std::error::Error for RoleError {}
+impl Display for RoleError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.error)
+    }
+}
+
 impl FromStr for Role {
-    type Err = String;
+    type Err = RoleError;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
             "system" => Ok(Role::System),
             "user" => Ok(Role::User),
             "assistant" => Ok(Role::Assistant),
-            _ => Err("Invalid Role".to_owned()),
+            _ => Err(RoleError {
+                error: "Invalid Role".to_owned(),
+            }),
         }
     }
 }

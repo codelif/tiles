@@ -96,8 +96,7 @@ impl ConfigProvider for DefaultProvider {
             .get("data")
             .expect("Failed to get data")
             .as_table()
-            .expect("Failed to parse to table (data)")
-            .clone();
+            .expect("Failed to parse to table (data)");
 
         if let Some(path) = data_config
             .get("path")

@@ -25,7 +25,6 @@ use std::time::Duration;
 use tilekit::modelfile::Modelfile;
 use tilekit::modelfile::Role;
 use tokio::time::sleep;
-use uuid::Uuid;
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct BenchmarkMetrics {
@@ -56,7 +55,7 @@ pub struct ChatResponse {
     pub reply: String,
     pub code: String,
     pub prev_response_id: String,
-    pub parent_chat_id: Option<Uuid>,
+    pub parent_chat_id: Option<String>,
     pub metrics: Option<BenchmarkMetrics>,
 }
 
