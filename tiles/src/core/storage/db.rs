@@ -15,6 +15,11 @@ pub enum DBTYPE {
     CHAT,
 }
 
+pub struct Dbconn {
+    pub chat: Connection,
+    pub common: Connection,
+}
+
 // DEFINE MIGRATIONS
 
 // TODO: add the schema doc
@@ -67,11 +72,16 @@ const CHATS_MIGRATION_ARRAY: &[M] = &[
 
 const CHATS_MIGRATIONS: Migrations = Migrations::from_slice(CHATS_MIGRATION_ARRAY);
 
-pub fn init_db() -> Result<()> {
+pub fn init_db() -> Result<Dbconn> {
     let mut chat_conn = get_db_conn(DBTYPE::CHAT)?;
     let mut common_conn = get_db_conn(DBTYPE::COMMON)?;
 
-    apply_migrations(&mut common_conn, &mut chat_conn)
+    apply_migrations(&mut common_conn, &mut chat_conn)?;
+
+    Ok(Dbconn {
+        chat: chat_conn,
+        common: common_conn,
+    })
 }
 
 pub fn get_db_conn(db_type: DBTYPE) -> Result<Connection> {

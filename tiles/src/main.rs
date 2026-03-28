@@ -5,8 +5,9 @@ use std::error::Error;
 use clap::{Args, Parser, Subcommand};
 use tiles::{
     core::{
-        self,
+        self, init,
         network::{link, sync},
+        storage::db::init_db,
     },
     daemon::{start_cmd, start_server, stop_cmd},
     runtime::{RunArgs, build_runtime},
@@ -188,6 +189,8 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
     env_logger::try_init()?;
     let cli = Cli::parse();
     let runtime = build_runtime();
+    let db_conn = init_db()?;
+
     match cli.command {
         None => {
             // Running tiles without subcommand - launch default model with flags
@@ -207,7 +210,8 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
                     let _ = start_cmd(None).await;
                 });
             }
-            core::init().inspect_err(|e| eprintln!("Tiles core init failed due to {:?}", e))?;
+            core::init(&db_conn)
+                .inspect_err(|e| eprintln!("Tiles core init failed due to {:?}", e))?;
             if !cli.flags.no_repl {
                 commands::run(&runtime, run_args)
                     .await
@@ -223,7 +227,8 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
                 relay_count: flags.relay_count,
                 memory: flags.memory,
             };
-            core::init().inspect_err(|e| eprintln!("Tiles core init failed due to {:?}", e))?;
+            core::init(&db_conn)
+                .inspect_err(|e| eprintln!("Tiles core init failed due to {:?}", e))?;
             commands::run(&runtime, run_args)
                 .await
                 .inspect_err(|e| eprintln!("Tiles failed to run due to {:?}", e))?;

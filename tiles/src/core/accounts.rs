@@ -12,7 +12,7 @@ use toml::Table;
 use uuid::Uuid;
 
 use crate::{
-    core::storage::db::{DBTYPE, get_db_conn},
+    core::storage::db::{DBTYPE, Dbconn, get_db_conn},
     utils::config::{get_or_create_config, save_config},
 };
 const ROOT_USER_CONFIG_KEY: &str = "root-user";
@@ -249,8 +249,7 @@ pub fn get_user(conn: &Connection, did: &str) -> Result<User> {
         .map_err(<rusqlite::Error as Into<anyhow::Error>>::into)
 }
 
-pub fn save_root_account_db() -> Result<()> {
-    let conn = get_db_conn(DBTYPE::COMMON)?;
+pub fn save_root_account_db(db_conn: &Dbconn) -> Result<()> {
     let config = get_or_create_config()?;
     let root_user = get_root_user_details(&config)?;
     let user = User {
@@ -270,11 +269,13 @@ pub fn save_root_account_db() -> Result<()> {
             .as_secs(),
     };
 
-    let mut fetch_root_user = conn.prepare("select id from users where root = true")?;
+    let mut fetch_root_user = db_conn
+        .common
+        .prepare("select id from users where root = true")?;
 
     match fetch_root_user.query_one([], |_row| Ok(())) {
         Err(rusqlite::Error::QueryReturnedNoRows) => {
-            conn.execute("insert into users (id, user_id, username, active_profile, account_type, root) values
+            db_conn.common.execute("insert into users (id, user_id, username, active_profile, account_type, root) values
                 (?1, ?2, ?3,?4, ?5, ?6)", (&user.id.to_string(), &user.user_id, &user.username, &user.active_profile,
                     user.account_type.to_string(),  &user.root))?;
             Ok(())
