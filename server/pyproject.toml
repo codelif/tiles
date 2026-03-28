@@ -6,9 +6,9 @@ requires-python = "==3.13.*"
 dependencies = [
     "fastapi",
     "uvicorn",
-    "mlx-lm",
+    "mlx-lm==0.31.0",
     "black",
-    "huggingface-hub>=0.34.0",
+    "huggingface-hub==1.8.0",
     "openai-harmony==0.0.8",
     "openresponses-types"
 ]

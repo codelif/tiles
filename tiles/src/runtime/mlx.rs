@@ -550,9 +550,13 @@ fn convert_to_chat_response(
 }
 
 fn extract_reply(content: &str, memory_mode: bool) -> String {
+    println!("{}", content);
     if !memory_mode && content.contains("**[Answer]**") {
         let list_a = content.split("**[Answer]**").collect::<Vec<&str>>();
         list_a[1].to_owned()
+    } else if !memory_mode {
+        // NOTE: A hack to prevent loop when we dont receive above repli format
+        "END".to_owned()
     } else if content.contains("<reply>") && content.contains("</reply>") {
         let list_a = content.split("<reply>").collect::<Vec<&str>>();
         let list_b = list_a[1].split("</reply>").collect::<Vec<&str>>();
