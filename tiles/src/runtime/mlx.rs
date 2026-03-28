@@ -255,8 +255,8 @@ async fn start_repl(
         .ok_or_else(|| anyhow!("Error getting FROM from modelfile due to"))?;
 
     println!("Running {} in interactive mode", modelname);
-    let common_db_conn = get_db_conn(crate::core::storage::db::DBTYPE::COMMON)?;
-    let chat_db_conn = get_db_conn(crate::core::storage::db::DBTYPE::CHAT)?;
+    let common_db_conn = get_db_conn(&crate::core::storage::db::DBTYPE::COMMON)?;
+    let chat_db_conn = get_db_conn(&crate::core::storage::db::DBTYPE::CHAT)?;
     let current_user = get_current_user(&common_db_conn)?;
 
     let config = Config::builder().auto_add_history(true).build();
