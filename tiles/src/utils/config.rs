@@ -298,6 +298,14 @@ pub fn get_or_create_model_download_path() -> Result<PathBuf> {
     Ok(model_dir)
 }
 
+pub fn get_app_name() -> String {
+    if cfg!(debug_assertions) {
+        "tiles_dev".to_owned()
+    } else {
+        "tiles".to_owned()
+    }
+}
+
 //TODO: Add more tests for config.toml
 #[cfg(test)]
 mod tests {

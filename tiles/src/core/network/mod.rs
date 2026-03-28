@@ -100,7 +100,7 @@ enum MessageBody {
 }
 
 pub async fn link(ticket: Option<String>) -> Result<()> {
-    let user_db_conn = get_db_conn(DBTYPE::COMMON)?;
+    let user_db_conn = get_db_conn(&DBTYPE::COMMON)?;
     let user = get_current_user(&user_db_conn)?;
     let endpoint = create_endpoint(&user).await?;
     let is_online = is_online(&endpoint).await;
@@ -419,7 +419,7 @@ async fn create_endpoint(user: &accounts::User) -> Result<Endpoint> {
 }
 
 pub async fn sync(did: Option<String>) -> Result<()> {
-    let user_db_conn = get_db_conn(DBTYPE::COMMON)?;
+    let user_db_conn = get_db_conn(&DBTYPE::COMMON)?;
     let user = get_current_user(&user_db_conn)?;
     let endpoint = create_endpoint(&user).await?;
     let is_online = is_online(&endpoint).await;

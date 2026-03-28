@@ -46,6 +46,24 @@ pub fn get_secret_key(app: &str, did: &str) -> Result<SecretKey> {
     Ok(signing_key.to_bytes())
 }
 
+pub fn create_and_save_passkey(app: &str, key: &str) -> Result<String> {
+    let rand_bytes = get_random_bytes_32();
+    let rand_hex: String = rand_bytes.iter().map(|b| format!("{:02x}", b)).collect();
+    let entry = Entry::new(app, key)?;
+    entry.set_secret(rand_bytes.as_slice())?;
+    Ok(rand_hex)
+}
+
+pub fn get_passkey(app: &str, key: &str) -> Result<String> {
+    let entry = Entry::new(app, key)?;
+    let secret = entry.get_secret()?;
+    Ok(to_hex(secret.as_slice()))
+}
+
+fn to_hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{:02x}", b)).collect()
+}
+
 pub fn get_public_key_from_did(did: &str) -> Result<[u8; 32]> {
     let ed_did = Ed25519Did::from_str(did)?;
     Ok(ed_did.0.to_bytes())

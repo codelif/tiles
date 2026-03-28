@@ -13,7 +13,7 @@ use uuid::Uuid;
 
 use crate::{
     core::storage::db::{DBTYPE, get_db_conn},
-    utils::config::{get_or_create_config, save_config},
+    utils::config::{get_app_name, get_or_create_config, save_config},
 };
 const ROOT_USER_CONFIG_KEY: &str = "root-user";
 
@@ -250,7 +250,7 @@ pub fn get_user(conn: &Connection, did: &str) -> Result<User> {
 }
 
 pub fn save_root_account_db() -> Result<()> {
-    let conn = get_db_conn(DBTYPE::COMMON)?;
+    let conn = get_db_conn(&DBTYPE::COMMON)?;
     let config = get_or_create_config()?;
     let root_user = get_root_user_details(&config)?;
     let user = User {
@@ -320,12 +320,8 @@ pub fn save_peer_account_db(db_conn: &Connection, user_id: &str, nickname: &str)
 
 fn create_root_user(root_user_config: &Table, nickname: Option<String>) -> Result<Table> {
     let mut root_user_table = root_user_config.clone();
-    let app_name = if cfg!(debug_assertions) {
-        "tiles_dev"
-    } else {
-        "tiles"
-    };
-    match create_identity(app_name) {
+    let app_name = get_app_name();
+    match create_identity(&app_name) {
         Ok(did) => {
             root_user_table.insert("id".to_owned(), toml::Value::String(did));
             if let Some(nickname) = nickname {
@@ -400,12 +396,8 @@ pub fn unlink(db_conn: &Connection, user_id: &str) -> Result<()> {
 }
 
 pub fn get_app_secret_key(did: &str) -> Result<SecretKey> {
-    let app_name = if cfg!(debug_assertions) {
-        "tiles_dev"
-    } else {
-        "tiles"
-    };
-    let signing_key = get_secret_key(app_name, did)?;
+    let app_name = get_app_name();
+    let signing_key = get_secret_key(&app_name, did)?;
     Ok(SecretKey::from_bytes(&signing_key))
 }
 
