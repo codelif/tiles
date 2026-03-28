@@ -339,7 +339,7 @@ fn get_account_not_created_msg() -> String {
 }
 
 pub fn show_peers() -> Result<()> {
-    let db_conn = get_db_conn(core::storage::db::DBTYPE::COMMON)?;
+    let db_conn = get_db_conn(&core::storage::db::DBTYPE::COMMON)?;
 
     let peers = get_peer_list(&db_conn)?;
 
@@ -351,7 +351,7 @@ pub fn show_peers() -> Result<()> {
 }
 
 pub fn unlink_peer(user_id: &str) -> Result<()> {
-    let db_conn = get_db_conn(core::storage::db::DBTYPE::COMMON)?;
+    let db_conn = get_db_conn(&core::storage::db::DBTYPE::COMMON)?;
 
     if let Err(err) = unlink(&db_conn, user_id) {
         println!("{:?}", err)

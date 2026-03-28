@@ -227,7 +227,7 @@ pub fn create_sync_channel() -> Sender<SyncOp> {
     let (tx, mut rx) = mpsc::channel::<SyncOp>(32);
 
     tokio::spawn(async move {
-        let mut chat_db_conn = get_db_conn(super::storage::db::DBTYPE::CHAT)?;
+        let mut chat_db_conn = get_db_conn(&super::storage::db::DBTYPE::CHAT)?;
         info!("DB sync channel ready..");
         while let Some(msg) = rx.recv().await {
             match msg {

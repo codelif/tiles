@@ -6,10 +6,14 @@
 use std::path::PathBuf;
 
 use anyhow::{Result, anyhow};
+use log::info;
 use rusqlite::Connection;
+use tilekit::accounts::{create_and_save_passkey, get_passkey};
 
-use crate::utils::config::{ConfigProvider, DefaultProvider};
+use crate::utils::config::{ConfigProvider, DefaultProvider, get_app_name};
 use rusqlite_migration::{M, Migrations};
+
+#[derive(Debug)]
 pub enum DBTYPE {
     COMMON,
     CHAT,
@@ -73,8 +77,8 @@ const CHATS_MIGRATION_ARRAY: &[M] = &[
 const CHATS_MIGRATIONS: Migrations = Migrations::from_slice(CHATS_MIGRATION_ARRAY);
 
 pub fn init_db() -> Result<Dbconn> {
-    let mut chat_conn = get_db_conn(DBTYPE::CHAT)?;
-    let mut common_conn = get_db_conn(DBTYPE::COMMON)?;
+    let mut chat_conn = get_db_conn(&DBTYPE::CHAT)?;
+    let mut common_conn = get_db_conn(&DBTYPE::COMMON)?;
 
     apply_migrations(&mut common_conn, &mut chat_conn)?;
 
@@ -84,12 +88,16 @@ pub fn init_db() -> Result<Dbconn> {
     })
 }
 
-pub fn get_db_conn(db_type: DBTYPE) -> Result<Connection> {
+pub fn get_db_conn(db_type: &DBTYPE) -> Result<Connection> {
     let db_path = get_db_path(db_type)?;
     let conn = Connection::open(db_path)
         .map_err(|e| anyhow!("Failed to create db connection due to {:?}", e))?;
 
+    let passkey = fetch_passkey()?;
+    let cipher_format = format!("x'{}'", passkey);
+    conn.pragma_update(None, "KEY", cipher_format)?;
     conn.pragma_update(None, "journal_mode", "WAL")?;
+    info!("DB {:?} Opened", db_type);
     Ok(conn)
 }
 
@@ -99,11 +107,21 @@ fn apply_migrations(common_conn: &mut Connection, chat_conn: &mut Connection) ->
         .map_err(<rusqlite_migration::Error as Into<anyhow::Error>>::into)?;
     CHATS_MIGRATIONS.to_latest(chat_conn).map_err(|e| e.into())
 }
-fn get_db_path(db_type: DBTYPE) -> Result<PathBuf> {
+fn get_db_path(db_type: &DBTYPE) -> Result<PathBuf> {
     let user_data_dir = DefaultProvider.get_user_data_dir()?;
     match db_type {
-        DBTYPE::COMMON => Ok(user_data_dir.join("common.db")),
-        DBTYPE::CHAT => Ok(user_data_dir.join("chats.db")),
+        DBTYPE::COMMON => Ok(user_data_dir.join("common_v2.db")),
+        DBTYPE::CHAT => Ok(user_data_dir.join("chats_v2.db")),
+    }
+}
+
+fn fetch_passkey() -> Result<String> {
+    let app_name = get_app_name();
+    if let Ok(passkey) = get_passkey(&app_name, "db_passkey") {
+        Ok(passkey)
+    } else {
+        info!("DB passkey not found, creating one..");
+        create_and_save_passkey(&app_name, "db_passkey")
     }
 }
 
