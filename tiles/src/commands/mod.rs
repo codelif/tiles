@@ -4,12 +4,11 @@ use std::io;
 
 use anyhow::{Result, anyhow};
 use owo_colors::OwoColorize;
-use tiles::core;
 use tiles::core::accounts::{
     RootUser, create_root_account, get_peer_list, get_root_user_details, save_root_account,
     set_nickname, unlink,
 };
-use tiles::core::storage::db::get_db_conn;
+use tiles::core::storage::db::Dbconn;
 use tiles::runtime::Runtime;
 use tiles::utils::config::{
     ConfigProvider, DefaultProvider, get_or_create_config, set_user_data_path,
@@ -254,8 +253,8 @@ pub async fn try_app_update() -> Result<()> {
     Ok(())
 }
 
-pub async fn run(runtime: &Runtime, run_args: RunArgs) -> Result<()> {
-    runtime.run(run_args).await
+pub async fn run(runtime: &Runtime, run_args: RunArgs, db_conn: &Dbconn) -> Result<()> {
+    runtime.run(run_args, db_conn).await
 }
 
 pub fn set_data(path: &str) {
@@ -338,10 +337,8 @@ fn get_account_not_created_msg() -> String {
     )
 }
 
-pub fn show_peers() -> Result<()> {
-    let db_conn = get_db_conn(&core::storage::db::DBTYPE::COMMON)?;
-
-    let peers = get_peer_list(&db_conn)?;
+pub fn show_peers(db_conn: &Dbconn) -> Result<()> {
+    let peers = get_peer_list(&db_conn.common)?;
 
     println!("DID\tNickname\n");
     for peer in peers {
@@ -350,10 +347,8 @@ pub fn show_peers() -> Result<()> {
     Ok(())
 }
 
-pub fn unlink_peer(user_id: &str) -> Result<()> {
-    let db_conn = get_db_conn(&core::storage::db::DBTYPE::COMMON)?;
-
-    if let Err(err) = unlink(&db_conn, user_id) {
+pub fn unlink_peer(db_conn: &Dbconn, user_id: &str) -> Result<()> {
+    if let Err(err) = unlink(&db_conn.common, user_id) {
         println!("{:?}", err)
     } else {
         println!("Succesfully disabled the peer")

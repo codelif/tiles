@@ -7,6 +7,7 @@ use tiles::{
     core::{
         self,
         network::{link, sync},
+        storage::db::init_db,
     },
     daemon::{start_cmd, start_server, stop_cmd},
     runtime::{RunArgs, build_runtime},
@@ -188,6 +189,8 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
     build_logger();
     let cli = Cli::parse();
     let runtime = build_runtime();
+    let db_conn = init_db()?;
+
     match cli.command {
         None => {
             // Running tiles without subcommand - launch default model with flags
@@ -207,9 +210,10 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
                     let _ = start_cmd(None).await;
                 });
             }
-            core::init().inspect_err(|e| eprintln!("Tiles core init failed due to {:?}", e))?;
+            core::init(&db_conn)
+                .inspect_err(|e| eprintln!("Tiles core init failed due to {:?}", e))?;
             if !cli.flags.no_repl {
-                commands::run(&runtime, run_args)
+                commands::run(&runtime, run_args, &db_conn)
                     .await
                     .inspect_err(|e| eprintln!("Tiles failed to run due to {:?}", e))?;
             }
@@ -223,8 +227,9 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
                 relay_count: flags.relay_count,
                 memory: flags.memory,
             };
-            core::init().inspect_err(|e| eprintln!("Tiles core init failed due to {:?}", e))?;
-            commands::run(&runtime, run_args)
+            core::init(&db_conn)
+                .inspect_err(|e| eprintln!("Tiles core init failed due to {:?}", e))?;
+            commands::run(&runtime, run_args, &db_conn)
                 .await
                 .inspect_err(|e| eprintln!("Tiles failed to run due to {:?}", e))?;
         }
@@ -270,9 +275,9 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
         },
         Some(Commands::Link(link_args)) => match link_args.command {
             LinkCommands::Enable { ticket } => link(ticket).await?,
-            LinkCommands::Disable { did } => unlink_peer(&did)?,
+            LinkCommands::Disable { did } => unlink_peer(&db_conn, &did)?,
             LinkCommands::ListPeers => {
-                show_peers()?;
+                show_peers(&db_conn)?;
             }
         },
         Some(Commands::Sync { did }) => sync(did).await?,

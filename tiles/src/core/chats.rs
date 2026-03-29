@@ -180,6 +180,8 @@ pub fn apply_delta(chat_conn: &mut Connection, delta_chats: &Vec<Chats>) -> Resu
     // TODO: Handle primary key conflict, for now reject it (in a way its impossible to have this scenario, and if its occuring then that means
     // some issue in syncing, so ignore it, by rejecting it), later
     // do LWW based on issuer of UCAN
+    //
+
     let txn = chat_conn.transaction()?;
     {
         let mut stmt = txn.prepare("insert into chats(id, user_id, content, resp_id, role, context_id, created_at, updated_at, row_counter) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)")?;
@@ -204,7 +206,16 @@ pub fn apply_delta(chat_conn: &mut Connection, delta_chats: &Vec<Chats>) -> Resu
                         &chat.id
                     );
                 }
-                Err(err) => log::error!("err in writing row due to {:?}", err),
+                // NOTE: If any other error occurs and write failed we abort the sync, so the the row_counter doesn't get skipped.
+                // use RUST_LOG=error tiles to debug the issue
+                Err(err) => {
+                    log::error!(
+                        "err in writing row due to {:?}, Aborting the sync ....",
+                        err
+                    );
+                    break;
+                }
+
                 Ok(_) => (),
             }
         }

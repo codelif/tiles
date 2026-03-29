@@ -1,6 +1,6 @@
 use crate::core::accounts::{User, get_current_user};
 use crate::core::chats::{Message, save_chat};
-use crate::core::storage::db::get_db_conn;
+use crate::core::storage::db::Dbconn;
 use crate::runtime::RunArgs;
 use crate::utils::config::{ConfigProvider, DefaultProvider, get_memory_path, get_model_cache};
 use crate::utils::hf_model_downloader::*;
@@ -70,7 +70,7 @@ impl MLXRuntime {
         MLXRuntime {}
     }
 
-    pub async fn run(&self, run_args: super::RunArgs) -> Result<()> {
+    pub async fn run(&self, run_args: super::RunArgs, db_conn: &Dbconn) -> Result<()> {
         let default_modelfile_path = get_default_modelfile(run_args.memory)?;
         let default_modelfile =
             tilekit::modelfile::parse_from_file(default_modelfile_path.to_str().unwrap()).unwrap();
@@ -89,7 +89,7 @@ impl MLXRuntime {
             }
         };
 
-        run_model_with_server(self, modelfile, default_modelfile, &run_args).await
+        run_model_with_server(self, modelfile, default_modelfile, &run_args, db_conn).await
     }
 
     #[allow(clippy::zombie_processes)]
@@ -228,6 +228,7 @@ async fn run_model_with_server(
     modelfile: Modelfile,
     default_modelfile: Modelfile,
     run_args: &RunArgs,
+    db_conn: &Dbconn,
 ) -> Result<()> {
     if !cfg!(debug_assertions) {
         let _ = mlx_runtime.start_server_daemon().await.inspect_err(|e| {
@@ -238,7 +239,7 @@ async fn run_model_with_server(
     // loading the model from mem-agent via daemon server
     let memory_path = get_memory_path().context("Setting/Retrieving memory_path failed")?;
     match load_model(&modelfile, &default_modelfile, &memory_path).await {
-        Ok(_) => start_repl(mlx_runtime, &modelfile, run_args).await?,
+        Ok(_) => start_repl(mlx_runtime, &modelfile, run_args, db_conn).await?,
         Err(err) => return Err(anyhow::anyhow!(err)),
     }
     Ok(())
@@ -248,6 +249,7 @@ async fn start_repl(
     mlx_runtime: &MLXRuntime,
     modelfile: &Modelfile,
     run_args: &RunArgs,
+    db_conn: &Dbconn,
 ) -> Result<()> {
     let modelname = modelfile
         .from
@@ -255,9 +257,7 @@ async fn start_repl(
         .ok_or_else(|| anyhow!("Error getting FROM from modelfile due to"))?;
 
     println!("Running {} in interactive mode", modelname);
-    let common_db_conn = get_db_conn(&crate::core::storage::db::DBTYPE::COMMON)?;
-    let chat_db_conn = get_db_conn(&crate::core::storage::db::DBTYPE::CHAT)?;
-    let current_user = get_current_user(&common_db_conn)?;
+    let current_user = get_current_user(&db_conn.common)?;
 
     let config = Config::builder().auto_add_history(true).build();
     let mut editor = Editor::<TilesHinter, DefaultHistory>::with_config(config).unwrap();
@@ -315,7 +315,7 @@ async fn start_repl(
                     &g_reply,
                     run_args,
                     &prev_response_id,
-                    &chat_db_conn,
+                    &db_conn.chat,
                     &current_user,
                     &conversations,
                 )
@@ -349,7 +349,7 @@ async fn start_repl(
                                 content: g_reply.clone(),
                             });
 
-                            save_chat(&chat_db_conn, &current_user, &g_reply, Some(&response))?;
+                            save_chat(&db_conn.chat, &current_user, &g_reply, Some(&response))?;
                             // Display benchmark metrics if available
                             if let Some(metrics) = response.metrics {
                                 bench_metrics.update(metrics);

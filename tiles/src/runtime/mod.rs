@@ -1,6 +1,6 @@
 #[allow(unused_imports)]
 use crate::runtime::cpu::CPURuntime;
-use crate::runtime::mlx::MLXRuntime;
+use crate::{core::storage::db::Dbconn, runtime::mlx::MLXRuntime};
 use anyhow::Result;
 pub mod cpu;
 pub mod mlx;
@@ -17,9 +17,9 @@ pub enum Runtime {
 }
 
 impl Runtime {
-    pub async fn run(&self, run_args: RunArgs) -> Result<()> {
+    pub async fn run(&self, run_args: RunArgs, db_conn: &Dbconn) -> Result<()> {
         match self {
-            Runtime::Mlx(runtime) => runtime.run(run_args).await,
+            Runtime::Mlx(runtime) => runtime.run(run_args, db_conn).await,
             Runtime::Cpu(runtime) => runtime.run(run_args).await,
         }
     }

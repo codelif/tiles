@@ -5,7 +5,7 @@
 
 use anyhow::Result;
 
-use crate::core::{accounts::save_root_account_db, storage::db::init_db};
+use crate::core::{accounts::save_root_account_db, storage::db::Dbconn};
 
 pub mod accounts;
 pub mod chats;
@@ -14,7 +14,6 @@ pub mod network;
 pub mod storage;
 
 // Entrypoint of the core
-pub fn init() -> Result<()> {
-    init_db()?;
-    save_root_account_db()
+pub fn init(db_conn: &Dbconn) -> Result<()> {
+    save_root_account_db(db_conn)
 }
