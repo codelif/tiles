@@ -186,7 +186,7 @@ enum LinkCommands {
 }
 #[tokio::main]
 pub async fn main() -> Result<(), Box<dyn Error>> {
-    env_logger::try_init()?;
+    build_logger();
     let cli = Cli::parse();
     let runtime = build_runtime();
     let db_conn = init_db()?;
@@ -285,10 +285,16 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-// fn build_logger() -> Result<(), SetLoggerError> {
-//     let mut env_builder = env_logger::Builder::new();
-//     if !cfg!(debug_assertions) {
-//         env_builder.filter_module("iroh", log::LevelFilter::Off);
-//     }
-//     env_builder.try_init()
-// }
+fn build_logger() {
+    if cfg!(debug_assertions) {
+        env_logger::Builder::from_env(
+            env_logger::Env::default().default_filter_or("info,iroh=error,tracing=off"),
+        )
+        .init()
+    } else {
+        env_logger::Builder::from_env(
+            env_logger::Env::default().default_filter_or("error,iroh=off"),
+        )
+        .init()
+    }
+}

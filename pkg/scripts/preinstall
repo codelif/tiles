@@ -1,0 +1,6 @@
+#!/bin/bash
+
+# So that we don't have multiple copies of python libs lying around
+# from previous installs
+
+rm -rf /usr/local/share/tiles/server
