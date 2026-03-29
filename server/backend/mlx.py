@@ -24,14 +24,12 @@ from openresponses_types.types import (
 from ..reasoning_utils import ReasoningExtractor
 
 from ..cache_utils import get_model_path
-from ..hf_downloader import pull_model
 from ..schemas import (
     ChatCompletionRequest,
     ChatMessage,
     GenerationMetrics,
     ResponsesRequest,
     ResponsesResponse,
-    downloadRequest,
 )
 from .mlx_runner import MLXRunner
 
@@ -44,14 +42,6 @@ _default_max_tokens: Optional[int] = None  # Use dynamic model-aware limits by d
 _current_model_path: Optional[str] = None
 # Store generated responses for follow-up support (previous_response_id)
 _responses: Dict[str, ResponsesResponse] = {}
-
-
-def download_model(model_name: str):
-    """Download the model"""
-    if pull_model(model_name):
-        return {"message": "Model downloaded"}
-    else:
-        raise HTTPException(status_code=400, detail="Downloading model failed")
 
 
 def get_or_load_model(

@@ -21,7 +21,7 @@ markupsafe==3.0.3
 mdurl==0.1.2
 mlx-lm==0.31.0
 mypy-extensions==1.1.0
-numpy==2.4.3
+numpy==2.4.4
 openai-harmony==0.0.8
 openresponses-types==2.3.0.post1
 packaging==26.0
@@ -30,10 +30,10 @@ platformdirs==4.9.4
 protobuf==7.34.1
 pydantic==2.12.5
 pydantic-core==2.41.5
-pygments==2.19.2
+pygments==2.20.0
 pytokens==0.4.1
 pyyaml==6.0.3
-regex==2026.2.28
+regex==2026.3.32
 rich==14.3.3
 safetensors==0.7.0
 sentencepiece==0.2.1

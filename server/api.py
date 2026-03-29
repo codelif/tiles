@@ -7,7 +7,6 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from . import runtime
-from .hf_downloader import pull_model
 from .mem_agent.engine import execute_sandboxed_code
 from .mem_agent.utils import (
     create_memory_if_not_exists,
@@ -35,12 +34,6 @@ app = FastAPI()
 @app.get("/ping")
 async def ping():
     return {"message": "Badda-Bing Badda-Bang"}
-
-
-@app.post("/download")
-async def download(request: downloadRequest):
-    """Download the model"""
-    runtime.backend.download_model(request.model)
 
 
 @app.post("/start")
