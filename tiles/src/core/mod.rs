@@ -5,10 +5,7 @@
 
 use anyhow::Result;
 
-use crate::core::{
-    accounts::save_root_account_db,
-    storage::db::{Dbconn, init_db},
-};
+use crate::core::{accounts::save_root_account_db, storage::db::Dbconn};
 
 pub mod accounts;
 pub mod chats;

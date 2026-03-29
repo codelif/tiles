@@ -12,8 +12,8 @@ use toml::Table;
 use uuid::Uuid;
 
 use crate::{
-    core::storage::db::{DBTYPE, Dbconn, get_db_conn},
-    utils::config::{get_or_create_config, save_config},
+    core::storage::db::Dbconn,
+    utils::config::{get_app_name, get_or_create_config, save_config},
 };
 const ROOT_USER_CONFIG_KEY: &str = "root-user";
 
