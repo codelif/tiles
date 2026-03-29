@@ -5,6 +5,18 @@ The format is based on https://keepachangelog.com/en/1.1.0/
 
 ## [Unreleased]
 
+## [0.4.6] - 2026-03-30
+
+### Added
+- Added P2P chat sync in [#109](https://github.com/tilesprivacy/tiles/pull/109)
+  - Commands for chat syncing
+    - `tiles sync` - Starts listening for a sync request from the linked peers.
+    - `tiles sync <DID>` - Initiates the syncing with the peer using the peer's linked DID (which one can get from `tiles link list-peers`).
+- Added at rest encryption for local databases in [#110](https://github.com/tilesprivacy/tiles/pull/110)
+
+### Fixed
+- Fixed the loading issue of qwen 3.5 series in [#111](https://github.com/tilesprivacy/tiles/pull/111)
+
 ## [0.4.5] - 2026-03-23
 
 ### Added
