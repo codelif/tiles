@@ -203,7 +203,10 @@ pub fn get_or_create_config() -> Result<Table> {
     let tiles_config_dir = DefaultProvider.get_config_dir()?;
     let config_toml_path = tiles_config_dir.join("config.toml");
 
-    if config_toml_path.try_exists()? {
+    if config_toml_path
+        .try_exists()
+        .context("config.toml path doesn't exist")?
+    {
         let config_str = fs::read_to_string(config_toml_path)?;
         Ok(config_str.parse::<Table>()?)
     } else {
