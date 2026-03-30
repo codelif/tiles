@@ -7,7 +7,6 @@ use tiles::{
     core::{
         self,
         network::{link, sync},
-        storage::db::init_db,
     },
     daemon::{start_cmd, start_server, stop_cmd},
     runtime::{RunArgs, build_runtime},
@@ -189,7 +188,7 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
     build_logger();
     let cli = Cli::parse();
     let runtime = build_runtime();
-    let db_conn = init_db()?;
+    let db_conn = core::init()?;
 
     match cli.command {
         None => {
@@ -210,7 +209,7 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
                     let _ = start_cmd(None).await;
                 });
             }
-            core::init(&db_conn)
+            core::init_account(&db_conn)
                 .inspect_err(|e| eprintln!("Tiles core init failed due to {:?}", e))?;
             if !cli.flags.no_repl {
                 commands::run(&runtime, run_args, &db_conn)
@@ -227,7 +226,7 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
                 relay_count: flags.relay_count,
                 memory: flags.memory,
             };
-            core::init(&db_conn)
+            core::init_account(&db_conn)
                 .inspect_err(|e| eprintln!("Tiles core init failed due to {:?}", e))?;
             commands::run(&runtime, run_args, &db_conn)
                 .await
@@ -293,7 +292,7 @@ fn build_logger() {
         .init()
     } else {
         env_logger::Builder::from_env(
-            env_logger::Env::default().default_filter_or("error,iroh=off"),
+            env_logger::Env::default().default_filter_or("error,iroh=off,tracing=off"),
         )
         .init()
     }
