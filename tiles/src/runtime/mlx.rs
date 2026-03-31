@@ -26,6 +26,8 @@ use tilekit::modelfile::Modelfile;
 use tilekit::modelfile::Role;
 use tokio::time::sleep;
 
+const MAX_LOAD_MODEL_RETRIES: u8 = 3;
+
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct BenchmarkMetrics {
     ttft_ms: f64,
@@ -238,7 +240,7 @@ async fn run_model_with_server(
     }
     // loading the model from mem-agent via daemon server
     let memory_path = get_memory_path().context("Setting/Retrieving memory_path failed")?;
-    match load_model(&modelfile, &default_modelfile, &memory_path).await {
+    match load_model(&modelfile, &default_modelfile, &memory_path, 0).await {
         Ok(_) => start_repl(mlx_runtime, &modelfile, run_args, db_conn).await?,
         Err(err) => return Err(anyhow::anyhow!(err)),
     }
@@ -400,15 +402,44 @@ async fn load_model(
     modelfile: &Modelfile,
     default_modelfile: &Modelfile,
     memory_path: &str,
+    retries: u8,
 ) -> Result<()> {
+    if retries > MAX_LOAD_MODEL_RETRIES {
+        return Err(anyhow!(
+            "Model loading retried failed after {} times",
+            retries
+        ));
+    }
     let model_name = modelfile.from.clone().unwrap();
+    let model_cache_res = get_model_cache(&model_name);
 
-    if let Ok(model_cache_path) = get_model_cache(&model_name) {
-        load_model_in_py(modelfile, default_modelfile, memory_path, &model_cache_path).await
-    } else {
+    if model_cache_res.is_err() {
         download_model(&model_name).await?;
-        let model_cache_path = get_model_cache(&model_name)?;
-        load_model_in_py(modelfile, default_modelfile, memory_path, &model_cache_path).await
+        return Box::pin(load_model(modelfile, default_modelfile, memory_path, 0)).await;
+    }
+
+    // If loading fails it most probably a partial downloaded
+    // model present, so we try to resume the download
+    if load_model_in_py(
+        modelfile,
+        default_modelfile,
+        memory_path,
+        &model_cache_res.unwrap(),
+    )
+    .await
+    .is_err()
+    {
+        log::warn!("Load model failed, resuming the partial download");
+        download_model(&model_name).await?;
+        Box::pin(load_model(
+            modelfile,
+            default_modelfile,
+            memory_path,
+            retries + 1,
+        ))
+        .await
+    } else {
+        Ok(())
     }
 }
 
@@ -635,7 +666,10 @@ async fn load_model_in_py(
     model_cache_path: &PathBuf,
 ) -> Result<()> {
     let client = Client::new();
-    let model_name = modelfile.from.clone().unwrap();
+    let model_name = modelfile
+        .from
+        .clone()
+        .expect("Failed to get `FROM` of modelfile");
     let body = json!({
         "model": model_name,
         "memory_path": memory_path,

@@ -236,7 +236,7 @@ pub fn save_config(config: &Table) -> Result<()> {
     Ok(())
 }
 
-// Get the apt path where the model lies
+/// Get the apt path where the model in the system
 pub fn get_model_cache(model_name: &str) -> Result<PathBuf> {
     let hf_model_dir = if model_name.starts_with("mlx-community/") {
         let model_spec_parts = model_name.split("/").collect::<Vec<&str>>();
