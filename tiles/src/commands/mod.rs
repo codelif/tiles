@@ -268,8 +268,8 @@ pub fn set_data(path: &str) {
         }
     }
 }
-pub async fn check_health() {
-    health::check_health().await;
+pub async fn check_health() -> Result<()> {
+    health::check_health().await
 }
 
 pub async fn start_server(runtime: &Runtime) {

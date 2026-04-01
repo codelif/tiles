@@ -3,7 +3,7 @@
 //! Uses sqlite as the underlying database
 //!
 
-use std::path::PathBuf;
+use std::{env, path::PathBuf};
 
 use anyhow::{Result, anyhow};
 use log::info;
@@ -117,6 +117,23 @@ fn get_db_path(db_type: &DBTYPE) -> Result<PathBuf> {
 
 fn fetch_passkey() -> Result<String> {
     let app_name = get_app_name();
+    // handling db passwords in dev mode separately
+    // This is to suppress keychain popups during development
+
+    if cfg!(debug_assertions) {
+        if let Ok(passwd) = env::var("TILES_DEV_DB_PASSWORD") {
+            return Ok(passwd);
+        } else {
+            info!("DB passkey not found in development, creating one..");
+            let passwd = create_and_save_passkey(&app_name, "db_passkey")?;
+            info!(
+                "Save this password {} as an environment variable with name `TILES_DEV_DB_PASSWORD`",
+                passwd
+            );
+            return Ok(passwd);
+        }
+    }
+
     if let Ok(passkey) = get_passkey(&app_name, "db_passkey") {
         Ok(passkey)
     } else {

@@ -1,35 +1,40 @@
 // Contains functions for health checking various dependencies
 
-use std::{env, process::Command};
+use std::env;
 
-use crate::runtime::mlx::ping;
+use anyhow::Result;
 
-pub async fn check_health() {
+use crate::{
+    daemon::ping,
+    utils::installer::{UpdateInfo, get_update_info},
+};
+
+pub async fn check_health() -> Result<()> {
     let os = env::consts::OS;
-    println!("Running diagnosis...");
-    check_python3();
-    if os == "macos" {
-        check_server_status().await
-    }
-}
+    println!("Running diagnosis...\n");
 
-fn check_python3() {
-    let output = Command::new("python3")
-        .arg("--version")
-        .output()
-        .ok()
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
-
-    if let Some(version) = output {
-        println!("Python3: ✅ {}", version)
+    println!("Checking for newer version...\n");
+    let update_info: UpdateInfo = get_update_info().await?;
+    if update_info.can_update {
+        println!("⚠️ Outdated version, try `tiles update`");
+        let update_str = format!(
+            "\tcurrent version - {}\n\tlatest version - {}",
+            update_info.current_version, update_info.latest_version
+        );
+        println!("{}", update_str);
     } else {
-        println!("Python3: ❌ hint: Install Python3 for your OS")
+        println!("✅ Running latest version\n");
     }
+    if os == "macos" && !cfg!(debug_assertions) {
+        check_server_status().await;
+    }
+    Ok(())
 }
+
 async fn check_server_status() {
-    if ping().await.is_ok() {
-        println!("Model server is UP: ✅")
+    if ping(None).await.is_ok() {
+        println!("✅ Daemon is UP")
     } else {
-        println!("Model server is DOWN: ❌, try `tiles server start`")
+        println!("❌ Daemon is DOWN, try `tiles daemon start`")
     }
 }
