@@ -789,3 +789,92 @@ async fn on_sync_send_delta_info(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+
+    use iroh::{Endpoint, endpoint::presets, endpoint_info::UserData};
+    use tokio::sync::mpsc;
+
+    use crate::core::{
+        accounts::create_dummy_user,
+        chats::SyncOp,
+        network::{
+            create_topic_id, fetch_last_row_counter, parse_link_ticket,
+            ticket::{EndpointUserData, LinkTicket},
+        },
+    };
+
+    #[tokio::test]
+    async fn test_valid_parse_link_ticket_online() {
+        let topic_id = create_topic_id("test");
+        let user = create_dummy_user();
+        let usr_data = EndpointUserData::new(&user.user_id, &user.username);
+        let endpoint = Endpoint::builder(presets::N0)
+            .user_data_for_address_lookup(UserData::try_from(usr_data.to_string()).unwrap())
+            .bind()
+            .await
+            .unwrap();
+
+        let ticket = LinkTicket::new(
+            topic_id,
+            endpoint.addr(),
+            user.user_id.clone(),
+            user.username.clone(),
+        );
+
+        assert!(parse_link_ticket(&ticket.to_string()).is_ok())
+    }
+
+    #[tokio::test]
+    async fn test_invalid_parse_link_ticket_online() {
+        let topic_id = create_topic_id("test");
+        let user = create_dummy_user();
+        let usr_data = EndpointUserData::new(&user.user_id, &user.username);
+        let endpoint = Endpoint::builder(presets::N0)
+            .user_data_for_address_lookup(UserData::try_from(usr_data.to_string()).unwrap())
+            .bind()
+            .await
+            .unwrap();
+
+        let ticket = LinkTicket::new(
+            topic_id,
+            endpoint.addr(),
+            user.user_id.clone(),
+            user.username.clone(),
+        );
+
+        let invalid_ticket = format!("{}xx", ticket);
+        assert!(parse_link_ticket(&invalid_ticket).is_err())
+    }
+
+    #[test]
+    fn test_invalid_parse_link_ticket_offline() {
+        let ticket = "kjadkjada";
+
+        assert!(parse_link_ticket(ticket).is_err())
+    }
+
+    #[test]
+    fn test_valid_parse_link_ticket_offline() {
+        let ticket = "kjadkja2";
+
+        assert!(parse_link_ticket(ticket).is_ok())
+    }
+
+    #[tokio::test]
+    async fn test_fetch_last_row_counter() {
+        {
+            let (tx, mut rx) = mpsc::channel::<SyncOp>(32);
+
+            let _handler = tokio::spawn(async move {
+                while let Some(msg) = rx.recv().await {
+                    if let SyncOp::GetLastRowCounter { user_id: _, resp } = msg {
+                        resp.send(Ok(1)).unwrap();
+                    }
+                }
+            });
+            assert_eq!(fetch_last_row_counter("did:key:xx", &tx).await.unwrap(), 1);
+        }
+    }
+}
