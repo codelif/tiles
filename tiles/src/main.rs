@@ -233,7 +233,7 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
                 .inspect_err(|e| eprintln!("Tiles failed to run due to {:?}", e))?;
         }
         Some(Commands::Health) => {
-            commands::check_health().await;
+            commands::check_health().await?;
         }
         Some(Commands::Server(server)) => match server.command {
             Some(ServerCommands::Start) => commands::start_server(&runtime).await,
