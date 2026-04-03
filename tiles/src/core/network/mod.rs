@@ -30,7 +30,10 @@ use tilekit::accounts::{
     get_did_from_public_key, get_public_key_from_did, get_random_bytes, get_random_bytes_32,
 };
 use tokio::{
-    sync::{mpsc::Sender, oneshot},
+    sync::{
+        mpsc::{self, Sender},
+        oneshot::{self},
+    },
     task::spawn_blocking,
 };
 use uuid::Uuid;
@@ -340,6 +343,7 @@ async fn sync_subscribe_loop(
     store: MemStore,
     endpoint: Endpoint,
     sync_channel_sender: Sender<SyncOp>,
+    sync_main_sender: tokio::sync::mpsc::Sender<u8>,
 ) -> Result<()> {
     while let Some(event) = receiver.try_next().await? {
         info!(
@@ -387,7 +391,8 @@ async fn sync_subscribe_loop(
                     .await?;
                 }
                 MessageBody::SyncEnd => {
-                    println!("Sync completed..., you can exit now");
+                    println!("Sync completed..., exiting..");
+                    sync_main_sender.send(0).await?;
                 }
                 msg_body => {
                     info!("Invalid sync message {:?}", msg_body)
@@ -427,7 +432,7 @@ pub async fn sync(did: Option<String>) -> Result<()> {
         let mdns = address_lookup::mdns::MdnsAddressLookup::builder().build(endpoint.id())?;
         endpoint.address_lookup()?.add(mdns.clone());
     }
-
+    let (sendx, mut recvx) = mpsc::channel(1);
     let tx = create_sync_channel();
     if let Some(receiver_did) = did {
         // INITIATOR BLOCK
@@ -462,6 +467,7 @@ pub async fn sync(did: Option<String>) -> Result<()> {
             store,
             endpoint.clone(),
             tx.clone(),
+            sendx.clone(),
         ));
 
         let receiver_last_row_counter = fetch_last_row_counter(&receiver_did, &tx).await?;
@@ -479,7 +485,7 @@ pub async fn sync(did: Option<String>) -> Result<()> {
             "\nSyncing in progress with ....{}({})",
             receiver_user.username, receiver_did
         );
-        tokio::signal::ctrl_c().await?;
+        recvx.recv().await;
         recv_router.shutdown().await?;
     } else {
         // RECEIVER BLOCK
@@ -506,6 +512,7 @@ pub async fn sync(did: Option<String>) -> Result<()> {
             store,
             endpoint.clone(),
             tx.clone(),
+            sendx.clone(),
         ));
         println!("{}", "Ready to accept sync requests from peers...".blue());
 
@@ -514,8 +521,8 @@ pub async fn sync(did: Option<String>) -> Result<()> {
         // for the network to form correctly
         if cfg!(debug_assertions) {
             println!("Use this DID {} in dev for testing", did);
-        }
-        tokio::signal::ctrl_c().await?;
+        };
+        recvx.recv().await;
         recv_router.shutdown().await?;
     }
     endpoint.close().await;
@@ -754,7 +761,6 @@ async fn on_sync_send_delta_info(
             delta: data.to_vec(),
             resp: sendx,
         };
-
         sync_channel_sender.send(sync_op_msg).await?;
 
         recvx.await??;

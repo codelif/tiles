@@ -5,7 +5,6 @@ use iroh::EndpointAddr;
 use iroh_gossip::TopicId;
 use iroh_tickets::Ticket;
 
-//TODO: Add tests
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
 pub struct LinkTicket {
     pub nickname: String,

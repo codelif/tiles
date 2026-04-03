@@ -19,7 +19,7 @@ use tokio::sync::oneshot;
 use uuid::Uuid;
 // model the chats table
 
-// TODO: foreign types on foreign traits, lul
+// Foreign types on foreign traits, lul
 // someday we can do this for traits sake
 // https://dev.to/iprosk/generics-in-rust-murky-waters-of-implementing-foreign-traits-on-foreign-types-584n
 
