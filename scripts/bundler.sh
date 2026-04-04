@@ -16,6 +16,16 @@ echo "🚀 Building ${BINARY_NAME} (${TARGET} mode)..."
 
 cargo build -p tiles --${TARGET}
 
+chmod +x "${CLI_BIN_PATH}/tiles"
+
+# Signing the tiles binary
+codesign --force \
+  --sign "$DEVELOPER_ID_APPLICATION"\
+  --options runtime \
+  --timestamp \
+  --strict \
+  "${CLI_BIN_PATH}/tiles"
+
 # rm -rf "${DIST_DIR}"
 
 mkdir -p "${DIST_DIR}/tmp"
