@@ -26,7 +26,6 @@ pub struct Dbconn {
 
 // DEFINE MIGRATIONS
 
-// TODO: add the schema doc
 const COMMON_MIGRATION_ARRAY: &[M] = &[M::up(
     "
     CREATE TABLE IF NOT EXISTS users (
@@ -45,7 +44,6 @@ const COMMON_MIGRATION_ARRAY: &[M] = &[M::up(
 
 const COMMON_MIGRATIONS: Migrations = Migrations::from_slice(COMMON_MIGRATION_ARRAY);
 
-// TODO: add the schema doc
 const CHATS_MIGRATION_ARRAY: &[M] = &[
     M::up(
         "CREATE TABLE IF NOT EXISTS chats (

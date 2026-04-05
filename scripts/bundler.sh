@@ -16,10 +16,28 @@ echo "🚀 Building ${BINARY_NAME} (${TARGET} mode)..."
 
 cargo build -p tiles --${TARGET}
 
+CLI_BIN_PATH="target/${TARGET}/${BINARY_NAME}"
+  
+chmod +x "${CLI_BIN_PATH}"
+
+# Signing the tiles binary
+codesign --force \
+  --sign "$DEVELOPER_ID_APPLICATION"\
+  --options runtime \
+  --timestamp \
+  --strict \
+  "${CLI_BIN_PATH}"
+
+# notarizing
+xcrun notarytool submit --force "${CLI_BIN_PATH}" \
+  --keychain-profile "tiles-notary-profile" \
+  --wait
+
 # rm -rf "${DIST_DIR}"
 
 mkdir -p "${DIST_DIR}/tmp"
-cp "target/${TARGET}/${BINARY_NAME}" "${DIST_DIR}/tmp/"
+
+cp "${CLI_BIN_PATH}"  "${DIST_DIR}/tmp/"
 
 # flushing this folder, else the final zip will have previous app-server zips too (#84)
 rm -rf "${SERVER_DIR}/stack_export_prod"

@@ -30,8 +30,12 @@ use tilekit::accounts::{
     get_did_from_public_key, get_public_key_from_did, get_random_bytes, get_random_bytes_32,
 };
 use tokio::{
-    sync::{mpsc::Sender, oneshot},
+    sync::{
+        mpsc::{self},
+        oneshot::{self},
+    },
     task::spawn_blocking,
+    time::sleep,
 };
 use uuid::Uuid;
 
@@ -51,7 +55,7 @@ use sha2::{Digest, Sha256};
 const MAX_DOWNLOADED_BYTES: usize = 50 * 1024 * 1024;
 
 const DEVICE_LINK_LOCAL_TOPIC: &str = "com.tilesprivacy.tiles.link";
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize, Debug)]
 struct NetworkMessage {
     from_did: String,
     from_nickname: String,
@@ -105,6 +109,7 @@ pub async fn link(ticket: Option<String>) -> Result<()> {
     let endpoint = create_endpoint(&user).await?;
     let is_online = is_online(&endpoint).await;
     let mut bootstrap_ids: Vec<EndpointId> = vec![];
+    let (sendx, mut recvx) = mpsc::channel(1);
     // if ticket's there, then this is link enable sender's  command, else receiver end
     if let Some(ticket) = ticket {
         let (endpoint_id, mut did, mut nickname, topic_value) = parse_link_ticket(&ticket)?;
@@ -144,6 +149,7 @@ pub async fn link(ticket: Option<String>) -> Result<()> {
             user.clone(),
             user_db_conn,
             None,
+            sendx.clone(),
         ));
 
         let link_req_msg =
@@ -154,7 +160,7 @@ pub async fn link(ticket: Option<String>) -> Result<()> {
 
         println!("\nWaiting for response...");
 
-        tokio::signal::ctrl_c().await?;
+        recvx.recv().await;
         recv_router.shutdown().await?;
     } else {
         // RECEIVER BLOCK
@@ -210,11 +216,9 @@ pub async fn link(ticket: Option<String>) -> Result<()> {
             user.clone(),
             user_db_conn,
             Some(generated_ticket),
+            sendx.clone(),
         ));
-
-        // TODO: Maybe a better way is to use a oneshot channel to exit
-        // the terminal instead of SIGINT
-        tokio::signal::ctrl_c().await?;
+        recvx.recv().await;
         recv_router.shutdown().await?;
     }
     endpoint.close().await;
@@ -227,11 +231,10 @@ async fn subsribe_loop(
     user: accounts::User,
     db_conn: Connection,
     generated_ticket: Option<String>,
+    link_main_sender: tokio::sync::mpsc::Sender<u8>,
 ) -> Result<()> {
     while let Some(event) = receiver.try_next().await? {
-        if cfg!(debug_assertions) {
-            println!("In {}:, some event {:?}", user.username, event);
-        }
+        info!("from{}:", user.username);
         // TODO: Damn refactor the loop, its getting bigger
         if let Event::Received(msg) = event {
             let pub_key = msg.delivered_from;
@@ -282,16 +285,16 @@ async fn subsribe_loop(
                         {
                             println!("Failed to add the peer locally due to {:?}", err);
 
-                            continue;
+                            sleep(Duration::from_secs(5)).await;
+                            link_main_sender.send(0).await?;
                         }
 
                         println!(
-                            "Device {}({}) is now linked\nYou can exit now by ctrl-c",
+                            "Device {}({}) is now linked\n",
                             msg.from_nickname, msg.from_did
                         );
                         NetworkMessage::new(&user, msg.is_online, MessageBody::LinkAccepted)
                     } else {
-                        println!("You can exit now by ctrl-c");
                         NetworkMessage::new(
                             &user,
                             msg.is_online,
@@ -303,6 +306,10 @@ async fn subsribe_loop(
                     input.lock().unwrap().clear();
 
                     sender.broadcast(link_res_resp.to_bytes().into()).await?;
+                    // Adding a delay to prevent the risk od closing the endpoint
+                    // before we send the msg
+                    sleep(Duration::from_secs(5)).await;
+                    link_main_sender.send(0).await?;
                 }
                 MessageBody::LinkAccepted => {
                     println!("\nLink accepted by {}({})", msg.from_nickname, msg.from_did);
@@ -311,18 +318,18 @@ async fn subsribe_loop(
                         save_peer_account_db(&db_conn, &msg.from_did, &msg.from_nickname)
                     {
                         println!("Failed to add the peer locally due to {:?}", err);
-                        return Ok(());
                     }
-
-                    println!("\nYou can exit now by ctrl-c");
-
-                    continue;
+                    sleep(Duration::from_secs(5)).await;
+                    link_main_sender.send(0).await?;
                 }
+
                 MessageBody::LinkRejected { reason } => {
                     println!(
-                        "Oops looks like your link request has been rejected by {}({}),\nreason: {},\nexit (ctrl-c) and try again",
+                        "Oops looks like your link request has been rejected by {}({}),\nreason: {},\n Try again",
                         msg.from_nickname, msg.from_did, reason
                     );
+                    sleep(Duration::from_secs(5)).await;
+                    link_main_sender.send(0).await?;
                 }
                 msg_body => {
                     eprintln!("Invalid link message {:?}", msg_body)
@@ -339,7 +346,8 @@ async fn sync_subscribe_loop(
     user: accounts::User,
     store: MemStore,
     endpoint: Endpoint,
-    sync_channel_sender: Sender<SyncOp>,
+    sync_db_channel_sender: tokio::sync::mpsc::Sender<SyncOp>,
+    sync_main_sender: tokio::sync::mpsc::Sender<u8>,
 ) -> Result<()> {
     while let Some(event) = receiver.try_next().await? {
         info!(
@@ -367,7 +375,7 @@ async fn sync_subscribe_loop(
                         &msg,
                         pub_key,
                         &user,
-                        &sync_channel_sender,
+                        &sync_db_channel_sender,
                     )
                     .await?;
                 }
@@ -375,19 +383,19 @@ async fn sync_subscribe_loop(
                     blob_ticket: _,
                     last_row_counter: _,
                 } => {
+                    let senders: (
+                        &tokio::sync::mpsc::Sender<SyncOp>,
+                        &tokio::sync::mpsc::Sender<u8>,
+                    ) = (&sync_db_channel_sender, &sync_main_sender);
                     on_sync_send_delta_info(
-                        &sender,
-                        &store,
-                        &msg,
-                        pub_key,
-                        &user,
-                        &endpoint,
-                        &sync_channel_sender,
+                        &sender, &store, &msg, pub_key, &user, &endpoint, senders,
                     )
                     .await?;
                 }
                 MessageBody::SyncEnd => {
-                    println!("Sync completed..., you can exit now");
+                    println!("Sync completed..., exiting..");
+                    sleep(Duration::from_secs(5)).await;
+                    sync_main_sender.send(0).await?;
                 }
                 msg_body => {
                     info!("Invalid sync message {:?}", msg_body)
@@ -427,7 +435,7 @@ pub async fn sync(did: Option<String>) -> Result<()> {
         let mdns = address_lookup::mdns::MdnsAddressLookup::builder().build(endpoint.id())?;
         endpoint.address_lookup()?.add(mdns.clone());
     }
-
+    let (sendx, mut recvx) = mpsc::channel(1);
     let tx = create_sync_channel();
     if let Some(receiver_did) = did {
         // INITIATOR BLOCK
@@ -462,6 +470,7 @@ pub async fn sync(did: Option<String>) -> Result<()> {
             store,
             endpoint.clone(),
             tx.clone(),
+            sendx.clone(),
         ));
 
         let receiver_last_row_counter = fetch_last_row_counter(&receiver_did, &tx).await?;
@@ -479,7 +488,7 @@ pub async fn sync(did: Option<String>) -> Result<()> {
             "\nSyncing in progress with ....{}({})",
             receiver_user.username, receiver_did
         );
-        tokio::signal::ctrl_c().await?;
+        recvx.recv().await;
         recv_router.shutdown().await?;
     } else {
         // RECEIVER BLOCK
@@ -506,6 +515,7 @@ pub async fn sync(did: Option<String>) -> Result<()> {
             store,
             endpoint.clone(),
             tx.clone(),
+            sendx.clone(),
         ));
         println!("{}", "Ready to accept sync requests from peers...".blue());
 
@@ -514,8 +524,8 @@ pub async fn sync(did: Option<String>) -> Result<()> {
         // for the network to form correctly
         if cfg!(debug_assertions) {
             println!("Use this DID {} in dev for testing", did);
-        }
-        tokio::signal::ctrl_c().await?;
+        };
+        recvx.recv().await;
         recv_router.shutdown().await?;
     }
     endpoint.close().await;
@@ -643,7 +653,10 @@ fn is_did_valid(did: &str, pub_key: PublicKey) -> Result<bool> {
     }
 }
 
-async fn fetch_last_row_counter(user_id: &str, sender: &Sender<SyncOp>) -> Result<i64> {
+async fn fetch_last_row_counter(
+    user_id: &str,
+    sender: &tokio::sync::mpsc::Sender<SyncOp>,
+) -> Result<i64> {
     let (sendx, recvx) = oneshot::channel();
     let sync_op_msg = SyncOp::GetLastRowCounter {
         user_id: user_id.to_owned(),
@@ -656,7 +669,7 @@ async fn fetch_last_row_counter(user_id: &str, sender: &Sender<SyncOp>) -> Resul
 
 async fn fetch_encoded_delta_ticket(
     user_id: &str,
-    sender: &Sender<SyncOp>,
+    sender: &tokio::sync::mpsc::Sender<SyncOp>,
     lrc: i64,
     store: &MemStore,
     delivered_from: PublicKey,
@@ -685,7 +698,7 @@ async fn on_sync_start_event(
     msg: &NetworkMessage,
     delivered_from: PublicKey,
     user: &accounts::User,
-    sync_channel_sender: &Sender<SyncOp>,
+    sync_db_channel_sender: &tokio::sync::mpsc::Sender<SyncOp>,
 ) -> Result<()> {
     if let MessageBody::SyncStart {
         last_row_counter: lrc,
@@ -694,7 +707,7 @@ async fn on_sync_start_event(
         let sender_did = get_did_from_public_key(delivered_from.as_bytes())?;
         let ticket = fetch_encoded_delta_ticket(
             &user.user_id,
-            sync_channel_sender,
+            sync_db_channel_sender,
             lrc.expect("lrc failed"),
             store,
             delivered_from,
@@ -702,7 +715,7 @@ async fn on_sync_start_event(
         .await?;
 
         let receiver_last_row_counter =
-            fetch_last_row_counter(&sender_did, sync_channel_sender).await?;
+            fetch_last_row_counter(&sender_did, sync_db_channel_sender).await?;
 
         let delta_info = NetworkMessage::new(
             user,
@@ -725,8 +738,12 @@ async fn on_sync_send_delta_info(
     delivered_from: PublicKey,
     user: &accounts::User,
     endpoint: &Endpoint,
-    sync_channel_sender: &Sender<SyncOp>,
+    senders: (
+        &tokio::sync::mpsc::Sender<SyncOp>,
+        &tokio::sync::mpsc::Sender<u8>,
+    ),
 ) -> Result<()> {
+    let (sync_db_channel_sender, sync_main_sender) = senders;
     if let MessageBody::SyncSendDeltaInfo {
         blob_ticket,
         last_row_counter,
@@ -754,8 +771,7 @@ async fn on_sync_send_delta_info(
             delta: data.to_vec(),
             resp: sendx,
         };
-
-        sync_channel_sender.send(sync_op_msg).await?;
+        sync_db_channel_sender.send(sync_op_msg).await?;
 
         recvx.await??;
         info!("Diff applied successfully");
@@ -764,7 +780,7 @@ async fn on_sync_send_delta_info(
         if let Some(row_counter) = last_row_counter {
             let ticket = fetch_encoded_delta_ticket(
                 &user.user_id,
-                sync_channel_sender,
+                sync_db_channel_sender,
                 *row_counter,
                 store,
                 delivered_from,
@@ -784,7 +800,9 @@ async fn on_sync_send_delta_info(
             let stop_req = NetworkMessage::new(user, msg.is_online, MessageBody::SyncEnd);
             sender.broadcast(stop_req.to_bytes().into()).await?;
             info!("sync ended");
-            println!("\nSync completed..., you can exit now");
+            println!("\nSync completed..., exiting now..");
+            sleep(Duration::from_secs(5)).await;
+            sync_main_sender.send(0).await?;
         }
     }
     Ok(())
