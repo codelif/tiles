@@ -27,7 +27,6 @@ mkdir -p "${CLI_BIN_PATH}"
 
 mkdir -p "${LIBS_PATH}"
 
-
 # move cli to bin path
 
 cp "target/${TARGET}/${BINARY_NAME}" "${CLI_BIN_PATH}"
