@@ -1,11 +1,12 @@
 <!-- LOGO -->
+
 <p align="center">
-  <a href="https://github.com/tileshq/">
+  <a href="https://github.com/tilesprivacy/">
     <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://avatars.githubusercontent.com/u/210493283?s=400&u=1ee6e44b6a683b16bdb6e9e853c7ebd8c7fd4268&v=4">
-  <source media="(prefers-color-scheme: light)" srcset="https://github.com/user-attachments/assets/677d3d63-a9b0-4e92-8c7d-f39ceffc1b0d">
-  <img src="https://github.com/user-attachments/assets/677d3d63-a9b0-4e92-8c7d-f39ceffc1b0d" alt="Tiles Logo" width="128">
-</picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://avatars.githubusercontent.com/u/210493283" />
+      <source media="(prefers-color-scheme: light)" srcset="https://github.com/user-attachments/assets/984f9fa7-d097-4d36-bd98-da1a71cf778d" />
+      <img src="https://github.com/user-attachments/assets/1c7848de-33af-47ed-9fb2-a361c096a44d" alt="Tiles Logo" width="128" />
+    </picture>
   </a>
 </p>
 
@@ -76,4 +77,4 @@ This project is dual-licensed under MIT and Apache 2.0:
 - [MIT License](https://github.com/tilesprivacy/tiles/blob/main/LICENSE-MIT)
 - [Apache License 2.0](https://github.com/tilesprivacy/tiles/blob/main/LICENSE-APACHE)
 
-You may choose either license, or both. Apache 2.0 is included for its explicit patent protections.
+Downstream projects and end users may chose either license individually, or both together, at their discretion. The motivation for this dual-licensing is the additional software patent assurance provided by Apache 2.0.
