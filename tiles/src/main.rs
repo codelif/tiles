@@ -7,6 +7,7 @@ use tiles::{
     core::{
         self,
         account::atproto::{login, logout},
+        account::local::{generate_invocation_token, generate_token, verify_invocation},
         network::{link, sync},
     },
     daemon::{start_cmd, start_server, stop_cmd},
@@ -286,6 +287,15 @@ enum LinkCommands {
     },
     /// Start the daemon
     ListPeers,
+    GenerateToken {
+        peer_did: String,
+    },
+    GenerateInvoc {
+        delegation_token: String,
+    },
+    ValidateInvoc {
+        invocation_token: String,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -410,6 +420,20 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
             LinkCommands::Disable { did } => unlink_peer(&db_conn, &did)?,
             LinkCommands::ListPeers => {
                 show_peers(&db_conn)?;
+            }
+            LinkCommands::GenerateToken { peer_did } => {
+                println!("{}", generate_token(&peer_did, &db_conn).await?);
+                ()
+            }
+            LinkCommands::GenerateInvoc { delegation_token } => {
+                println!(
+                    "{}",
+                    generate_invocation_token(&delegation_token, &db_conn).await?
+                );
+                ()
+            }
+            LinkCommands::ValidateInvoc { invocation_token } => {
+                verify_invocation(&invocation_token).await?
             }
         },
         Some(Commands::Sync(SyncCommands::Sync { did })) => sync(did).await?,

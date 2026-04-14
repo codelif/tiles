@@ -46,6 +46,22 @@ pub fn get_secret_key(app: &str, did: &str) -> Result<SecretKey> {
     Ok(signing_key.to_bytes())
 }
 
+/// Returns the `SigningKey` (ed25519_dalek SigningKey)
+///
+/// # Arguments
+///
+/// - `app`- The service for which Identity is made (for ex: tiles)
+/// - `did` - The `Identity` of the service
+pub fn get_signing_key(app: &str, did: &str) -> Result<SigningKey> {
+    let entry = Entry::new(app, did)?;
+    let mut bytes: [u8; 64] = [0u8; 64];
+    let secret_pair = entry.get_secret()?;
+
+    bytes[..64].copy_from_slice(secret_pair.as_slice());
+
+    let signing_key = SigningKey::from_keypair_bytes(&bytes)?;
+    Ok(signing_key)
+}
 pub fn create_and_save_passkey(app: &str, key: &str) -> Result<String> {
     let rand_bytes = get_random_bytes_32();
     let rand_hex: String = rand_bytes.iter().map(|b| format!("{:02x}", b)).collect();

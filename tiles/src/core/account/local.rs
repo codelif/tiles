@@ -1,13 +1,27 @@
 //! Local Account
 // Stuff related to account and identity system
 use anyhow::{Result, anyhow};
+use dialog_credentials::{Ed25519KeyResolver, Ed25519Signer, KeyExport};
+use dialog_ucan::{
+    Delegation, DelegationBuilder, Invocation, InvocationBuilder,
+    delegation::{self, DelegationPayload},
+    envelope::Envelope,
+    subject::Subject,
+    time::timestamp::Timestamp,
+};
+use dialog_varsig::{Did, eddsa::Ed25519Signature};
+// use dialog
 use iroh::SecretKey;
 use rusqlite::{Connection, Row, types::FromSqlError};
 use std::{
+    cell::RefCell,
+    collections::HashMap,
     fmt::Display,
-    time::{SystemTime, UNIX_EPOCH},
+    rc::Rc,
+    str::FromStr,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
-use tilekit::accounts::{create_identity, get_secret_key};
+use tilekit::accounts::{create_identity, get_secret_key, get_signing_key};
 use toml::Table;
 use uuid::Uuid;
 
@@ -319,6 +333,75 @@ pub fn save_peer_account_db(db_conn: &Connection, user_id: &str, nickname: &str)
     Ok(())
 }
 
+pub async fn generate_token(aud_did: &str, db_conn: &Dbconn) -> Result<String> {
+    // get the issuer DID.
+    let user = get_current_user(&db_conn.common)?;
+    println!("current did {}", user.user_id);
+    let app_name = get_app_name();
+    let signing_key = get_signing_key(&app_name, &user.user_id)?;
+    let keyexport = KeyExport::from(&signing_key.to_bytes());
+    let issuer: Ed25519Signer = Ed25519Signer::import(keyexport).await?;
+    println!("issuer did {}", issuer.ed25519_did().to_string());
+    let aud_did = Did::from_str(aud_did)?;
+    let subject = Subject::Specific(Did::from_str(&issuer.ed25519_did().to_string())?);
+    let delegation = DelegationBuilder::<Ed25519Signature>::new()
+        .issuer(issuer)
+        .audience(&aud_did)
+        .subject(subject)
+        .policy(vec![])
+        // generating token with an expiry of an year
+        .expiration(Timestamp::new(
+            SystemTime::now() + Duration::from_secs(86400 * 365),
+        )?)
+        .command(vec![])
+        .try_build()
+        .await?;
+
+    println!("{:?}", delegation);
+    let delegation_serialized = serde_ipld_dagcbor::to_vec(&delegation)?;
+    let delegation_token = data_encoding::BASE64.encode(&delegation_serialized);
+
+    Ok(delegation_token)
+}
+
+pub async fn generate_invocation_token(delegation: &str, db_conn: &Dbconn) -> Result<String> {
+    // get the issuer DID.
+    let user = get_current_user(&db_conn.common)?;
+    println!("current did {}", user.user_id);
+    let app_name = get_app_name();
+    let signing_key = get_signing_key(&app_name, &user.user_id)?;
+    let keyexport = KeyExport::from(&signing_key.to_bytes());
+    let issuer: Ed25519Signer = Ed25519Signer::import(keyexport).await?;
+    println!("issuer did {}", issuer.ed25519_did().to_string());
+
+    let del_bytes = data_encoding::BASE64.decode(delegation.as_bytes())?;
+    let del: Delegation<Ed25519Signature> = serde_ipld_dagcbor::from_slice(&del_bytes)?;
+    let invocation = InvocationBuilder::<Ed25519Signature>::new()
+        .issuer(issuer)
+        .audience(del.issuer())
+        .subject(del.issuer())
+        .command(vec![])
+        .proofs(vec![])
+        .try_build()
+        .await?;
+
+    println!("{:?}", invocation);
+    let invocation_serialized = serde_ipld_dagcbor::to_vec(&invocation)?;
+    let invocation_token = data_encoding::BASE64.encode(&invocation_serialized);
+
+    Ok(invocation_token)
+}
+
+pub async fn verify_invocation(invocation: &str) -> Result<()> {
+    let inv_bytes = data_encoding::BASE64.decode(invocation.as_bytes())?;
+    let inv: Invocation<Ed25519Signature> = serde_ipld_dagcbor::from_slice(&inv_bytes)?;
+    assert_eq!((), inv.verify_signature(&Ed25519KeyResolver).await?);
+    let delegation_store = Rc::new(RefCell::new(HashMap::new()));
+    // let cid = delegation::store::insert(&delegation_store, Rc::new(del)).await?;
+    // // delegation_store.
+    let _res = inv.check(&delegation_store, &Ed25519KeyResolver).await?;
+    Ok(())
+}
 fn create_root_user(root_user_config: &Table, nickname: Option<String>) -> Result<Table> {
     let mut root_user_table = root_user_config.clone();
     let app_name = get_app_name();

@@ -1,0 +1,5 @@
+- Go to .tiles-dev/data
+- sqlcipher common_v2.db
+- pragma key = "x'<TILES_DEV_DB_PASSWORD>'"
+- Delete the "peer" with same nickname as its show in `cargo run -- -x`
+- Now when we try to do `cargo run link enable` and `cargo run link enable <ticket>`, we will see device already linked.
