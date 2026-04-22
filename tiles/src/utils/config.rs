@@ -329,11 +329,12 @@ fn save_root_config(config: &RootConfig) -> Result<()> {
 }
 /// Get the apt path where the model in the system
 pub fn get_model_cache(model_name: &str) -> Result<PathBuf> {
-    let hf_model_dir = if model_name.starts_with("mlx-community/") {
+    let hf_model_dir = if model_name.contains("/") {
         let model_spec_parts = model_name.split("/").collect::<Vec<&str>>();
         format!("models--{}--{}", model_spec_parts[0], model_spec_parts[1])
     } else {
-        return Err(anyhow!("Not implemented for non-mlx models"));
+        return Err(anyhow!("Modelfile not found")); // I actually dont know what error to put lol
+        // We could have models without / as well right?
     };
 
     let lib_dir = DefaultProvider.get_lib_dir()?;
