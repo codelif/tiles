@@ -25,7 +25,7 @@
 
 
 > **Status: Alpha**  
-> Tiles is currently alpha-quality software. It is usable for everyday use, though you may encounter bugs and occasional performance issues. Tilekit, the developer SDK, is still experimental and not intended for production use.
+> Tiles is currently alpha-quality software. It is usable for everyday tasks, though you may encounter bugs and performance issues. Tilekit, the developer SDK, is experimental, not a current priority, and intended for exploratory use, not production.
 
 ## Getting Started
 
