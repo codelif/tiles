@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 use std::str::FromStr;
 
-use crate::core::accounts::User;
+use crate::core::account::local::User;
 use crate::core::storage::db::get_db_conn;
 use crate::runtime::mlx::ChatResponse;
 use crate::utils::get_unix_time_now;
@@ -382,7 +382,7 @@ mod tests {
 
     use crate::{
         core::{
-            accounts::{ACCOUNT, User},
+            account::local::{ACCOUNT, User},
             chats::{
                 apply_delta, create_session, decode_delta_from_bytes, encode_delta_to_bytes,
                 get_delta, get_last_row_counter, save_chat,
