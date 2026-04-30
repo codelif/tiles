@@ -333,11 +333,11 @@ fn show_help() {
             vec![
                 (
                     "/share",
-                    "Create a shareable link for the current session using ATProto",
+                    "Create a shareable link for the current session (via ATProto)",
                 ),
                 (
                     "/share <sessionId>",
-                    "Create a shareable link for a specific session (requires <sessionId>)",
+                    "Create a shareable link for a specific session (via ATProto)",
                 ),
             ],
         ),
