@@ -50,12 +50,12 @@ const CLI_HELP_TEMPLATE: &str = concat!(
     "  Accounts\n",
     "    account   Manage your user account\n",
     "    at        ATProto-related commands\n",
-    "    data      Configure your data and storage\n",
-    "    update    Update Tiles to the latest version\n\n",
+    "    data      Configure your data and storage\n\n",
     "  Sync\n",
     "    link      Link devices via peer-to-peer\n",
     "    sync      Sync chats with peers\n\n",
     "  System\n",
+    "    update    Update Tiles to the latest version\n",
     "    health    Check the status of dependencies\n",
     "    server    Start or stop the daemon server\n",
     "    daemon    Configure daemon behavior\n\n",
@@ -133,9 +133,6 @@ enum AccountCommandsGroup {
 
     /// Configure your data and storage
     Data(DataArgs),
-
-    /// Update Tiles to the latest version
-    Update,
 }
 
 #[derive(Debug, Subcommand)]
@@ -152,6 +149,9 @@ enum SyncCommands {
 
 #[derive(Debug, Subcommand)]
 enum SystemCommands {
+    /// Update Tiles to the latest version
+    Update,
+
     /// Check the status of dependencies
     Health,
 
@@ -390,7 +390,7 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
         Some(Commands::Accounts(AccountCommandsGroup::Account(account_args))) => {
             commands::run_account_commands(account_args)?;
         }
-        Some(Commands::Accounts(AccountCommandsGroup::Update)) => {
+        Some(Commands::System(SystemCommands::Update)) => {
             println!("Checking for updates...");
             let res = installer::try_update(None)
                 .await

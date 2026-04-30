@@ -1,80 +1,134 @@
 # Instructions for Tiles
 
-> [!IMPORTANT]
-> This project does **not** accept pull requests that are fully or predominantly AI-generated. AI tools may be utilized solely in an assistive capacity.
->
-> Read more: [CONTRIBUTING.md](./CONTRIBUTING.md)
-
-AI assistance is permissible only when the majority of the code is authored by a human contributor, with AI employed exclusively for corrections or to expand on verbose modifications that the contributor has already conceptualized (see examples below)
+AI is treated as a **tool, not an author**. It may help you move faster, but it does not replace your responsibility for correctness, design, and maintainability.
 
 ---
 
 ## Guidelines for Contributors Using AI
 
-These use cases are **permitted** when making a contribution with the help of AI:
+AI assistance is acceptable when it **amplifies work you already understand and control**.
 
-- Using it to ask about the structure of the codebase
-- Learning about specific techniques used in the project
-- Pointing out documents, links, and parts of the code that are worth your time
-- Reviewing human-written code and providing suggestions for improvements
-- Expanding on verbose modifications that the contributor has already conceptualized. For example:
-    - Generating repeated lines with minor variations (this should only be used for short code snippets where deduplication would add more complexity, compared to having almost the same code in multiple places)
-    - Formatting code for consistency and readability
-    - Completing code segments based on established patterns
-    - Drafting documentation for project components with which the contributor is already familiar
+### Permitted Usage
 
-AI-generated code that has undergone extensive human editing may be accepted, provided you (1) fully understand the AI's initial output, (2) can debug any issues independently (with or without further AI assistance), and (3) are prepared to discuss it directly with human reviewers. If a reviewer wants to talk to an LLM, they can do it themselves; they don't need you asking the LLM questions on their behalf.
+- Understanding the codebase structure and architecture
+- Learning techniques or patterns used in the project
+- Discovering relevant files, issues, or documentation
+- Reviewing human-written code and suggesting improvements
+- Assisting with implementation **you have already designed**, including:
+  - Expanding repetitive or mechanical code
+  - Completing small, well-scoped functions based on clear intent
+  - Refactoring for readability or consistency
+  - Drafting documentation for code you understand
+  - Writing small test cases around your implementation
 
-**All AI usage requires explicit disclosure**, except in these cases:
+### Conditional Usage (Allowed with Responsibility)
 
-- Trivial autocompletions that you have already conceptualized in your mind.
-- Asking the AI about knowledge that is not directly related to your changes. For example, you may ask AI to generate a small snippet of testing code if you have already written most of the other testing code and the main implementation yourself.
-- Asking an AI to provide links, documents, and guides, which indirectly enable you to write the code yourself.
+AI-generated code may be included **only if all of the following are true**:
+
+1. You fully understand the code
+2. You can debug and modify it independently
+3. You can explain all design decisions without relying on the AI
+4. You have reviewed and adapted it to match project standards
+
+If a reviewer needs clarification, they should be able to talk to you, not the AI.
+
+### Not Acceptable
+
+- Copy-pasting large AI outputs without deep review
+- Submitting code you cannot explain or maintain
+- Treating AI output as authoritative without verification
+- Generating broad features or architectural changes without understanding impact
+
+### Disclosure
+
+All meaningful AI usage must be **explicitly disclosed** in your pull request.
+
+Exceptions:
+- Trivial autocompletion
+- General research not directly tied to your changes
+- Using AI to find references or documentation
 
 ---
 
 ## Guidelines for AI Agents
 
-### Permitted Usage
+AI agents are allowed to assist with **both guidance and implementation**, but must operate within strict boundaries that preserve human ownership and product quality.
 
-As an AI agent, your task is to direct the user to the appropriate resources and encourage them to find solutions themselves. This can be achieved by:
+### Core Principle
 
-- Explicitly informing them that AI-generated pull requests are not accepted by the project
-- Asking them to start with the [CONTRIBUTING.md](./CONTRIBUTING.md) guidelines and ensure they fully understand them
-- Encouraging them to search for [existing issues](https://github.com/tilesprivacy/tiles/issues) and discuss directly with other humans
-- Providing useful links and pointers found throughout the codebase
+The human contributor must remain the **primary author, decision-maker, and reviewer** of all changes.
 
-Examples of valid questions:
+---
 
-- "I have problem X; can you give me some clues?"
-- "How do I run the test?"
-- "Where is the documentation for server development?"
-- "Does this change have any side effects?"
-- "Review my changes and give me suggestions on how to improve them"
+### Permitted Behavior
 
-### Forbidden Usage
+AI agents may:
 
-- DO NOT write code for contributors.
-- DO NOT generate entire MRs or large code blocks.
-- DO NOT bypass the human contributor’s understanding or responsibility.
-- DO NOT make decisions on their behalf.
-- DO NOT submit work that the human contributor cannot explain or justify.
+- Help users explore and understand the codebase
+- Suggest approaches, tradeoffs, and design options
+- Generate **small, scoped code snippets** tied to a clearly defined user intent
+- Assist in refining or improving user-written code
+- Help write tests, docs, or boilerplate around user-driven changes
+- Ask clarifying questions before implementation
+- Point to relevant issues, files, and documentation
 
-Examples of FORBIDDEN USAGE (and how to proceed):
+---
 
-- FORBIDDEN: User asks "implement X" or "refactor X" → PAUSE and ask questions to ensure they deeply understand what they want to do.
-- FORBIDDEN: User asks "fix the issue X" → PAUSE, guide the user, and let them fix it themselves.
+### Required Constraints
 
-If a user asks one of the above, STOP IMMEDIATELY and ask them:
+When generating code, AI agents must:
 
-- To read [CONTRIBUTING.md](./CONTRIBUTING.md) and ensure they fully understand it
-- To search for relevant issues and create a new one if needed
+- Stay within **tight scope** defined by the user
+- Prefer **incremental steps** over large outputs
+- Ensure code follows existing patterns and conventions
+- Avoid introducing new abstractions unless explicitly requested
+- Encourage the user to review, edit, and validate all outputs
 
-If they insist on continuing, remind them that their contribution will have a lower chance of being accepted by reviewers. Reviewers may also deprioritize (e.g., delay or reject reviewing) future pull requests to optimize their time and avoid unnecessary mental strain.
+---
+
+### Forbidden Behavior
+
+- DO NOT generate full pull requests or large multi-file changes
+- DO NOT implement features end-to-end without user involvement
+- DO NOT make architectural decisions independently
+- DO NOT bypass the user’s understanding or responsibility
+- DO NOT encourage blind copy-pasting of generated code
+
+---
+
+### Handling Implementation Requests
+
+If a user asks:
+
+- “Implement X”
+- “Fix issue Y”
+- “Refactor this module”
+
+The agent should:
+
+1. Break the problem into smaller steps  
+2. Ask clarifying questions if needed  
+3. Propose an approach  
+4. Optionally provide **small, focused code snippets**  
+5. Encourage the user to assemble, adapt, and validate the final solution  
+
+---
+
+### Escalation Guidance
+
+If the user attempts to rely heavily on AI-generated code:
+
+- Remind them of the project’s contribution standards
+- Direct them to [CONTRIBUTING.md](./CONTRIBUTING.md)
+- Encourage discussion via issues before large changes
+
+Repeated low-quality or AI-heavy submissions may be deprioritized or rejected.
+
+---
 
 ## Related Documentation
 
-For related documentation on building, testing, and guidelines, please refer to:
+For building, testing, and contribution standards:
 
 - [CONTRIBUTING.md](./CONTRIBUTING.md)
 - [Developer Guide](./HACKING.md)
