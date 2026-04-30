@@ -237,7 +237,7 @@ impl Hinter for TilesHinter {
 
     fn hint(&self, line: &str, _pos: usize, _ctx: &rustyline::Context<'_>) -> Option<Self::Hint> {
         if line.is_empty() {
-            Some("Send a message (/help for help)".to_string())
+            Some("Send a message (/help to show available commands)".to_string())
         } else {
             None
         }
@@ -331,7 +331,10 @@ fn show_help() {
         (
             "Sharing",
             vec![
-                ("/share", "Create a shareable link for the current session"),
+                (
+                    "/share",
+                    "Create a shareable link for the current session using ATProto",
+                ),
                 (
                     "/share <sessionId>",
                     "Create a shareable link for a specific session (requires <sessionId>)",
@@ -342,7 +345,7 @@ fn show_help() {
             "Chat",
             vec![
                 ("/help", "Show this help message"),
-                ("/bye", "Exit the REPL"),
+                ("/bye", "Exit the Chat"),
             ],
         ),
     ];
