@@ -74,9 +74,9 @@ const FTUE_ACCOUNT_LABEL: &str = "Account";
 const FTUE_ACCOUNT_DETAILS_HINT: &str = "View full details:";
 const FTUE_ACCOUNT_DETAILS_COMMAND: &str = "tiles account";
 const FTUE_DATA_DIR_PROMPT: &str = "Data directory";
-const FTUE_DATA_DIR_CHANGE_HINT: &str = "Change data path later:";
+const FTUE_DATA_DIR_CHANGE_HINT: &str = "Change data folder later:";
 const FTUE_DATA_DIR_CHANGE_COMMAND: &str = "tiles data set-path <PATH>";
-const FTUE_CUSTOM_DATA_PROMPT: &str = "Use a custom data directory now? [y/N]";
+const FTUE_CUSTOM_DATA_PROMPT: &str = "Use a custom data folder now? [y/N]";
 const FTUE_UPDATE_COMMAND: &str = "tiles update";
 
 pub fn run_setup_for_ftue(_run_args: &RunArgs) -> Result<()> {
@@ -376,10 +376,10 @@ mod tests {
         assert_eq!(FTUE_ACCOUNT_LABEL, "Account");
         assert_eq!(FTUE_ACCOUNT_DETAILS_HINT, "View full details:");
         assert_eq!(FTUE_DATA_DIR_PROMPT, "Data directory");
-        assert_eq!(FTUE_DATA_DIR_CHANGE_HINT, "Change data path later:");
+        assert_eq!(FTUE_DATA_DIR_CHANGE_HINT, "Change data folder later:");
         assert_eq!(
             FTUE_CUSTOM_DATA_PROMPT,
-            "Use a custom data directory now? [y/N]"
+            "Use a custom data folder now? [y/N]"
         );
     }
 

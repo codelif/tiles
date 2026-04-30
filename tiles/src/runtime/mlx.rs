@@ -316,48 +316,50 @@ fn handle_input(input: &str) -> InputType {
 }
 
 fn show_help() {
-    let help_list = vec![
-        ("status", "Show the current session state"),
-        ("sessions", "List available sessions"),
+    let help_groups = vec![
         (
-            "share",
-            "Create a shareable link for currently running session",
+            "Session",
+            vec![
+                ("/status", "Show the current session state"),
+                ("/sessions", "List all available sessions"),
+                (
+                    "/resume <sessionId>",
+                    "Load and resume a specific session (requires <sessionId>)",
+                ),
+            ],
         ),
-        ("resume <sessionId>", "Loads and resume the given session"),
         (
-            "share",
-            "Create a shareable link for currently running session",
+            "Sharing",
+            vec![
+                ("/share", "Create a shareable link for the current session"),
+                (
+                    "/share <sessionId>",
+                    "Create a shareable link for a specific session (requires <sessionId>)",
+                ),
+            ],
         ),
         (
-            "share <sessionId>",
-            "Create a shareable link for given sessionId",
+            "Chat",
+            vec![
+                ("/help", "Show this help message"),
+                ("/bye", "Exit the REPL"),
+            ],
         ),
-        ("help", "Show this help message"),
-        ("bye", "Exit the REPL"),
     ];
-
-    // finding the length of the longest command, for padding purposes
-    let max_length = help_list
-        .iter()
-        .fold(0, |acc, x| if x.0.len() > acc { x.0.len() } else { acc });
 
     println!("Available Commands:");
 
-    for help in help_list {
-        let final_str = format!(
-            " /{}{}\t\t{}",
-            help.0,
-            " ".repeat(max_length - help.0.len()),
-            help.1
-        );
+    for (heading, commands) in help_groups {
+        println!();
+        println!("  {heading}");
 
-        println!("{}", final_str);
+        for (command, description) in commands {
+            println!("    {command:<24}{description}");
+        }
     }
 
     println!();
-
-    println!("\nDocumentation: https://tiles.run/book");
-
+    println!("Documentation: https://tiles.run/book");
     println!("Report issues: https://github.com/tilesprivacy/tiles/issues");
     println!();
 }
@@ -397,7 +399,7 @@ async fn start_repl(
         .ok_or_else(|| anyhow!("Error getting FROM from modelfile due to"))?;
 
     let system_prompt = modelfile.system.clone().unwrap_or("".to_owned());
-    println!("Running {} in interactive mode", modelname);
+    println!("Running {}", modelname);
     let current_user = get_current_user(&db_conn.common)?;
 
     let config = Config::builder().auto_add_history(true).build();
