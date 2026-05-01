@@ -188,7 +188,7 @@ pub fn logout(conn: &Dbconn) -> Result<()> {
         upsert_auth_data(&conn.common, &logout_user)?;
         println!("Loggedout successfully as {}", key);
     } else {
-        println!("No logged-in user, please login")
+        println!("No user logged in. Please log in using tiles at login <handle>.")
     }
     Ok(())
 }
