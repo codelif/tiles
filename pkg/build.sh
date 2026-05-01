@@ -24,7 +24,7 @@ PKG_CLI_BIN_PATH="pkgroot/usr/local/bin"
 PKG_LIBS_PATH="pkgroot/usr/local/share/tiles"
 
 # CLI binary pkg install path
-mkdir -p "${CLI_BIN_PATH}"
+mkdir -p "${PKG_CLI_BIN_PATH}"
 
 # Other libs pkg install path
 mkdir -p "${PKG_LIBS_PATH}"

@@ -2,7 +2,7 @@
 
 use std::error::Error;
 
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, CommandFactory, Parser, Subcommand};
 use tiles::{
     core::{
         self,
@@ -17,9 +17,67 @@ use tiles::{
 use crate::commands::{show_peers, unlink_peer};
 
 mod commands;
+
+const CLI_HELP_TEMPLATE: &str = concat!(
+    r#"
+                               .:-::.
+                       .:-+*#%@@@@@@%#**+=
+               .:-=*#%@@@@@%%#***#%%@@@%=.
+       .:-=+#%@@@@@%%##****#%@@@@@@@%*=
+   -#%@@@@@@%#*****#%%@@@@@@%#*=-:.
+ -#@%%#####%%%%@@@%%#@@@@@#.
+-###%@@@@@@@@@%%%%%%@@@@@*
+  ..:--=+##*+==@@@@@@@@@=
+             .#@@@@@@@@:
+            -@@@@@@@@#.
+           +@@@@@%@@*
+          #@@@@#+@@=
+        .%@@@@#+@@:
+       .@@@@@##@#.
+        %@@@#%@*
+        :@@*@@=
+         -+@@:
+          .-.
+"#,
+    "\nTiles ",
+    env!("CARGO_PKG_VERSION"),
+    "\nLocal-first private AI assistant for everyday use\n\n",
+    "Usage: {usage}\n\n",
+    "Commands:\n\n",
+    "  Getting Started\n",
+    "    run       Run a Modelfile (uses the default model if none is provided)\n",
+    "    help      Show this message or help for a specific command\n\n",
+    "  Accounts\n",
+    "    account   Manage your user account\n",
+    "    at        ATProto-related commands\n",
+    "    data      Configure your data and storage\n\n",
+    "  Sync\n",
+    "    link      Link devices via peer-to-peer\n",
+    "    sync      Sync chats with peers\n\n",
+    "  System\n",
+    "    update    Update Tiles to the latest version\n",
+    "    health    Check the status of dependencies\n",
+    "    server    Start or stop the daemon server\n",
+    "    daemon    Configure daemon behavior\n\n",
+    "  Tilekit (Developer)\n",
+    "    optimize  Optimize the SYSTEM prompt in a Modelfile\n\n",
+    "Options:\n",
+    "  -h, --help       Show help\n",
+    "  -V, --version    Show version\n\n",
+    "Documentation: https://tiles.run/book\n",
+    "Report issues: https://github.com/tilesprivacy/tiles/issues\n"
+);
+
 #[derive(Debug, Parser)]
 #[command(name = "tiles")]
-#[command(version, about = "Local-first private AI assistant for everyday use", long_about = None, after_help = "Documentation: https://tiles.run/book\nReport issues: https://github.com/tilesprivacy/tiles/issues")]
+#[command(
+    version,
+    about = "Local-first private AI assistant for everyday use",
+    disable_help_subcommand = true,
+    long_about = None,
+    override_usage = "tiles [OPTIONS] [COMMAND]",
+    help_template = CLI_HELP_TEMPLATE
+)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
@@ -28,9 +86,27 @@ struct Cli {
     flags: RunFlags,
 }
 
-#[derive(Subcommand, Debug)]
+#[derive(Debug, Subcommand)]
 enum Commands {
-    /// Runs the given Modelfile (runs the default model if none passed)
+    #[command(flatten, next_help_heading = "Getting Started")]
+    GettingStarted(GettingStartedCommands),
+
+    #[command(flatten, next_help_heading = "Accounts")]
+    Accounts(AccountCommandsGroup),
+
+    #[command(flatten, next_help_heading = "Sync")]
+    Sync(SyncCommands),
+
+    #[command(flatten, next_help_heading = "System")]
+    System(SystemCommands),
+
+    #[command(flatten, next_help_heading = "Tilekit (Developer)")]
+    Tilekit(TilekitCommands),
+}
+
+#[derive(Debug, Subcommand)]
+enum GettingStartedCommands {
+    /// Run a Modelfile (uses the default model if none is provided)
     Run {
         /// Path to the Modelfile (uses default model if not provided)
         modelfile_path: Option<String>,
@@ -39,15 +115,55 @@ enum Commands {
         flags: RunFlags,
     },
 
-    /// Configure your data
-    Data(DataArgs),
+    /// Show this message or help for a specific command
+    Help {
+        /// Command to show help for
+        #[arg(value_name = "COMMAND")]
+        command: Vec<String>,
+    },
+}
 
-    /// Checks the status of dependencies
+#[derive(Debug, Subcommand)]
+enum AccountCommandsGroup {
+    /// Manage your user account
+    Account(AccountArgs),
+
+    /// ATProto-related commands
+    At(AtArgs),
+
+    /// Configure your data and storage
+    Data(DataArgs),
+}
+
+#[derive(Debug, Subcommand)]
+enum SyncCommands {
+    /// Link devices via peer-to-peer
+    Link(LinkArgs),
+
+    /// Sync chats with peers
+    Sync {
+        /// The DID of the peer you want to sync
+        did: Option<String>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum SystemCommands {
+    /// Update Tiles to the latest version
+    Update,
+
+    /// Check the status of dependencies
     Health,
 
-    /// start or stop the daemon server
+    /// Start or stop the daemon server
     Server(ServerArgs),
 
+    /// Configure daemon behavior
+    Daemon(DaemonArgs),
+}
+
+#[derive(Debug, Subcommand)]
+enum TilekitCommands {
     /// Optimize the SYSTEM prompt in a Modelfile
     Optimize {
         /// Path to the Modelfile to optimize
@@ -61,47 +177,27 @@ enum Commands {
         #[arg(long, default_value = "openai:gpt-4o-mini")]
         model: String,
     },
-    /// Manage user account
-    Account(AccountArgs),
-
-    /// Update Tiles to latest version
-    Update,
-
-    /// Daemon configurations
-    Daemon(DaemonArgs),
-
-    /// Link with other devices p2p
-    Link(LinkArgs),
-
-    /// Syncs the chats to peers
-    Sync {
-        /// The DID of the peer you want to sync
-        did: Option<String>,
-    },
-
-    /// Atproto related commands
-    At(AtArgs),
 }
 
 #[derive(Debug, Args)]
 struct RunFlags {
     /// Max times cli communicates with the model until it gets a proper reply for a user prompt
-    #[arg(short = 'r', long, default_value_t = 10)]
+    #[arg(short = 'r', long, default_value_t = 10, hide = true)]
     relay_count: u32,
 
     /// Switches the mode to memory, used for interacting with memory models.
-    #[arg(short = 'm', long)]
+    #[arg(short = 'm', long, hide = true)]
     memory: bool,
     // Future flags go here:
     // #[arg(long, default_value_t = 6969)]
     // port: u16,
 
     // Don't go into the repl
-    #[arg(short = 'x', long)]
+    #[arg(short = 'x', long, hide = true)]
     no_repl: bool,
 
     // Use PI repl instead of Tiles
-    #[arg(short = 'p', long)]
+    #[arg(short = 'p', long, hide = true)]
     pi: bool,
 }
 
@@ -179,7 +275,7 @@ struct LinkArgs {
 
 #[derive(Debug, Subcommand)]
 enum LinkCommands {
-    /// Produce link ticket and wait or send link request with ticket
+    #[command(about = "Produce a link ticket and wait, or send a link request with a ticket.")]
     Enable {
         ticket: Option<String>,
     },
@@ -202,10 +298,9 @@ struct AtArgs {
 
 #[derive(Debug, Subcommand)]
 enum AtCommands {
-    /// Produce link ticket and wait or send link request with ticket
-    Login {
-        handle: String,
-    },
+    #[command(about = "LogIn to Atproto account using handle (ex: john.bsky.team)")]
+    Login { handle: String },
+    #[command(about = "Log out of your Atproto account.")]
     Logout,
 }
 #[tokio::main]
@@ -244,10 +339,10 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
                     .inspect_err(|e| eprintln!("Tiles failed to run due to {:?}", e))?;
             }
         }
-        Some(Commands::Run {
+        Some(Commands::GettingStarted(GettingStartedCommands::Run {
             modelfile_path,
             flags,
-        }) => {
+        })) => {
             let run_args = RunArgs {
                 modelfile_path,
                 relay_count: flags.relay_count,
@@ -267,37 +362,40 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
                 .await
                 .inspect_err(|e| eprintln!("Tiles failed to run due to {:?}", e))?;
         }
-        Some(Commands::Health) => {
+        Some(Commands::GettingStarted(GettingStartedCommands::Help { command })) => {
+            print_help_for_command(&command)?;
+        }
+        Some(Commands::System(SystemCommands::Health)) => {
             commands::check_health().await?;
         }
-        Some(Commands::Server(server)) => match server.command {
+        Some(Commands::System(SystemCommands::Server(server))) => match server.command {
             Some(ServerCommands::Start) => commands::start_server(&runtime).await,
             Some(ServerCommands::Stop) => commands::stop_server(&runtime).await,
             _ => println!("Expected start or stop"),
         },
-        Some(Commands::Data(data)) => match data.command {
+        Some(Commands::Accounts(AccountCommandsGroup::Data(data))) => match data.command {
             DataCommands::SetPath { path } => commands::set_data(path.as_str()),
         },
-        Some(Commands::Optimize {
+        Some(Commands::Tilekit(TilekitCommands::Optimize {
             modelfile_path,
             data,
             model,
-        }) => {
+        })) => {
             let modelfile = commands::optimize(&modelfile_path, data, &model).await?;
             std::fs::write(&modelfile_path, modelfile.to_string())?;
             println!("Successfully updated {}", modelfile_path);
         }
-        Some(Commands::Account(account_args)) => {
+        Some(Commands::Accounts(AccountCommandsGroup::Account(account_args))) => {
             commands::run_account_commands(account_args)?;
         }
-        Some(Commands::Update) => {
+        Some(Commands::System(SystemCommands::Update)) => {
             println!("Checking for updates...");
             let res = installer::try_update(None)
                 .await
                 .inspect_err(|e| eprintln!("Failed in update process due to {:?}", e))?;
             println!("{}", res);
         }
-        Some(Commands::Daemon(daemon_args)) => match daemon_args.command {
+        Some(Commands::System(SystemCommands::Daemon(daemon_args))) => match daemon_args.command {
             Some(DaemonCommands::Start { port }) => start_cmd(port)
                 .await
                 .inspect_err(|e| eprintln!("Daemon starting failed, reason: {:?}", e))?,
@@ -307,15 +405,15 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
                 .inspect(|_| println!("Daemon stopped successfully"))?,
             _ => start_server(None).await?,
         },
-        Some(Commands::Link(link_args)) => match link_args.command {
+        Some(Commands::Sync(SyncCommands::Link(link_args))) => match link_args.command {
             LinkCommands::Enable { ticket } => link(ticket).await?,
             LinkCommands::Disable { did } => unlink_peer(&db_conn, &did)?,
             LinkCommands::ListPeers => {
                 show_peers(&db_conn)?;
             }
         },
-        Some(Commands::Sync { did }) => sync(did).await?,
-        Some(Commands::At(at_args)) => match at_args.command {
+        Some(Commands::Sync(SyncCommands::Sync { did })) => sync(did).await?,
+        Some(Commands::Accounts(AccountCommandsGroup::At(at_args))) => match at_args.command {
             AtCommands::Login { handle } => {
                 login(&db_conn, &handle).await?;
             }
@@ -323,6 +421,18 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
             // AtCommands::Share => share_session(&db_conn).await?,
         },
     }
+    Ok(())
+}
+
+fn print_help_for_command(command_path: &[String]) -> Result<(), Box<dyn Error>> {
+    let mut argv = vec!["tiles".to_owned()];
+    argv.extend(command_path.iter().cloned());
+    argv.push("--help".to_owned());
+
+    if let Err(err) = Cli::command().try_get_matches_from(argv) {
+        err.print()?;
+    }
+
     Ok(())
 }
 

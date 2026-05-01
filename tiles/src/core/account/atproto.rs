@@ -57,9 +57,9 @@ pub struct AtCallbackParams {
     error_description: Option<String>,
 }
 
-struct AtprotoAuthData {
+pub struct AtprotoAuthData {
     // did:plc
-    key: String,
+    pub key: String,
     // serialized session data
     session: String,
     // serialized state data
@@ -69,7 +69,7 @@ struct AtprotoAuthData {
     created_at: u64,
     updated_at: u64,
     #[allow(dead_code)]
-    handle: String,
+    pub handle: String,
 }
 
 struct HickoryDnsTxtResolver {
@@ -106,6 +106,7 @@ impl DnsTxtResolver for HickoryDnsTxtResolver {
 pub async fn login(conn: &Dbconn, handle: &str) -> Result<()> {
     let (client, mem_session_store) = create_oauth_client()?;
 
+    println!("Processing, will be redirected to auth page");
     //TODO: This resolve function is hack to convert handle to DID
     // cuz for some reason the authorize fn not working for customd domains
     // it does work for bluesky hosted handles and DIDs.
@@ -166,15 +167,15 @@ pub async fn login(conn: &Dbconn, handle: &str) -> Result<()> {
 
         upsert_auth_data(&conn.common, &auth_data)?;
         println!("LoggedIn successfully as {}", handle);
+        Ok(())
     } else {
-        eprintln!(
+        Err(anyhow!(
             "Error authorizing due to {}",
             params
                 .error_description
                 .unwrap_or("unknow reason".to_owned())
-        );
+        ))
     }
-    Ok(())
 }
 
 pub fn logout(conn: &Dbconn) -> Result<()> {
@@ -187,7 +188,7 @@ pub fn logout(conn: &Dbconn) -> Result<()> {
         upsert_auth_data(&conn.common, &logout_user)?;
         println!("Loggedout successfully as {}", key);
     } else {
-        println!("No logged-in user, please login")
+        println!("No user logged in. Please log in using tiles at login <handle>.")
     }
     Ok(())
 }
@@ -266,7 +267,7 @@ fn delete_auth_data(conn: &Connection, did: &str) -> Result<()> {
     }
 }
 
-fn fetch_logged_in_data(conn: &Connection) -> Result<Option<AtprotoAuthData>> {
+pub fn fetch_logged_in_data(conn: &Connection) -> Result<Option<AtprotoAuthData>> {
     conn.query_row(
         "SELECT key, session, state, is_logged_in, created_at, updated_at, handle FROM atproto_auth_data WHERE is_logged_in = true",
         [],
@@ -294,6 +295,7 @@ pub async fn share_session(conn: &Connection, shared_session: SharedSession) -> 
 
         mem_session_store.set(did_struct.clone(), session).await?;
 
+        println!("Writing to PDS and generating link...");
         //TODO: Add a user friendly err latta
         let oauth_session = client.restore(&did_struct).await?;
         let agent = Agent::new(oauth_session);
@@ -346,7 +348,8 @@ pub async fn share_session(conn: &Connection, shared_session: SharedSession) -> 
 
         upsert_auth_data(conn, &auth_data)?;
     } else {
-        println!("No logged-in user, please login")
+        info!("No logged-in user, please login");
+        return Err(anyhow!("NOT_LOGGED_IN"));
     }
     Ok(())
 }
