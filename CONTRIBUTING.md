@@ -35,12 +35,14 @@ New inference backends, memory models, and improvements aligned with the roadmap
 
 ### Using AI Agents
 
-This project has specific guidelines for using AI tools when contributing. **AI-generated pull requests are not accepted**—AI tools may only be used in an assistive capacity.
+This project has specific guidelines for using AI tools when contributing. AI can be used to assist with exploration, implementation, and documentation, but the human contributor must remain the primary author and decision-maker.
 
 For detailed information about:
 - What AI assistance is permitted
-- How to properly disclose AI usage
-- Guidelines for AI agents and contributors
+- Required constraints for AI-assisted code generation
+- What AI behavior is not acceptable
+- How to properly disclose meaningful AI usage
+- Guidelines for both AI agents and contributors
 
 Please see [AGENTS.md](AGENTS.md) before using AI tools in your contributions.
 
