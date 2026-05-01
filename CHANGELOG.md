@@ -5,6 +5,31 @@ The format is based on https://keepachangelog.com/en/1.1.0/
 
 ## [Unreleased]
 
+## [0.4.8] - 2026-05-01
+
+## Added
+- Integrate Pi for Agent Harnerss via embedding [#126](https://github.com/tilesprivacy/tiles/pull/126)
+
+- Added Sessions feature [#126](https://github.com/tilesprivacy/tiles/pull/126)
+- Added Atproto login [#129](https://github.com/tilesprivacy/tiles/pull/129)
+    - `tiles at login <handle>`
+    - `tiles at logout`
+
+- Added repl commands for session management [#132](https://github.com/tilesprivacy/tiles/pull/132)
+
+    - `/sessions` - List sessions
+    - `/share` - share current session by writing to PDS
+    - `/share <sessionId>` - share particular session by writing to PDS
+    - `/resume <sessionId>` - Load and continue a particular session
+
+- Added `/status` repl command for showing current session status [#134](https://github.com/tilesprivacy/tiles/pull/134)
+
+
+## Changed
+
+* Multiple UI/UX improvements and refactoring in [#127](https://github.com/tilesprivacy/tiles/pull/127), [#131](https://github.com/tilesprivacy/tiles/pull/131), [#133](https://github.com/tilesprivacy/tiles/pull/133), [#135](https://github.com/tilesprivacy/tiles/pull/127)
+ 
+
 ## [0.4.6] - 2026-03-30
 
 ### Added
