@@ -298,10 +298,8 @@ struct AtArgs {
 
 #[derive(Debug, Subcommand)]
 enum AtCommands {
-    #[command(about = "Produce a link ticket and wait, or send a link request with a ticket.")]
-    Login {
-        handle: String,
-    },
+    #[command(about = "LogIn to Atproto account using handle (ex: john.bsky.team)")]
+    Login { handle: String },
     #[command(about = "Log out of your Atproto account.")]
     Logout,
 }
