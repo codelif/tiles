@@ -11,7 +11,7 @@ import sys
 import time
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Dict, Optional, Union, Iterator
+from typing import Dict, Optional, Union
 
 from ..reasoning_utils import ReasoningExtractor, StreamingReasoningParser
 from ..schemas import GenerationMetrics
@@ -415,7 +415,6 @@ class LlamaRunner:
         temperature: float = 0.7,
         top_p: float = 0.9,
         repetition_penalty: float = 1.1,
-        repetition_context_size: int = 20,
         use_chat_template: bool = True,
         use_chat_stop_tokens: bool = False,
         interactive: bool = False,
@@ -509,7 +508,6 @@ class LlamaRunner:
 
             # ---- Native stop-token check ----
             native_stop_tokens = self._stop_tokens or []
-            stopped = False
             for stop_token in native_stop_tokens:
                 if stop_token in accumulated_response:
                     stop_pos = accumulated_response.find(stop_token)
@@ -667,7 +665,7 @@ class LlamaRunner:
         temperature: float = 0.7,
         top_p: float = 0.9,
         repetition_penalty: float = 1.1,
-        repetition_context_size: int = 20,
+        # repetition_context_size: int = 20,
         use_chat_template: bool = True,
         interactive: bool = False,
     ) -> str:
@@ -738,37 +736,10 @@ class LlamaRunner:
 
         return response
 
-
-        # start_time = time.time()
-        # tokens_generated = 0
-        # ttft = None
-
-        # stream = self.model.create_chat_completion(
-        #     messages=messages,
-        #     max_tokens=effective_max_tokens,
-        #     temperature=temperature,
-        #     top_p=top_p,
-        #     repeat_penalty=repetition_penalty,
-        #     stream=True,
-        # )
-
-        # for chunk in stream:
-        #     delta = chunk["choices"][0].get("delta", {})
-        #     text = delta.get("content", "")
-        #     if not text:
-        #         continue
-
-        #     tokens_generated += 1
-        #     if ttft is None:
-        #         ttft = time.time() - start_time
-
-        #     yield text
-
-        #     finish = chunk["choices"][0].get("finish_reason")
-        #     if finish == "stop":
-        #         break
-
-        # yield self._make_metrics(start_time, tokens_generated, ttft)
+    
+    ## I have mostly focused on GPT streaming for Linux, 
+    ## It is very much possible batch streaming might not be as robust
+    ## Will focus on that next time.
 
     def generate_streaming_gpt(
         self,
@@ -777,15 +748,14 @@ class LlamaRunner:
         temperature: float = 0.7,
         top_p: float = 0.9,
         repetition_penalty: float = 1.1,
-        repetition_context_size: int = 20,
+        # repetition_context_size: int = 20,
     ) -> Iterator[str | GenerationMetrics]:
         """Generate Harmony/GPT streaming output.
 
         Extracts messages from the Harmony conversation as text and
-        uses llama-cpp-python's native chat completion.  Reasoning
-        and answer sections are detected via the StreamingReasoningParser
-        at the text level (not Harmony token IDs) to avoid mixing
-        incompatible token spaces.
+        uses llama-cpp-python's native chat completion.  Control tokens
+        (channel markers, start/end) are stripped and replaced with
+        **[Reasoning]** / **[Answer]** headers matching the MLX backend.
 
         Yields:
             str chunks then GenerationMetrics
@@ -832,15 +802,16 @@ class LlamaRunner:
         tokens_generated = 0
         ttft = None
 
-        # Use reasoning parser for text-level section detection
-        reasoning_parser = None
-        if self._is_reasoning_model:
-            model_type = ReasoningExtractor.detect_model_type(
-                str(self.model_path)
-            )
-            reasoning_parser = StreamingReasoningParser(
-                model_type, hide_reasoning=False
-            )
+        # GPT-OSS control tokens to detect and replace
+        ANALYSIS_START = "\x3c|channel|\x3eanalysis\x3c|message|\x3e"
+        REASONING_END = "\x3c|end|\x3e"
+        FINAL_START = "\x3c|channel|\x3efinal\x3c|message|\x3e"
+        # Intermediate tokens between reasoning and final
+        SKIP_TOKENS = [
+            "\x3c|start|\x3eassistant\x3c|channel|\x3efinal\x3c|message|\x3e",
+            "\x3c|start|\x3eassistant",
+            "\x3c|start|\x3e",
+        ]
 
         stream = self.model.create_chat_completion(
             messages=messages,
@@ -848,7 +819,23 @@ class LlamaRunner:
             temperature=temperature,
             top_p=top_p,
             repeat_penalty=repetition_penalty,
+            stop=self._stop_tokens or [],
             stream=True,
+        )
+
+        # this might be the best solution I have till date for better token management
+        # State machine for control token stripping.
+        # Each state only buffers enough text to detect the next expected
+        # marker, keeping memory bounded.
+        #
+        # States: INIT → IN_REASONING → BETWEEN → IN_ANSWER
+        state = "INIT"
+        buf = ""
+        # Longest marker we need to detect in any state
+        max_marker_len = max(
+            len(ANALYSIS_START),
+            len(REASONING_END),
+            len(SKIP_TOKENS[0]),  # longest skip token includes FINAL_START
         )
 
         for chunk in stream:
@@ -861,14 +848,77 @@ class LlamaRunner:
             if ttft is None:
                 ttft = time.time() - start_time
 
-            yield from self._yield_with_reasoning(text, reasoning_parser)
+            buf += text
+
+            if state == "INIT":
+                # Looking for ANALYSIS_START
+                if ANALYSIS_START in buf:
+                    before = buf.split(ANALYSIS_START, 1)[0]
+                    if before.strip():
+                        yield before
+                    yield "**[Reasoning]**\n\n"
+                    buf = buf.split(ANALYSIS_START, 1)[1]
+                    state = "IN_REASONING"
+                elif len(buf) > max_marker_len:
+                    # Flush safe prefix, keep tail for partial match
+                    safe = buf[:-max_marker_len]
+                    buf = buf[-max_marker_len:]
+                    if safe:
+                        yield safe
+
+            if state == "IN_REASONING":
+                # Looking for REASONING_END, streaming reasoning text
+                if REASONING_END in buf:
+                    reasoning_text = buf.split(REASONING_END, 1)[0]
+                    if reasoning_text:
+                        yield reasoning_text
+                    yield "\n\n---\n\n**[Answer]**\n\n"
+                    buf = buf.split(REASONING_END, 1)[1]
+                    state = "BETWEEN"
+                else:
+                    # Stream reasoning content, keep tail for partial match
+                    safe_len = len(buf) - len(REASONING_END)
+                    if safe_len > 0:
+                        yield buf[:safe_len]
+                        buf = buf[safe_len:]
+
+            if state == "BETWEEN":
+                # Eating control tokens between reasoning and answer.
+                # Looking for FINAL_START, stripping everything before it.
+                if FINAL_START in buf:
+                    buf = buf.split(FINAL_START, 1)[1]
+                    state = "IN_ANSWER"
+                    if buf:
+                        yield buf
+                        buf = ""
+                elif len(buf) > max_marker_len:
+                    # Still waiting for FINAL_START — discard consumed
+                    # intermediate tokens but keep tail for partial match
+                    buf = buf[-max_marker_len:]
+
+            elif state == "IN_ANSWER":
+                # Past all markers — yield new text directly
+                if buf:
+                    yield buf
+                    buf = ""
 
             finish = chunk["choices"][0].get("finish_reason")
             if finish == "stop":
                 break
 
-        if reasoning_parser:
-            yield from reasoning_parser.finalize()
+        # Flush remaining buffer
+        if buf.strip():
+            if state == "BETWEEN":
+                # Never found FINAL_START — strip known control tokens
+                for skip in SKIP_TOKENS:
+                    buf = buf.replace(skip, "")
+                if FINAL_START in buf:
+                    buf = buf.split(FINAL_START, 1)[1]
+            if state == "INIT":
+                if ANALYSIS_START in buf:
+                    buf = buf.replace(ANALYSIS_START, "")
+            if buf.strip():
+                yield buf
 
         yield self._make_metrics(start_time, tokens_generated, ttft)
 
@@ -887,7 +937,7 @@ class LlamaRunner:
         temperature: float = 0.7,
         top_p: float = 0.9,
         repetition_penalty: float = 1.0,
-        repetition_context_size: int = 20,
+        # repetition_context_size: int = 20,
         use_chat_template: bool = True,
         interactive: bool = False,
     ) -> str:

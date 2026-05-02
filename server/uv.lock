@@ -701,7 +701,6 @@ requires-dist = [
     { name = "fastapi", specifier = "==0.119.0" },
     { name = "jinja2" },
     { name = "llama-cpp-python" },
-    { name = "httpx", specifier = "==0.28.1" },
     { name = "mlx-lm", specifier = "==0.31.0" },
     { name = "openai-harmony", specifier = "==0.0.8" },
     { name = "openresponses-types" },

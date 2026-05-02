@@ -13,7 +13,7 @@ from openai_harmony import (
     Role,
     SystemContent,
 )
-from openresponses_types import AssistantMessageItemParam, ReasoningEffortEnum
+from openresponses_types import AssistantMessageItemParam, ReasoningEffortEnum, SystemMessageItemParam
 from openresponses_types.types import (
     DeveloperMessageItemParam,
     UserMessageItemParam,
@@ -24,8 +24,12 @@ from openresponses_types.types import (
 from ..reasoning_utils import ReasoningExtractor
 
 from ..cache_utils import get_model_path
-from ..hf_downloader import pull_model
+
 from ..schemas import (
+    CAssistantMessageItemParam,
+    CDeveloperMessageItemParam,
+    CSystemMessageItemParam,
+    CUserMessageItemParam,
     ChatCompletionRequest,
     ChatMessage,
     GenerationMetrics,
@@ -46,12 +50,6 @@ _current_model_path: Optional[str] = None
 _responses: Dict[str, ResponsesResponse] = {}
 
 
-def download_model(model_name: str):
-    """Download the model"""
-    if pull_model(model_name):
-        return {"message": "Model downloaded"}
-    else:
-        raise HTTPException(status_code=400, detail="Downloading model failed")
 
 
 def get_or_load_model(model_spec: str, verbose: bool = True) -> LlamaRunner:
@@ -121,26 +119,6 @@ def format_chat_messages_for_runner(
     Returns messages in dict format for the runner to apply chat templates.
     """
     return [{"role": msg.role, "content": msg.content} for msg in messages]
-
-
-# def _prepend_previous_response(user_input: str, prev_id: Optional[str]) -> str:
-#     """If prev_id points to a stored response, prepend its output text as context."""
-
-#     if not prev_id:
-#         return user_input
-
-#     prev = _responses.get(prev_id)  # pyright: ignore
-
-#     if not prev or not getattr(prev, "output", None):
-#         return user_input
-#     prev_text_parts: List[str] = []
-#     for out in prev.output:
-#         for c in out.get("content", []):
-#             if c.get("type") == "output_text":
-#                 prev_text_parts.append(c.get("text", ""))
-#     if prev_text_parts:
-#         return "\n".join(prev_text_parts) + "\n\n" + user_input
-#     return user_input
 
 
 def _calc_usage(
@@ -242,13 +220,16 @@ def build_harmony_conversation(
 
     for item in convos:
         match item:
-            case UserMessageItemParam():
+            case CUserMessageItemParam():
+                content = ""
+                if isinstance(item.content, list):
+                    content = item.content[0].text
+                else:
+                    content = item.content.root
                 convo_list.append(
-                    Message.from_role_and_content(
-                        Role.USER, item.content.root
-                    )  # pyright: ignore
+                    Message.from_role_and_content(Role.USER, content)  # pyright: ignore
                 )
-            case DeveloperMessageItemParam():
+            case CDeveloperMessageItemParam():
                 convo_list.append(
                     Message.from_role_and_content(
                         Role.DEVELOPER,
@@ -257,11 +238,20 @@ def build_harmony_conversation(
                         ),  # pyright: ignore
                     )
                 )
-            case AssistantMessageItemParam():
+            case CAssistantMessageItemParam():
+                content = ""
+                if isinstance(item.content, list):
+                    content = item.content[0].text
+                else:
+                    content = item.content.root
                 convo_list.append(
                     Message.from_role_and_content(
-                        Role.ASSISTANT, item.content.root
+                        Role.ASSISTANT, content
                     )  # pyright: ignore
+                )
+            case CSystemMessageItemParam():
+                convo_list.append(
+                    Message.from_role_and_content(Role.SYSTEM, item.content.root)
                 )
             case _:
                 raise TypeError("unknown type")
@@ -279,34 +269,35 @@ def count_tokens(text: str) -> int:
     return int(len(text.split()) * 1.3)
 
 
-def handle_response_input(request: ResponsesRequest) -> Union[str, List[Dict[str, str]]]:
+def handle_response_input(request: ResponsesRequest):
+    user_msg_item = None
+    user_input_content = ""
+
     if isinstance(request.input, str):
-        return request.input
+        user_input_content = request.input
     else:
-        messages = []
-        for item in request.input:
-            role = getattr(item, "role", "user")
-            # Convert developer to system since LlamaRunner expects standard roles
-            if role == "developer":
-                role = "system"
-                
-            content = item.content.root if hasattr(item.content, "root") else str(item.content)
-            if content:
-                messages.append({"role": role, "content": content})
-        return messages
+        user_msg_item = request.input[-1]
+        if isinstance(user_msg_item.content, list):
+            user_input_content = user_msg_item.content[0].text
+        else:
+            user_input_content = user_msg_item.content.root
+    return user_input_content
 
 
 async def generate_response_chat_stream(
     request: ResponsesRequest,
 ) -> AsyncGenerator[str, None]:
-    """Generate streaming chat responses for OpenResponses API."""
+    """Generate streaming chat responses for OpenResponses API.
+
+    Uses SSE event format matching the MLX backend so Pi can parse the stream.
+    """
     model = request.model
     created = int(time.time())
     runner = get_or_load_model(model)
     metrics = None
 
     user_input_content = handle_response_input(request)
-    
+
     convo = None
     if is_harmony_family(model):
         try:
@@ -321,25 +312,64 @@ async def generate_response_chat_stream(
 
     input_tokens = _calc_usage(runner, user_input_content, "").get("input_tokens", 0)
 
-    # Initial chunk
+    response_id = f"resp_{uuid.uuid4()}"
+    message_id = f"msg_{uuid.uuid4()}"
+    sequence_number = 0
+
+    # response.created event
     initial_chunk = {
-        "id": f"resp_{uuid.uuid4()}",
-        "object": "response.chunk",
+        "id": response_id,
+        "object": "response",
         "created_at": created,
         "model": model,
         "status": "in_progress",
         "output": [
             {
                 "type": "message",
-                "id": f"msg_{uuid.uuid4()}",
+                "id": message_id,
                 "status": "in_progress",
                 "role": "assistant",
                 "content": [],
             }
         ],
-        "usage": {"input_tokens": input_tokens, "output_tokens": 0},
+        "incomplete_details": {"reason": ""},
+        "previous_response_id": request.previous_response_id,
+        "instructions": request.instructions,
+        "temperature": request.temperature,
+        "prompt_cache_key": request.prompt_cache,
+        "safety_identifier": request.safety_identifier,
+        "service_tier": request.service_tier,
+        "background": request.background,
+        "store": request.store,
+        "max_tool_calls": request.max_tool_calls,
+        "max_output_tokens": request.max_output_tokens,
+        "usage": {
+            "input_tokens": input_tokens,
+            "output_tokens": 0,
+            "total_tokens": input_tokens,
+            "input_tokens_details": 0,
+            "output_tokens_details": 0,
+        },
+        "reasoning": {"effort": "medium", "summary": "auto"},
+        "top_logprobs": request.top_logprobs,
+        "frequency_penalty": 0,
+        "presence_penalty": 0,
+        "top_p": request.top_p,
+        "text": {"format": {"type": "text"}, "verbosity": "low"},
+        "paralell_tool_calls": 0,
+        "truncation": "disabled",
+        "tool_choice": "auto",
+        "tools": [{"name": "", "type": "function"}],
+        "error": {"code": "", "message": ""},
     }
-    yield f"data: {json.dumps(initial_chunk)}\n\n"
+    event = {
+        "type": "response.created",
+        "sequence_number": sequence_number,
+        "response": initial_chunk,
+    }
+    sequence_number += 1
+    yield "event: response.created\n"
+    yield f"data: {json.dumps(event)}\n\n"
 
     accumulated_text = ""
     answer_text = ""
@@ -347,6 +377,8 @@ async def generate_response_chat_stream(
     error = None
     incomplete_details = None
     has_answer_started: bool = False
+    output_index = 0
+    content_index = 0
     try:
 
         # Route: Harmony path (gpt-oss) or standard path
@@ -382,30 +414,46 @@ async def generate_response_chat_stream(
             accumulated_text += token
             output_tokens += 1  # Each yield is one token
 
-            chunk = {
-                "id": f"resp_{uuid.uuid4()}",
-                "object": "response.chunk",
-                "created_at": created,
-                "model": model,
-                "status": "in_progress",
-                "output": [
-                    {
-                        "type": "message",
-                        "id": f"msg_{uuid.uuid4()}",
-                        "status": "in_progress",
-                        "role": "assistant",
-                        "content": [
-                            {
-                                "type": "output_text",
-                                "text": token,
-                                "annotations": [],
-                            }
-                        ],
-                    }
-                ],
-                "usage": {"input_tokens": input_tokens, "output_tokens": output_tokens},
+            # First token: emit response.output_item.added
+            if sequence_number == 1:
+                event_name = "response.output_item.added"
+                item_chunk = {
+                    "type": "message",
+                    "id": message_id,
+                    "status": "in_progress",
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": token,
+                            "annotations": [],
+                        }
+                    ],
+                }
+                event = {
+                    "type": event_name,
+                    "sequence_number": sequence_number,
+                    "output_index": output_index,
+                    "item": item_chunk,
+                }
+                yield f"event: {event_name}\n"
+                yield f"data: {json.dumps(event)}\n\n"
+
+            # Every token: emit response.output_text.delta
+            event_name = "response.output_text.delta"
+            event = {
+                "type": event_name,
+                "sequence_number": sequence_number,
+                "output_index": output_index,
+                "item_id": message_id,
+                "delta": token,
+                "content_index": content_index,
             }
-            yield f"data: {json.dumps(chunk)}\n\n"
+
+            sequence_number += 1
+            content_index += 1
+            yield f"event: {event_name}\n"
+            yield f"data: {json.dumps(event)}\n\n"
 
     except Exception as e:
         import traceback
@@ -413,26 +461,18 @@ async def generate_response_chat_stream(
         error = {"message": str(e), "code": "500"}
         incomplete_details = {"reason": "internal server error"}
 
-        error_chunk = {
-            "id": f"resp_{uuid.uuid4()}",
-            "object": "response.chunk",
-            "created_at": created,
-            "model": model,
-            "status": "failed",
-            "error": error,
-            "incomplete_details": incomplete_details,
-            "output": [],
-            "usage": {"input_tokens": input_tokens, "output_tokens": output_tokens},
-        }
-        yield f"data: {json.dumps(error_chunk)}\n\n"
+        error_event = {"type": "error", "sequence_number": sequence_number, "error": error}
+        sequence_number += 1
+        yield "event: error\n"
+        yield f"data: {json.dumps(error_event)}\n\n"
         return
 
-    # Final chunk
+    # Final events
     completed_at = int(time.time())
 
     final_chunk = {
-        "id": f"resp_{uuid.uuid4()}",
-        "object": "response.chunk",
+        "id": response_id,
+        "object": "response",
         "created_at": created,
         "completed_at": completed_at,
         "model": model,
@@ -440,22 +480,50 @@ async def generate_response_chat_stream(
         "output": [
             {
                 "type": "message",
-                "id": f"msg_{uuid.uuid4()}",
+                "id": message_id,
                 "status": "completed",
                 "role": "assistant",
                 "content": [
                     {
                         "type": "output_text",
-                        "text": answer_text if has_answer_started else accumulated_text,
+                        "text": answer_text,
                         "annotations": [],
                     }
                 ],
             }
         ],
-        "usage": {"input_tokens": input_tokens, "output_tokens": output_tokens},
+        "incomplete_details": {"reason": ""},
+        "previous_response_id": request.previous_response_id,
+        "instructions": request.instructions,
+        "temperature": request.temperature,
+        "prompt_cache_key": request.prompt_cache,
+        "safety_identifier": request.safety_identifier,
+        "service_tier": request.service_tier,
+        "background": request.background,
+        "store": request.store,
+        "max_tool_calls": request.max_tool_calls,
+        "max_output_tokens": request.max_output_tokens,
+        "usage": {
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": input_tokens + output_tokens,
+            "input_tokens_details": 0,
+            "output_tokens_details": 0,
+        },
+        "reasoning": {"effort": "medium", "summary": "auto"},
+        "top_logprobs": request.top_logprobs,
+        "frequency_penalty": 0,
+        "presence_penalty": 0,
+        "top_p": request.top_p,
+        "text": {"format": {"type": "text"}, "verbosity": "low"},
+        "paralell_tool_calls": 0,
+        "truncation": "disabled",
+        "tool_choice": "auto",
+        "tools": [{"name": "", "type": "function"}],
+        "error": {"code": "", "message": ""},
     }
 
-    # Store and return a typed ResponsesResponse for follow-ups
+    # Store response for follow-ups
     metrics_obj = None
     if metrics:
         metrics_obj = {
@@ -467,7 +535,7 @@ async def generate_response_chat_stream(
         final_chunk["metrics"] = metrics_obj
 
     _store_response(
-        response_id=final_chunk["id"],
+        response_id=response_id,
         created=created,
         completed_at=completed_at,
         model=model,
@@ -476,7 +544,28 @@ async def generate_response_chat_stream(
         usage={"input_tokens": input_tokens, "output_tokens": output_tokens},
         metrics=metrics_obj,
     )
-    yield f"data: {json.dumps(final_chunk)}\n\n"
+
+    # response.output_text.done event
+    output_done_event = {
+        "type": "response.output_text.done",
+        "sequence_number": sequence_number,
+        "item_id": message_id,
+        "output_index": output_index,
+        "content_index": content_index,
+        "text": answer_text,
+    }
+    yield "event: response.output_text.done\n"
+    yield f"data: {json.dumps(output_done_event)}\n\n"
+
+    # response.completed event
+    event = {
+        "type": "response.completed",
+        "sequence_number": sequence_number,
+        "response": final_chunk,
+    }
+    sequence_number += 1
+    yield "event: response.completed\n"
+    yield f"data: {json.dumps(event)}\n\n"
     yield "data: [DONE]\n\n"
 
 
