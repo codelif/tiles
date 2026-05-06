@@ -67,15 +67,20 @@ impl Display for ACCOUNT {
     }
 }
 
-//TODO: add doc, mirrors user table schema
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct User {
+    // unique uuidv7
     pub id: String,
+    // did:key
     pub user_id: String,
+    // nickname of the user
     pub username: String,
+    // is this identity, user is using everywhere in Tiles
     pub active_profile: bool,
+    // LOCAL / PEER(other identities other than user's)
     pub account_type: ACCOUNT,
+    // The first identity created locally
     pub root: bool,
     pub created_at: u64,
     pub updated_at: u64,
