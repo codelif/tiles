@@ -1,7 +1,7 @@
 use crate::core::account::atproto::{fetch_logged_in_data, login, share_session};
 use crate::core::account::local::get_current_user;
 use crate::core::chats::{
-    Message, Session, create_session, fetch_chats_by_session_id, fetch_models_used_by_session,
+    Session, create_session, fetch_chats_by_session_id, fetch_models_used_by_session,
     fetch_session, fetch_sessions, save_chat,
 };
 use crate::core::storage::db::Dbconn;
@@ -587,17 +587,14 @@ async fn start_repl(
         let mut last_chat_id: String = "".to_owned();
         let mut has_answer_start = false;
         for line in reader.lines() {
-            //TODO: handle the unwrap
             let line = line?;
             let response: PiResponse = serde_json::from_str(&line)?;
             match response {
                 PiResponse::AgentStart => {}
                 PiResponse::MessageUpdate(msg_update) => {
                     if msg_update.assistant_message_event.r#type == "text_delta"
-                        && msg_update.assistant_message_event.delta.is_some()
+                        && let Some(delta) = msg_update.assistant_message_event.delta
                     {
-                        let delta = msg_update.assistant_message_event.delta.unwrap();
-
                         if delta.contains("**[Answer]**") {
                             has_answer_start = true;
                         }
@@ -775,38 +772,6 @@ fn get_default_modelfile(memory_mode: bool) -> Result<PathBuf> {
     } else {
         let path = DefaultProvider.get_lib_dir()?.join("modelfiles/gpt-oss");
         Ok(path)
-    }
-}
-
-//TODO: Deprecated if not needed
-#[allow(dead_code)]
-fn create_chat_input(input: &str, prompt: &str, conversations: &[Message]) -> Vec<Message> {
-    let dev_msg = Message {
-        r#type: "message".to_owned(),
-        role: Role::Developer,
-        content: String::from(prompt),
-    };
-
-    let input = Message {
-        r#type: "message".to_owned(),
-        role: Role::User,
-        content: String::from(input),
-    };
-
-    let last_n = if conversations.len() < 10 {
-        conversations
-    } else {
-        &conversations[conversations.len() - 10..]
-    };
-
-    if !conversations.is_empty() {
-        let mut convo: Vec<Message> = vec![];
-        convo.push(dev_msg);
-        convo.append(&mut last_n.to_vec());
-        convo.push(input);
-        convo
-    } else {
-        vec![dev_msg, input]
     }
 }
 

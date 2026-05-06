@@ -115,7 +115,6 @@ pub async fn login(conn: &Dbconn, handle: &str) -> Result<()> {
         .await
         .inspect_err(|_| eprintln!("Failed to resolve handle"))?;
 
-    info!("{}", did);
     let url = client
         .authorize(
             did.clone(),
@@ -128,10 +127,20 @@ pub async fn login(conn: &Dbconn, handle: &str) -> Result<()> {
             },
         )
         .await
-        .inspect_err(|_| eprintln!("Failed to authorize"))?;
+        .inspect_err(|_| eprintln!("Failed to generate authorization url"))?;
 
-    let mut child = Command::new("open").arg(url).spawn()?;
-    child.wait()?;
+    let mut program = cfg_select! {
+        target_os = "macos" => {
+            Command::new("open").arg(url).spawn()?
+                    }
+        target_os = "linux" => {
+            Command::new("xdg-open").arg(url).spawn()?
+                    }
+        _ => {
+            panic!("Unsupported OS")
+        }
+    };
+    program.wait()?;
     let (callback_tx, callback_rx) = oneshot::channel();
 
     //TODO: can we randomze port
