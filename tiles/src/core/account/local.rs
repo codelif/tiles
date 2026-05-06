@@ -12,6 +12,7 @@ use dialog_ucan::{
 use dialog_varsig::{Did, eddsa::Ed25519Signature};
 // use dialog
 use iroh::SecretKey;
+use log::info;
 use rusqlite::{Connection, Row, types::FromSqlError};
 use std::{
     cell::RefCell,
@@ -334,14 +335,13 @@ pub fn save_peer_account_db(db_conn: &Connection, user_id: &str, nickname: &str)
 }
 
 pub async fn generate_token(aud_did: &str, db_conn: &Dbconn) -> Result<String> {
-    // get the issuer DID.
     let user = get_current_user(&db_conn.common)?;
-    println!("current did {}", user.user_id);
+    info!("current did {}", user.user_id);
     let app_name = get_app_name();
     let signing_key = get_signing_key(&app_name, &user.user_id)?;
     let keyexport = KeyExport::from(&signing_key.to_bytes());
     let issuer: Ed25519Signer = Ed25519Signer::import(keyexport).await?;
-    println!("issuer did {}", issuer.ed25519_did().to_string());
+    info!("issuer did {}", issuer.ed25519_did().to_string());
     let aud_did = Did::from_str(aud_did)?;
     let subject = Subject::Specific(Did::from_str(&issuer.ed25519_did().to_string())?);
     let delegation = DelegationBuilder::<Ed25519Signature>::new()
@@ -357,7 +357,6 @@ pub async fn generate_token(aud_did: &str, db_conn: &Dbconn) -> Result<String> {
         .try_build()
         .await?;
 
-    println!("{:?}", delegation);
     let delegation_serialized = serde_ipld_dagcbor::to_vec(&delegation)?;
     let delegation_token = data_encoding::BASE64.encode(&delegation_serialized);
 
