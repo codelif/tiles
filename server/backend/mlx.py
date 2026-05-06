@@ -1,5 +1,6 @@
 import json
 import logging
+from ssl import SSLCertVerificationError
 import time
 import uuid
 from collections.abc import AsyncGenerator
@@ -108,7 +109,7 @@ async def generate_chat_stream(
     # Let the runner format with chat templates
     prompt = runner._format_conversation(message_dicts, use_chat_template=True)
 
-    # Yield initial response
+    # lYield initial response
     initial_response = {
         "id": completion_id,
         "object": "chat.completion.chunk",
@@ -315,7 +316,7 @@ async def generate_response_chat_stream(
     metrics = None
 
     user_input_content = ""
-    convo: Conversation | None = None
+    convo: Conversation
     user_input_content = handle_response_input(request)
     if is_harmony_family(model):
 
@@ -330,62 +331,31 @@ async def generate_response_chat_stream(
     response_id = f"resp_{uuid.uuid4()}"
     message_id = f"msg_{uuid.uuid4()}"
     sequence_number = 0
-
-    initial_chunk = {
-        "id": response_id,
-        "object": "response",
-        "created_at": created,
-        "model": model,
-        "status": "in_progress",
-        "output": [
-            {
-                "type": "message",
-                "id": message_id,
-                "status": "in_progress",
-                "role": "assistant",
-                "content": [],
-            }
-        ],
-        "incomplete_details": {"reason": ""},
-        "previous_response_id": request.previous_response_id,
-        "instructions": request.instructions,
-        "temperature": request.temperature,
-        "prompt_cache_key": request.prompt_cache,
-        "safety_identifier": request.safety_identifier,
-        "service_tier": request.service_tier,
-        "background": request.background,
-        "store": request.store,
-        "max_tool_calls": request.max_tool_calls,
-        "max_output_tokens": request.max_output_tokens,
-        # input and output token details are 0, since we dont do cache now or
-        # i dont know, how to do cache too
-        "usage": {
-            "input_tokens": input_tokens,
-            "output_tokens": 0,
-            "total_tokens": input_tokens,
-            "input_tokens_details": 0,
-            "output_tokens_details": 0,
-        },
-        "reasoning": {"effort": "medium", "summary": "auto"},
-        "top_logprobs": request.top_logprobs,
-        "frequency_penalty": 0,
-        "presence_penalty": 0,
-        "top_p": request.top_p,
-        "text": {"format": {"type": "text"}, "verbosity": "low"},
-        "paralell_tool_calls": 0,
-        "truncation": "disabled",
-        "tool_choice": "auto",
-        "tools": [{"name": "", "type": "function"}],
-        "error": {"code": "", "message": ""},
-    }
+    output = [
+        {
+            "type": "message",
+            "id": message_id,
+            "status": "in_progress",
+            "role": "assistant",
+            "content": [],
+        }
+    ]
+    initial_chunk = _get_response_chunk(
+        response_id,
+        request,
+        input_tokens,
+        input_tokens,
+        created,
+        None,
+        output,
+    )
     event = {
         "type": "response.created",
         "sequence_number": sequence_number,
         "response": initial_chunk,
     }
     sequence_number += 1
-    yield "event: response.created\n"
-    yield f"data: {json.dumps(event)}\n\n"
+    yield _sse("response.created", event)
 
     accumulated_text = ""
     answer_text = ""
@@ -394,27 +364,26 @@ async def generate_response_chat_stream(
     incomplete_details = None
     has_answer_started: bool = False
     output_index = 0
-    item_id = f"item_{uuid.uuid4()}"
     content_index = 0
-    try:
 
-        # TODO: Add the turn convo context for non-harmony models too
-        iterator: Iterator | None = None
-        if is_harmony_family(model):
+    try:
+        iterator: Iterator
+        if is_harmony_family(request.model):
             iterator = runner.generate_streaming_gpt(
-                conversation=convo,  # pyright: ignore
+                conversation=convo,
                 max_tokens=runner.get_effective_max_tokens(request.max_output_tokens),
                 temperature=request.temperature or 1,
                 top_p=request.top_p or 1,
             )
         else:
             iterator = runner.generate_streaming(
-                prompt=user_input_content,  # pyright: ignore
+                prompt=user_input_content,
                 max_tokens=runner.get_effective_max_tokens(request.max_output_tokens),
                 temperature=request.temperature or 1,
                 top_p=request.top_p or 1,
             )
-        for token in iterator:  # pyright: ignore
+
+        for token in iterator:
             if isinstance(token, GenerationMetrics):
                 metrics = token
                 continue
@@ -452,8 +421,7 @@ async def generate_response_chat_stream(
                     "output_index": output_index,
                     "item": item_chunk,
                 }
-                yield f"event: {event_name}\n"
-                yield f"data: {json.dumps(event)}\n\n"
+                yield _sse(event_name, event)
 
             event_name = "response.output_text.delta"
             event = {
@@ -467,9 +435,7 @@ async def generate_response_chat_stream(
 
             sequence_number += 1
             content_index += 1
-            # print(event)
-            yield f"event: {event_name}\n"
-            yield f"data: {json.dumps(event)}\n\n"
+            yield _sse(event_name, event)
 
     except Exception as e:
         error = {"message": str(e), "code": "500"}
@@ -489,70 +455,42 @@ async def generate_response_chat_stream(
         }
         event = {"type": "error", "sequence_number": sequence_number, "error": error}
         sequence_number += 1
-        yield "event: error\n"
-        yield f"data: {json.dumps(event)}\n\n"
+        yield _sse("error", event)
         return
 
     # Final chunk
     completed_at = int(time.time())
     # Build final chunk with accumulated text and store response for follow-ups
 
-    final_chunk = {
-        "id": response_id,
-        "object": "response",
-        "created_at": created,
-        "completed_at": completed_at,
-        "model": model,
-        "status": "completed",
-        "output": [
-            {
-                "type": "message",
-                "id": message_id,
-                "status": "completed",
-                "role": "assistant",
-                "content": [
-                    {
-                        "type": "output_text",
-                        "text": answer_text,
-                        "annotations": [],
-                    }
-                ],
-            }
-        ],
-        "incomplete_details": {"reason": ""},
-        "previous_response_id": request.previous_response_id,
-        "instructions": request.instructions,
-        "temperature": request.temperature,
-        "prompt_cache_key": request.prompt_cache,
-        "safety_identifier": request.safety_identifier,
-        "service_tier": request.service_tier,
-        "background": request.background,
-        "store": request.store,
-        "max_tool_calls": request.max_tool_calls,
-        "max_output_tokens": request.max_output_tokens,
-        # input and output token details are 0, since we dont do cache now or
-        # i dont know, how to do cache too
-        "usage": {
-            "input_tokens": input_tokens,
-            "output_tokens": output_tokens,
-            "total_tokens": input_tokens + output_tokens,
-            "input_tokens_details": 0,
-            "output_tokens_details": 0,
-        },
-        "reasoning": {"effort": "medium", "summary": "auto"},
-        "top_logprobs": request.top_logprobs,
-        "frequency_penalty": 0,
-        "presence_penalty": 0,
-        "top_p": request.top_p,
-        "text": {"format": {"type": "text"}, "verbosity": "low"},
-        "paralell_tool_calls": 0,
-        "truncation": "disabled",
-        "tool_choice": "auto",
-        "tools": [{"name": "", "type": "function"}],
-        "error": {"code": "", "message": ""},
-    }
+    output = [
+        {
+            "type": "message",
+            "id": message_id,
+            "status": "completed",
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "output_text",
+                    "text": answer_text,
+                    "annotations": [],
+                }
+            ],
+        }
+    ]
+    final_chunk = _get_response_chunk(
+        response_id,
+        request,
+        input_tokens,
+        output_tokens,
+        created,
+        completed_at,
+        output,
+    )
 
     # Store and return a typed ResponsesResponse for follow-ups
+
+    # TODO: this kind of stuff is not working when PI in the middle
+    # need to check in openresponses api to add custom stuff
     metrics_obj = None
     if metrics:
         metrics_obj = {
@@ -563,16 +501,6 @@ async def generate_response_chat_stream(
         }
         final_chunk["metrics"] = metrics_obj
 
-    _store_response(
-        response_id=final_chunk["id"],
-        created=created,
-        completed_at=completed_at,
-        model=model,
-        status="completed",
-        output=final_chunk["output"],
-        usage={"input_tokens": input_tokens, "output_tokens": output_tokens},
-        metrics=metrics_obj,
-    )
     output_done_event = {
         "type": "response.output_text.done",
         "sequence_number": sequence_number,
@@ -581,16 +509,15 @@ async def generate_response_chat_stream(
         "content_index": content_index,
         "text": answer_text,
     }
-    yield "event: response.output_text.done\n"
-    yield f"data: {json.dumps(output_done_event)}\n\n"
+    yield _sse("response.output_text.done", output_done_event)
+
     event = {
         "type": "response.completed",
         "sequence_number": sequence_number,
         "response": final_chunk,
     }
     sequence_number += 1
-    yield "event: response.completed\n"
-    yield f"data: {json.dumps(event)}\n\n"
+    yield _sse("response.completed", event)
     yield "data: [DONE]\n\n"
 
 
@@ -767,5 +694,59 @@ def build_harmony_conversation(
 
 
 def is_harmony_family(model_name: str):
-
     return ReasoningExtractor.detect_model_type(model_name) == "gpt-oss"
+
+
+def _sse(event_name: str, payload: dict) -> str:
+    return f"event: {event_name}\ndata: {json.dumps(payload)}\n\n"
+
+
+def _get_response_chunk(
+    response_id: str,
+    request: ResponsesRequest,
+    input_tokens: int,
+    output_tokens: int,
+    created_at: int,
+    completed_at: int | None,
+    output: list,
+) -> dict:
+    return {
+        "id": response_id,
+        "object": "response",
+        "created_at": created_at,
+        "completed_at": completed_at,
+        "model": request.model,
+        "status": "in_progress",
+        "output": output,
+        "incomplete_details": {"reason": ""},
+        "previous_response_id": request.previous_response_id,
+        "instructions": request.instructions,
+        "temperature": request.temperature,
+        "prompt_cache_key": request.prompt_cache,
+        "safety_identifier": request.safety_identifier,
+        "service_tier": request.service_tier,
+        "background": request.background,
+        "store": request.store,
+        "max_tool_calls": request.max_tool_calls,
+        "max_output_tokens": request.max_output_tokens,
+        # TODO: input and output token details are 0, since we dont do cache now or
+        # i dont know, how to do cache too
+        "usage": {
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": input_tokens + output_tokens,
+            "input_tokens_details": 0,
+            "output_tokens_details": 0,
+        },
+        "reasoning": {"effort": "medium", "summary": "auto"},
+        "top_logprobs": request.top_logprobs,
+        "frequency_penalty": 0,
+        "presence_penalty": 0,
+        "top_p": request.top_p,
+        "text": {"format": {"type": "text"}, "verbosity": "low"},
+        "paralell_tool_calls": 0,
+        "truncation": "disabled",
+        "tool_choice": "auto",
+        "tools": [{"name": "", "type": "function"}],
+        "error": {"code": "", "message": ""},
+    }

@@ -98,19 +98,12 @@ async def catch_all(request, call_next):
 @app.post("/v1/responses")
 async def create_chat_response(request: ResponsesRequest):
     """
-    Create a response with openResponses format
+    Create a response stream/non-stream with openResponses format
     """
-
-    try:
-        ResponsesRequest.model_validate(request)
-    except Exception as e:
-        print(e)
 
     if request.stream:
         return StreamingResponse(
             runtime.backend.generate_response_chat_stream(request),
-            media_type="text/plain",
             headers={"Cache-Control": "no-cache", "Content-Type": "text/event-stream"},
         )
-    else:
-        return await runtime.backend.generate_response_chat(request)
+    return await runtime.backend.generate_response_chat(request)
