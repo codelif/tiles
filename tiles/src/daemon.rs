@@ -66,8 +66,7 @@ async fn start_daemon(port: Option<u32>) -> Result<()> {
             app_vsn,
             daemon_current_vsn
         );
-        // TODO: "its me check is for older versions, where there's no concept of
-        // vsn in state, but better way is to change the api altogether"
+        // "Its me" check is just there for backward compatibility, prolly we will remove in future versions
         if daemon_current_vsn.contains("Its me")
             || app_vsn
                 .cmp_precedence(&Version::parse(&daemon_current_vsn)?)
@@ -183,13 +182,16 @@ async fn callback(
     Query(params): Query<AtCallbackParams>,
 ) -> &'static str {
     info!("callback reached {:?}", params);
-    //TODO: refactor this shit
-    let mut cal_sender = state.callback_sender.lock().unwrap();
-    let cal_sender = cal_sender.take().unwrap();
-    let _ = cal_sender.send(params);
-    let mut sender = state.shutdown_sender.lock().unwrap();
-    let sender_real = sender.take().unwrap();
-    let _ = sender_real.send(true);
+    let mut callback_sender = state
+        .callback_sender
+        .lock()
+        .expect("Failed to get the callback params sender lock");
+    let _ = callback_sender.take().unwrap().send(params);
+    let mut shutdown_sender = state
+        .shutdown_sender
+        .lock()
+        .expect("Failed to get shutdown sender lock");
+    let _ = shutdown_sender.take().unwrap().send(true);
     "Processed your authorization request, You can close this page"
 }
 
@@ -207,17 +209,6 @@ async fn get_model_cache_path(
         Err(StatusCode::NOT_FOUND)
     }
 }
-
-// #[debug_handler]
-// async fn send_ping(State(_state): State<Arc<AppState>>, Query(params): Query<SendParams>) {
-//     println!("Trying to send ping");
-//     let _ = network::init(Some(&params.ticket)).await;
-// }
-
-// async fn receive_ping(State(_state): State<Arc<AppState>>) {
-//     println!("Trying to receive ping");
-//     let _ = network::init(None).await;
-// }
 
 async fn stop_server(port: Option<u32>) -> Result<()> {
     let dyn_port = get_port(port);
