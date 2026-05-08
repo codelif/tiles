@@ -354,7 +354,7 @@ pub async fn generate_token(aud_did: &str, db_conn: &Dbconn) -> Result<String> {
         .audience(&aud_did)
         .subject(subject)
         .policy(vec![])
-        // generating token with an expiry of an year
+        // TODO: generating token with an expiry of an year, assuming this is for powerline user, will make it configurable later
         .expiration(Timestamp::new(
             SystemTime::now() + Duration::from_secs(86400 * 365),
         )?)
@@ -389,7 +389,7 @@ pub async fn generate_invocation_token(delegation: &str, db_conn: &Dbconn) -> Re
         .try_build()
         .await?;
 
-    println!("{:?}", invocation);
+    // println!("{:?}", invocation);
     let invocation_serialized = serde_ipld_dagcbor::to_vec(&invocation)?;
     let invocation_token = data_encoding::BASE64.encode(&invocation_serialized);
 
