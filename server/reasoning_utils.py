@@ -284,6 +284,7 @@ class StreamingReasoningParser:
                     yield before_reasoning
 
                 # Start reasoning section (only if not hiding reasoning)
+                #
                 if not self.hide_reasoning:
                     yield "**[Reasoning]**\n\n"
 

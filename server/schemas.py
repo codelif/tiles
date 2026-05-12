@@ -113,7 +113,7 @@ class CFunctionCallOutputItemParam(FunctionCallOutputItemParam):
 
 
 class ResponsesRequest(BaseModel):
-    model: str = "mlx-community/gpt-oss-20b-MXFP4-Q4"
+    model: str = "mlx-community/Qwen3.5-4B-MLX-4bit"
     input: (
         str
         | list[
@@ -135,7 +135,7 @@ class ResponsesRequest(BaseModel):
     stream_options: StreamOptionsParam | None = None
     tools: list[FunctionToolParam] | None = None
     tool_choice: ToolChoiceParam | None = None
-    temperature: float | None = 1
+    temperature: float | None = 0.7
     top_p: float | None = 1
     max_output_tokens: int | None = None
     store: bool = False
