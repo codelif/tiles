@@ -457,6 +457,8 @@ class MLXRunner:
 
         encoding = load_harmony_encoding(HarmonyEncodingName.HARMONY_GPT_OSS)
 
+        stop_tokens = encoding.stop_tokens_for_assistant_actions()
+
         prompt_tokens = encoding.render_conversation_for_completion(
             conversation, Role.ASSISTANT
         )
@@ -485,14 +487,6 @@ class MLXRunner:
             logits_processors=logits_processors if logits_processors else None,
         )
 
-        # Things to do
-        # - The way we are yielding Reasoning and Answer tokens, better way?
-        # - We kind of processing per token instead of window, or is window tokenization done internally, who knows. Is this reason for occasional gibberish
-        # - Checking stop tokens, are we doing it correctly
-        # - How much shld we rely on harmony modelChecking stop tokens, are we doing it correctly
-        # - How much shld we rely on harmony model
-        #
-
         parser = StreamableParser(encoding, Role.ASSISTANT)
 
         # Collect tokens and yield text
@@ -502,7 +496,6 @@ class MLXRunner:
         for token, _ in generator:
             token_id = token.item() if hasattr(token, "item") else token
             parser.process(token_id)  # pyright: ignore
-
             generated_tokens.append(token_id)
 
             if is_analysis is None and parser.current_channel == "analysis":
@@ -522,7 +515,7 @@ class MLXRunner:
 
             # Check for EOS token - don't yield it
 
-            if token_id == self.tokenizer.eos_token_id:
+            if token_id in stop_tokens:
                 break
 
         # Yield metrics at the end
@@ -988,99 +981,6 @@ class MLXRunner:
         # No stop tokens found, return original response
         return response
 
-    def find_new_text(
-        self, token_id, generated_tokens, previous_decoded
-    ) -> tuple[str, list]:
-        context_window = 10
-        # Use a sliding window approach for efficiency
-        start_idx = max(0, len(generated_tokens) - context_window)
-        window_tokens = generated_tokens[start_idx:]
-
-        # Decode the window
-        window_text = self.tokenizer.decode(window_tokens)
-
-        # Figure out what's new
-        if start_idx == 0:
-            # We're still within the context window
-            if window_text.startswith(previous_decoded):
-                new_text = window_text[len(previous_decoded) :]
-            else:
-                new_text = self.tokenizer.decode([token_id])
-            previous_decoded = window_text
-        else:
-            # We're beyond the context window, just decode the last token with context
-            # This is approximate but should preserve spaces
-            new_text = self.tokenizer.decode(window_tokens)
-            if len(window_tokens) > 1:
-                prefix = self.tokenizer.decode(window_tokens[:-1])
-                if new_text.startswith(prefix):
-                    new_text = new_text[len(prefix) :]
-                else:
-                    new_text = self.tokenizer.decode([token_id])
-        return new_text, previous_decoded
-
-    def process_with_stop_tokens(
-        self, accumulated_response, new_text, use_chat_stop_tokens
-    ) -> tuple[str, str, bool]:
-        # Update accumulated response for stop token checking
-        accumulated_response += new_text
-
-        # Filter out stop tokens with priority: native first, then chat fallback
-        # Check native stop tokens FIRST in accumulated response (highest priority)
-        native_stop_tokens = self._stop_tokens if self._stop_tokens else []
-        for stop_token in native_stop_tokens:
-            if stop_token in accumulated_response:
-                # Find the stop token position and yield everything before it
-                stop_pos = accumulated_response.find(stop_token)
-                # Calculate what text came before the stop token
-                text_before_stop = accumulated_response[:stop_pos]
-                # Calculate how much of that is new (not previously yielded)
-                previously_yielded_length = len(accumulated_response) - len(new_text)
-                if len(text_before_stop) > previously_yielded_length:
-                    # Yield only the new part before stop token
-                    new_part_before_stop = text_before_stop[previously_yielded_length:]
-                    if new_part_before_stop:
-                        # if reasoning_parser:
-                        #     # Process through reasoning parser for formatting
-                        #     for formatted_token in reasoning_parser.process_token(
-                        #         new_part_before_stop
-                        #     ):
-                        #         yield formatted_token
-                        # else:
-                        return new_part_before_stop, accumulated_response, True
-                # if reasoning_parser:
-                #     yield from reasoning_parser.finalize()
-                # return  # Stop generation without yielding stop token
-                return "", accumulated_response, True
-        # Only check chat stop tokens if no native stop token found (fallback)
-        if use_chat_stop_tokens and self._chat_stop_tokens:
-            for stop_token in self._chat_stop_tokens:
-                if stop_token in accumulated_response:
-                    print(f"chat_stop_token{stop_token}")
-                    stop_pos = accumulated_response.find(stop_token)
-                    text_before_stop = accumulated_response[:stop_pos]
-                    previously_yielded_length = len(accumulated_response) - len(
-                        new_text
-                    )
-                    if len(text_before_stop) > previously_yielded_length:
-                        # Yield only the new part before stop token
-                        new_part_before_stop = text_before_stop[
-                            previously_yielded_length:
-                        ]
-                        if new_part_before_stop:
-                            # if reasoning_parser:
-                            #     # Process through reasoning parser for formatting
-                            #     for formatted_token in reasoning_parser.process_token(
-                            #         new_part_before_stop
-                            #     ):
-                            #         yield formatted_token
-                            # else:
-                            return new_part_before_stop, accumulated_response, True
-                    # if reasoning_parser:
-                    #     yield from reasoning_parser.finalize()
-                    return "", accumulated_response, True
-        return new_text, accumulated_response, False
-
 
 def get_gpu_status() -> Dict[str, float]:
     """Independent GPU status check - usable from anywhere.
@@ -1111,102 +1011,3 @@ def check_memory_available(required_gb: float) -> bool:
     available = estimated_total - current_memory - 2.0  # 2GB headroom
 
     return available >= required_gb
-
-
-def run_model_enhanced(
-    model_path: str,
-    prompt: Optional[str] = None,
-    interactive: bool = False,
-    max_tokens: int = 500,
-    temperature: float = 0.7,
-    top_p: float = 0.9,
-    repetition_penalty: float = 1.1,
-    stream: bool = True,
-    use_chat_template: bool = True,
-    hide_reasoning: bool = False,
-    verbose: bool = False,
-) -> Optional[str]:
-    """Enhanced run function with direct MLX integration.
-
-    Uses context manager pattern for automatic resource cleanup.
-
-    Args:
-        model_path: Path to the MLX model
-        prompt: Input prompt (if None, enters interactive mode)
-        interactive: Force interactive mode
-        max_tokens: Maximum tokens to generate
-        temperature: Sampling temperature
-        top_p: Top-p sampling parameter
-        repetition_penalty: Penalty for repeated tokens
-        stream: Whether to stream output
-
-    Returns:
-        Generated text (in non-interactive mode)
-    """
-    try:
-        with MLXRunner(model_path, verbose=verbose) as runner:
-            # Interactive mode
-            if interactive or prompt is None:
-                runner.interactive_chat(
-                    max_tokens=max_tokens,
-                    temperature=temperature,
-                    top_p=top_p,
-                    repetition_penalty=repetition_penalty,
-                    use_chat_template=use_chat_template,
-                )
-                return None
-
-            # Single prompt mode
-            if verbose:
-                print(f"\nPrompt: {prompt}\n")
-                print("Response: ", end="", flush=True)
-
-            if stream:
-                # Streaming generation
-                response_tokens = []
-                try:
-                    for token in runner.generate_streaming(
-                        prompt=prompt,
-                        max_tokens=max_tokens,
-                        temperature=temperature,
-                        top_p=top_p,
-                        repetition_penalty=repetition_penalty,
-                        use_chat_template=use_chat_template,
-                        hide_reasoning=hide_reasoning,
-                    ):
-                        # Stream all tokens directly (already formatted by generate_streaming)
-                        print(token, end="", flush=True)
-                        response_tokens.append(token)
-                except KeyboardInterrupt:
-                    print("\n[INFO] Generation interrupted by user.")
-                response = "".join(response_tokens)
-            else:
-                # Batch generation
-                try:
-                    response = runner.generate_batch(
-                        prompt=prompt,
-                        max_tokens=max_tokens,
-                        temperature=temperature,
-                        top_p=top_p,
-                        repetition_penalty=repetition_penalty,
-                        use_chat_template=use_chat_template,
-                    )
-                except KeyboardInterrupt:
-                    print("\n[INFO] Generation interrupted by user.")
-                    response = ""
-                print(response)
-
-            # Show memory usage if verbose
-            if verbose:
-                memory_stats = runner.get_memory_usage()
-                print(
-                    f"\n\nMemory: {memory_stats['model_gb']:.1f}GB model, {memory_stats['current_gb']:.1f}GB total"
-                )
-
-            return response
-
-        # Note: cleanup happens automatically due to context manager
-
-    except Exception as e:
-        print(f"\n[ERROR] {e}")
-        return None

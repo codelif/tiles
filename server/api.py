@@ -8,11 +8,6 @@ from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, Field
 
 from . import runtime
-from .mem_agent.engine import execute_sandboxed_code
-from .mem_agent.utils import (
-    create_memory_if_not_exists,
-    format_results,
-)
 from .schemas import (
     ChatCompletionRequest,
     ChatMessage,
@@ -48,34 +43,6 @@ async def start_model(request: StartRequest):
     logger.info(f"{runtime.backend}")
     runtime.backend.get_or_load_model(request.model, request.model_cache_path)
     return {"message": "Model loaded"}
-
-
-@app.post("/v1/chat/completions")
-async def create_chat_completion(request: ChatCompletionRequest):
-    """Create a chat completion."""
-    global _messages, _memory_path
-    try:
-        if request.stream:
-            result = ({}, "")
-            if request.python_code:
-                result = execute_sandboxed_code(
-                    code=request.python_code,
-                    allowed_path=_memory_path,
-                    import_module="server.mem_agent.tools",
-                )
-
-            _messages.append(
-                ChatMessage(role="user", content=format_results(result[0], result[1]))
-            )
-
-            # Streaming response
-            return StreamingResponse(
-                runtime.backend.generate_chat_stream(_messages, request),
-                media_type="text/plain",
-                headers={"Cache-Control": "no-cache"},
-            )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.exception_handler(HTTPException)

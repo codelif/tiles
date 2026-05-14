@@ -28,7 +28,6 @@ from openresponses_types.types import (
 
 from ..reasoning_utils import ReasoningExtractor
 
-from ..cache_utils import get_model_path
 from ..schemas import (
     CAssistantMessageItemParam,
     CDeveloperMessageItemParam,
@@ -319,9 +318,8 @@ async def generate_response_chat_stream(
     convo: Conversation
     user_input_content = handle_response_input(request)
     if is_harmony_family(model):
-
-        reasoning_effort = get_reasoning_effort(request.reasoning.effort)
-
+        # reasoning_effort = get_reasoning_effort(request.reasoning.effort)
+        reasoning_effort = ReasoningEffort.MEDIUM
         convo = build_harmony_conversation(
             reasoning_effort, request.input  # pyright: ignore
         )
