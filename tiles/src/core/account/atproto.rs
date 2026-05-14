@@ -129,18 +129,41 @@ pub async fn login(conn: &Dbconn, handle: &str) -> Result<()> {
         .await
         .inspect_err(|_| eprintln!("Failed to generate authorization url"))?;
 
-    let mut program = cfg_select! {
+    let program_name = cfg_select! {
         target_os = "macos" => {
-            Command::new("open").arg(url).spawn()?
+            "open"
                     }
         target_os = "linux" => {
-            Command::new("xdg-open").arg(url).spawn()?
+            "xdg-open"
                     }
         _ => {
-            panic!("Unsupported OS")
+            ""
         }
     };
-    program.wait()?;
+
+    // adding this override due to  clippy not playing good w macro above
+    #[allow(clippy::const_is_empty)]
+    if program_name.is_empty() {
+        println!(
+            "Failed to open the url automatically, Please open the url in any browser {}",
+            url
+        )
+    } else {
+        if let Ok(mut program) = Command::new(program_name).arg(&url).spawn() {
+            if program.wait().is_err() {
+                println!(
+                    "Failed to open the url automatically, Please open the url in any browser: {}",
+                    url
+                )
+            }
+        } else {
+            println!(
+                "Failed to open the url automatically, Please open the url\n{} in any browser",
+                url
+            )
+        }
+    };
+
     let (callback_tx, callback_rx) = oneshot::channel();
 
     //TODO: can we randomze port
