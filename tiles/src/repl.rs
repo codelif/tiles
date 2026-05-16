@@ -5,7 +5,6 @@ use crate::core::chats::{
     fetch_session, fetch_sessions, save_chat,
 };
 use crate::core::storage::db::Dbconn;
-use crate::runtime::RunArgs;
 use crate::utils::config::{
     ConfigProvider, DefaultProvider, create_pi_provider_config, get_memory_path, get_model_cache,
 };
@@ -55,10 +54,13 @@ impl BenchmarkMetrics {
         self
     }
 }
-pub struct MLXRuntime {}
 
-impl MLXRuntime {}
-
+pub struct RunArgs {
+    pub modelfile_path: Option<String>,
+    pub relay_count: u32,
+    pub memory: bool, // Future flags go here
+    pub pi: bool,
+}
 #[derive(Clone, Debug)]
 pub struct ChatResponse {
     // text content
@@ -137,97 +139,85 @@ struct PiMsgContent {
     text: String,
 }
 
-impl Default for MLXRuntime {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 const PY_PORT: u32 = 6969;
 
-impl MLXRuntime {
-    pub fn new() -> Self {
-        MLXRuntime {}
-    }
+pub async fn run(run_args: RunArgs, db_conn: &Dbconn) -> Result<()> {
+    let default_modelfile_path = get_default_modelfile(run_args.memory)?;
+    let default_modelfile =
+        tilekit::modelfile::parse_from_file(default_modelfile_path.to_str().unwrap()).unwrap();
+    let modelfile_parse_result = if let Some(modelfile_str) = &run_args.modelfile_path {
+        tilekit::modelfile::parse_from_file(modelfile_str.as_str())
+    } else {
+        Err("NOT PROVIDED".to_string())
+    };
 
-    pub async fn run(&self, run_args: super::RunArgs, db_conn: &Dbconn) -> Result<()> {
-        let default_modelfile_path = get_default_modelfile(run_args.memory)?;
-        let default_modelfile =
-            tilekit::modelfile::parse_from_file(default_modelfile_path.to_str().unwrap()).unwrap();
-        let modelfile_parse_result = if let Some(modelfile_str) = &run_args.modelfile_path {
-            tilekit::modelfile::parse_from_file(modelfile_str.as_str())
-        } else {
-            Err("NOT PROVIDED".to_string())
-        };
-
-        let modelfile = match modelfile_parse_result {
-            Ok(mf) => mf,
-            Err(err) if err == "NOT PROVIDED" => default_modelfile.clone(),
-            Err(_err) => {
-                println!("Invalid Modelfile");
-                return Ok(());
-            }
-        };
-
-        run_model_with_server(self, modelfile, default_modelfile, &run_args, db_conn).await
-    }
-
-    #[allow(clippy::zombie_processes)]
-    pub async fn start_server_daemon(&self) -> Result<()> {
-        // check if the server is running
-        // start server as a child process
-        // save the pid in a file under ~/.config/tiles/server_pid
-
-        if (ping().await).is_ok() {
-            println!("server is already up");
+    let modelfile = match modelfile_parse_result {
+        Ok(mf) => mf,
+        Err(err) if err == "NOT PROVIDED" => default_modelfile.clone(),
+        Err(_err) => {
+            println!("Invalid Modelfile");
             return Ok(());
         }
+    };
 
-        let config_dir = DefaultProvider.get_config_dir()?;
-        let data_dir = DefaultProvider.get_data_dir()?;
-        let mut server_dir = DefaultProvider.get_lib_dir()?;
-        let pid_file = config_dir.join("server.pid");
-        server_dir = server_dir.join("server");
-        let stdout_log = OpenOptions::new()
-            .append(true)
-            .open(data_dir.join("logs/server.out.log"))?;
-        let stderr_log = OpenOptions::new()
-            .append(true)
-            .open(data_dir.join("logs/server.err.log"))?;
-        let server_path = server_dir.join("stack_export_prod/app-server/bin/python");
-        server_dir.pop();
-        let child = Command::new(server_path)
-            .args(["-m", "server.main"])
-            .current_dir(server_dir)
-            .stdin(Stdio::null())
-            .stdout(Stdio::from(stdout_log))
-            .stderr(Stdio::from(stderr_log))
-            .spawn()
-            .expect("failed to start server");
+    run_model_with_server(modelfile, default_modelfile, &run_args, db_conn).await
+}
 
-        std::fs::write(pid_file, child.id().to_string()).unwrap();
-        println!("Server started with PID {}", child.id());
-        Ok(())
+#[allow(clippy::zombie_processes)]
+pub async fn start_server_daemon() -> Result<()> {
+    // check if the server is running
+    // start server as a child process
+    // save the pid in a file under ~/.config/tiles/server_pid
+
+    if (ping().await).is_ok() {
+        println!("server is already up");
+        return Ok(());
     }
 
-    pub async fn stop_server_daemon(&self) -> Result<()> {
-        if (ping().await).is_err() {
-            println!("Server is not running");
-            return Ok(());
-        }
-        let pid_file = DefaultProvider.get_config_dir()?.join("server.pid");
+    let config_dir = DefaultProvider.get_config_dir()?;
+    let data_dir = DefaultProvider.get_data_dir()?;
+    let mut server_dir = DefaultProvider.get_lib_dir()?;
+    let pid_file = config_dir.join("server.pid");
+    server_dir = server_dir.join("server");
+    let stdout_log = OpenOptions::new()
+        .append(true)
+        .open(data_dir.join("logs/server.out.log"))?;
+    let stderr_log = OpenOptions::new()
+        .append(true)
+        .open(data_dir.join("logs/server.err.log"))?;
+    let server_path = server_dir.join("stack_export_prod/app-server/bin/python");
+    server_dir.pop();
+    let child = Command::new(server_path)
+        .args(["-m", "server.main"])
+        .current_dir(server_dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(stdout_log))
+        .stderr(Stdio::from(stderr_log))
+        .spawn()
+        .expect("failed to start server");
 
-        if !pid_file.exists() {
-            eprintln!("server pid doesnt exist");
-            return Ok(());
-        }
+    std::fs::write(pid_file, child.id().to_string()).unwrap();
+    println!("Server started with PID {}", child.id());
+    Ok(())
+}
 
-        let pid = std::fs::read_to_string(&pid_file).unwrap();
-        Command::new("kill").arg(pid.trim()).status().unwrap();
-        std::fs::remove_file(pid_file).unwrap();
-        println!("Server stopped.");
-        Ok(())
+pub async fn stop_server_daemon() -> Result<()> {
+    if (ping().await).is_err() {
+        println!("Server is not running");
+        return Ok(());
     }
+    let pid_file = DefaultProvider.get_config_dir()?.join("server.pid");
+
+    if !pid_file.exists() {
+        eprintln!("server pid doesnt exist");
+        return Ok(());
+    }
+
+    let pid = std::fs::read_to_string(&pid_file).unwrap();
+    Command::new("kill").arg(pid.trim()).status().unwrap();
+    std::fs::remove_file(pid_file).unwrap();
+    println!("Server stopped.");
+    Ok(())
 }
 
 struct TilesHinter;
@@ -368,14 +358,13 @@ fn show_help() {
 }
 
 async fn run_model_with_server(
-    mlx_runtime: &MLXRuntime,
     modelfile: Modelfile,
     default_modelfile: Modelfile,
     run_args: &RunArgs,
     db_conn: &Dbconn,
 ) -> Result<()> {
     if !cfg!(debug_assertions) {
-        let _ = mlx_runtime.start_server_daemon().await.inspect_err(|e| {
+        let _ = start_server_daemon().await.inspect_err(|e| {
             eprintln!("Failed to start daemon server due to {:?}", e);
         });
         let _ = wait_until_server_is_up().await;
@@ -383,19 +372,14 @@ async fn run_model_with_server(
     // loading the model from mem-agent via daemon server
     let memory_path = get_memory_path().context("Setting/Retrieving memory_path failed")?;
     match load_model(&modelfile, &default_modelfile, &memory_path, 0).await {
-        Ok(_) => start_repl(mlx_runtime, &modelfile, run_args, db_conn).await?,
+        Ok(_) => start_repl(&modelfile, run_args, db_conn).await?,
         Err(err) => return Err(anyhow::anyhow!(err)),
     }
     Ok(())
 }
 
 #[allow(unused_assignments)]
-async fn start_repl(
-    mlx_runtime: &MLXRuntime,
-    modelfile: &Modelfile,
-    _run_args: &RunArgs,
-    db_conn: &Dbconn,
-) -> Result<()> {
+async fn start_repl(modelfile: &Modelfile, _run_args: &RunArgs, db_conn: &Dbconn) -> Result<()> {
     let modelname = modelfile
         .from
         .clone()
@@ -451,7 +435,7 @@ async fn start_repl(
                 pi_stdin.flush()?;
                 println!("Exiting interactive mode");
                 if !cfg!(debug_assertions) {
-                    let _res = mlx_runtime.stop_server_daemon().await;
+                    let _res = stop_server_daemon().await;
                 }
                 break;
             }
@@ -471,7 +455,7 @@ async fn start_repl(
                 pi_stdin.flush()?;
                 println!("Exiting interactive mode");
                 if !cfg!(debug_assertions) {
-                    let _res = mlx_runtime.stop_server_daemon().await;
+                    let _res = stop_server_daemon().await;
                 }
                 break;
             }
@@ -530,55 +514,11 @@ async fn start_repl(
                         continue;
                     }
                     CommandType::Status => {
-                        //TODO: refactor , move to diff fun
-                        let cwd_pathbuf = std::env::current_dir()?;
-                        let cwd = cwd_pathbuf.to_str().expect("Failed to parse cwd to str");
-                        let logged_in_atproto = fetch_logged_in_data(&db_conn.common)?;
-                        let session_data: Option<Session> =
-                            fetch_session(&db_conn.chat, &session_id).ok();
-                        let mut status_map: Vec<(&str, &str)> = vec![];
-                        let session_status = if let Some(session) = session_data {
-                            format!("{} ({})", session.name.yellow(), session.id.dimmed())
-                        } else {
-                            "Session not started yet".to_owned()
-                        };
-                        status_map.push(("Session", &session_status));
-                        status_map.push(("Model", &modelname));
-                        status_map.push(("Working Directory", cwd));
-                        let at_proto_status = if let Some(at_auth_user) = logged_in_atproto {
-                            format!(
-                                "{}{} ({})",
-                                "@".blue(),
-                                at_auth_user.handle.blue(),
-                                at_auth_user.key.dimmed()
-                            )
-                        } else {
-                            "Not logged-in".to_owned()
-                        };
-                        status_map.push(("ATProto", &at_proto_status));
-
-                        let max_length = status_map
-                            .iter()
-                            .fold(0, |acc, x| if x.0.len() > acc { x.0.len() } else { acc });
-
-                        println!("\n");
-                        for status in status_map {
-                            let final_str = format!(
-                                "{}:{}\t{}",
-                                status.0,
-                                " ".repeat(max_length - status.0.len()),
-                                status.1
-                            );
-
-                            println!("{}", final_str);
+                        if let Err(err) = show_status(&session_id, &modelname, db_conn) {
+                            println!("Failed to display status due to {}", err);
                         }
-
                         continue;
-                    } // cmd_type => {
-                      //     let payload = get_command_payload(cmd_type);
-                      //     send_to_pi(pi_stdin, payload)
-                      //         .inspect_err(|_e| eprintln!("send pi failed"))?;
-                      // }
+                    }
                 }
             }
         }
@@ -1004,3 +944,51 @@ fn load_session(db_conn: &Dbconn, args: &[&str]) -> Result<(String, usize, Strin
         chat_history,
     ))
 }
+
+fn show_status(session_id: &str, modelname: &str, db_conn: &Dbconn) -> Result<()> {
+    let cwd_pathbuf = std::env::current_dir()?;
+    let cwd = cwd_pathbuf.to_str().expect("Failed to parse cwd to str");
+    let logged_in_atproto = fetch_logged_in_data(&db_conn.common)?;
+    let session_data: Option<Session> = fetch_session(&db_conn.chat, session_id).ok();
+    let mut status_map: Vec<(&str, &str)> = vec![];
+    let session_status = if let Some(session) = session_data {
+        format!("{} ({})", session.name.yellow(), session.id.dimmed())
+    } else {
+        "Session not started yet".to_owned()
+    };
+    status_map.push(("Session", &session_status));
+    status_map.push(("Model", modelname));
+    status_map.push(("Working Directory", cwd));
+    let at_proto_status = if let Some(at_auth_user) = logged_in_atproto {
+        format!(
+            "{}{} ({})",
+            "@".blue(),
+            at_auth_user.handle.blue(),
+            at_auth_user.key.dimmed()
+        )
+    } else {
+        "Not logged-in".to_owned()
+    };
+    status_map.push(("ATProto", &at_proto_status));
+
+    // for padding
+    let max_length = status_map
+        .iter()
+        .fold(0, |acc, x| if x.0.len() > acc { x.0.len() } else { acc });
+
+    println!("\n");
+    for status in status_map {
+        let final_str = format!(
+            "{}:{}\t{}",
+            status.0,
+            " ".repeat(max_length - status.0.len()),
+            status.1
+        );
+
+        println!("{}", final_str);
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {}
