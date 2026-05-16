@@ -8,7 +8,7 @@ use std::str::FromStr;
 
 use crate::core::account::local::User;
 use crate::core::storage::db::get_db_conn;
-use crate::runtime::mlx::ChatResponse;
+use crate::repl::ChatResponse;
 use crate::utils::get_unix_time_now;
 use anyhow::{Result, anyhow};
 use log::{info, warn};
@@ -457,7 +457,7 @@ mod tests {
                 fetch_models_used_by_session, get_delta, get_last_row_counter, save_chat,
             },
         },
-        runtime::mlx::ChatResponse,
+        repl::ChatResponse,
         utils::{get_unix_time_now, test_logger},
     };
 

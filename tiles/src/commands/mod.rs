@@ -9,12 +9,12 @@ use tiles::core::account::local::{
     set_nickname, unlink,
 };
 use tiles::core::storage::db::Dbconn;
-use tiles::runtime::Runtime;
+use tiles::repl::{start_server_daemon, stop_server_daemon};
 use tiles::utils::config::{
     ConfigProvider, DefaultProvider, get_or_create_config, set_user_data_path,
 };
 use tiles::utils::installer::{UpdateInfo, get_update_info, try_update};
-use tiles::{core::health, runtime::RunArgs};
+use tiles::{core::health, repl::RunArgs};
 
 pub use tilekit::optimize::optimize;
 use toml::Table;
@@ -45,26 +45,6 @@ const FTUE_ASCII_ART: &str = r#"
           .-.
 "#;
 
-// const FTUE_ASCII_ART_NEW: &str = r#"
-//                       ▃▅▆▆▇▇▇▇▆▇▇▇▆▆▆▆
-//                ░▅▆▆▇▆▇▇▇▇▇▇▇▆▆▆▆▇▇▇▇▆
-//         _▃▅▇▆▇▇▆▆▆▇▇▆▆▆▆▆▇▇▆▇▇▇▇▇▆▇▅
-//     ▃▆▇▆▇▇▇▆▆▆▆▆▅▆▇▆▇▇▇▇▇▆▆▆▆▆▃
-//     ▆▆▇▆▆▆▆▆▇▆▆▇▆▇▇▇▆▇▆▆▆▇▅
-//  ▂▆▆▇▇▇▇▇▇▇▇▇▆▆▆▇▇▇▇▇▇▇▇▁
-//      ▅▆▆▆▇▆▇▆▆▆▆▇▆▆▇▇▆▅
-//              ▆▇▇▇▇▇▆▇▇▅
-//             ▅▇▇▇▆▇▇▇▆
-//            ▆▆▇▇▇▇▇▇▆
-//           ▆▇▇▇▇▆▇▇▇
-//          ▆▇▇▇▆▆▆▆▇
-//         ▆▇▇▇▆▇▇▇▆
-//         ▂▇▇▇▆▇▇▆
-//          ▆▆▆▇▆▅
-//          ▁▆▇▆▅
-//           ▓▆▄
-
-// "#;
 const FTUE_REASSURANCE_LOCAL: &str = "Local-first private AI assistant for everyday use";
 // const FTUE_REASSURANCE_NO_CLOUD: &str = "Online models and identity optional.";
 const FTUE_NICKNAME_PROMPT: &str = "Choose a username:";
@@ -254,10 +234,6 @@ pub async fn try_app_update() -> Result<()> {
     Ok(())
 }
 
-pub async fn run(runtime: &Runtime, run_args: RunArgs, db_conn: &Dbconn) -> Result<()> {
-    runtime.run(run_args, db_conn).await
-}
-
 pub fn set_data(path: &str) {
     match set_user_data_path(path) {
         Ok(msg) => {
@@ -273,12 +249,12 @@ pub async fn check_health() -> Result<()> {
     health::check_health().await
 }
 
-pub async fn start_server(runtime: &Runtime) {
-    let _ = runtime.start_server_daemon().await;
+pub async fn start_server() {
+    let _ = start_server_daemon().await;
 }
 
-pub async fn stop_server(runtime: &Runtime) {
-    let _ = runtime.stop_server_daemon().await;
+pub async fn stop_server() {
+    let _ = stop_server_daemon().await;
 }
 
 /// Runs the account command with the args being passed.
