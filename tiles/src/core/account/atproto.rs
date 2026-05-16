@@ -166,7 +166,6 @@ pub async fn login(conn: &Dbconn, handle: &str) -> Result<()> {
 
     let (callback_tx, callback_rx) = oneshot::channel();
 
-    //TODO: can we randomze port
     start_internal_server(Some(LOGIN_PORT), callback_tx).await?;
     let params = callback_rx.await?;
     info!("params recieved {:?}", params);

@@ -47,7 +47,7 @@ client = httpx.AsyncClient()
 
 logger = logging.getLogger("app")
 
-from typing import Any, Dict, Iterator, List, Optional, Union
+from typing import Any, Dict, Iterator, List, Optional, Tuple, Union
 
 _model_cache: Dict[str, MLXRunner] = {}
 _default_max_tokens: Optional[int] = None  # Use dynamic model-aware limits by default
@@ -295,10 +295,13 @@ def handle_response_input(request: ResponsesRequest):
 
 
 # TODO: Please refactor for Deus sake
+# TODO: Add more tests for this api
 async def generate_response_chat_stream(
     request: ResponsesRequest,
 ) -> AsyncGenerator[str, None]:
     """Generate streaming chat responses for OpenResponses API."""
+
+    # TODO: Move the model loading, runner creation to diff fn and return runner only
     model = request.model
     created = int(time.time())
     response = await client.get(
@@ -317,6 +320,7 @@ async def generate_response_chat_stream(
     user_input_content = ""
     convo: Conversation
     user_input_content = handle_response_input(request)
+
     if is_harmony_family(model):
         # reasoning_effort = get_reasoning_effort(request.reasoning.effort)
         reasoning_effort = ReasoningEffort.MEDIUM
@@ -324,11 +328,14 @@ async def generate_response_chat_stream(
             reasoning_effort, request.input  # pyright: ignore
         )
 
+    # TODO: DO we need it here, or in response.complete event?, so
+    # we can avoid using tokenizer encoding here...
     input_tokens = len(runner.tokenizer.encode(user_input_content))  # pyright: ignore
 
     response_id = f"resp_{uuid.uuid4()}"
     message_id = f"msg_{uuid.uuid4()}"
     sequence_number = 0
+    # TODO: Move the output creation also to get_response_chunk fn
     output = [
         {
             "type": "message",
@@ -347,13 +354,10 @@ async def generate_response_chat_stream(
         None,
         output,
     )
-    event = {
-        "type": "response.created",
-        "sequence_number": sequence_number,
-        "response": initial_chunk,
-    }
-    sequence_number += 1
-    yield _sse("response.created", event)
+    resp_str, sequence_number = _sse(
+        "response.created", {"response": initial_chunk}, sequence_number
+    )
+    yield resp_str
 
     accumulated_text = ""
     answer_text = ""
@@ -361,6 +365,7 @@ async def generate_response_chat_stream(
     error = None
     incomplete_details = None
     has_answer_started: bool = False
+    # TODO: This will increment if we have multiple items than only text
     output_index = 0
     content_index = 0
 
@@ -398,8 +403,11 @@ async def generate_response_chat_stream(
 
             event_name = ""
             item_chunk = {}
+            # TODO: Maybe we can avoid this?, comeback pls
             if sequence_number == 1:
                 event_name = "response.output_item.added"
+                # TODO: Maybe we dont need content for this event
+                # yeah response.content_part.added for initializing..
                 item_chunk = {
                     "type": "message",
                     "id": message_id,
@@ -414,26 +422,24 @@ async def generate_response_chat_stream(
                     ],
                 }
                 event = {
-                    "type": f"{event_name}",
-                    "sequence_number": sequence_number,
                     "output_index": output_index,
                     "item": item_chunk,
                 }
-                yield _sse(event_name, event)
-
+                resp_str, sequence_number = _sse(event_name, event, sequence_number)
+                yield resp_str
             event_name = "response.output_text.delta"
             event = {
-                "type": f"{event_name}",
-                "sequence_number": sequence_number,
                 "output_index": output_index,
+                # TODO: item_id is not message Id, change it
                 "item_id": message_id,
                 "delta": token,
                 "content_index": content_index,
             }
 
-            sequence_number += 1
             content_index += 1
-            yield _sse(event_name, event)
+
+            resp_str, sequence_number = _sse(event_name, event, sequence_number)
+            yield resp_str
 
     except Exception as e:
         error = {"message": str(e), "code": "500"}
@@ -451,9 +457,9 @@ async def generate_response_chat_stream(
             "output": [],
             "usage": {"input_tokens": input_tokens, "output_tokens": output_tokens},
         }
-        event = {"type": "error", "sequence_number": sequence_number, "error": error}
-        sequence_number += 1
-        yield _sse("error", event)
+        event = {"error": error}
+        resp_str, sequence_number = _sse("error", event, sequence_number)
+        yield resp_str
         return
 
     # Final chunk
@@ -499,23 +505,23 @@ async def generate_response_chat_stream(
         }
         final_chunk["metrics"] = metrics_obj
 
-    output_done_event = {
-        "type": "response.output_text.done",
-        "sequence_number": sequence_number,
+    payload = {
         "item_id": message_id,
         "output_index": output_index,
         "content_index": content_index,
+        # TODO: shouldnt be only answer ig, but check once w pi rendering
         "text": answer_text,
     }
-    yield _sse("response.output_text.done", output_done_event)
+    resp_str, sequence_number = _sse(
+        "response.output_text.done", payload, sequence_number
+    )
+    yield resp_str
 
-    event = {
-        "type": "response.completed",
-        "sequence_number": sequence_number,
-        "response": final_chunk,
-    }
-    sequence_number += 1
-    yield _sse("response.completed", event)
+    # TODO: Add the token usage here as its completed..
+    resp_str, sequence_number = _sse(
+        "response.completed", {"response": final_chunk}, sequence_number
+    )
+    yield resp_str
     yield "data: [DONE]\n\n"
 
 
@@ -695,8 +701,16 @@ def is_harmony_family(model_name: str):
     return ReasoningExtractor.detect_model_type(model_name) == "gpt-oss"
 
 
-def _sse(event_name: str, payload: dict) -> str:
-    return f"event: {event_name}\ndata: {json.dumps(payload)}\n\n"
+def _sse(event_name: str, payload: dict, current_seq_no: int) -> tuple[str, int]:
+    seq_no = current_seq_no + 1
+    event = {
+        "type": event_name,
+        "sequence_number": seq_no,
+    }
+    event.update(payload)
+    event_str = f"event: {event_name}\ndata: {json.dumps(event)}\n\n"
+
+    return event_str, seq_no
 
 
 def _get_response_chunk(

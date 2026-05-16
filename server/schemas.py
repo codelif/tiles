@@ -113,7 +113,7 @@ class CFunctionCallOutputItemParam(FunctionCallOutputItemParam):
 
 
 class ResponsesRequest(BaseModel):
-    model: str = "mlx-community/Qwen3.5-4B-MLX-4bit"
+    model: str = "mlx-community/gpt-oss-20b-MXFP4-Q4"
     input: (
         str
         | list[
