@@ -514,55 +514,11 @@ async fn start_repl(modelfile: &Modelfile, _run_args: &RunArgs, db_conn: &Dbconn
                         continue;
                     }
                     CommandType::Status => {
-                        //TODO: refactor , move to diff fun
-                        let cwd_pathbuf = std::env::current_dir()?;
-                        let cwd = cwd_pathbuf.to_str().expect("Failed to parse cwd to str");
-                        let logged_in_atproto = fetch_logged_in_data(&db_conn.common)?;
-                        let session_data: Option<Session> =
-                            fetch_session(&db_conn.chat, &session_id).ok();
-                        let mut status_map: Vec<(&str, &str)> = vec![];
-                        let session_status = if let Some(session) = session_data {
-                            format!("{} ({})", session.name.yellow(), session.id.dimmed())
-                        } else {
-                            "Session not started yet".to_owned()
-                        };
-                        status_map.push(("Session", &session_status));
-                        status_map.push(("Model", &modelname));
-                        status_map.push(("Working Directory", cwd));
-                        let at_proto_status = if let Some(at_auth_user) = logged_in_atproto {
-                            format!(
-                                "{}{} ({})",
-                                "@".blue(),
-                                at_auth_user.handle.blue(),
-                                at_auth_user.key.dimmed()
-                            )
-                        } else {
-                            "Not logged-in".to_owned()
-                        };
-                        status_map.push(("ATProto", &at_proto_status));
-
-                        let max_length = status_map
-                            .iter()
-                            .fold(0, |acc, x| if x.0.len() > acc { x.0.len() } else { acc });
-
-                        println!("\n");
-                        for status in status_map {
-                            let final_str = format!(
-                                "{}:{}\t{}",
-                                status.0,
-                                " ".repeat(max_length - status.0.len()),
-                                status.1
-                            );
-
-                            println!("{}", final_str);
+                        if let Err(err) = show_status(&session_id, &modelname, db_conn) {
+                            println!("Failed to display status due to {}", err);
                         }
-
                         continue;
-                    } // cmd_type => {
-                      //     let payload = get_command_payload(cmd_type);
-                      //     send_to_pi(pi_stdin, payload)
-                      //         .inspect_err(|_e| eprintln!("send pi failed"))?;
-                      // }
+                    }
                 }
             }
         }
@@ -988,3 +944,51 @@ fn load_session(db_conn: &Dbconn, args: &[&str]) -> Result<(String, usize, Strin
         chat_history,
     ))
 }
+
+fn show_status(session_id: &str, modelname: &str, db_conn: &Dbconn) -> Result<()> {
+    let cwd_pathbuf = std::env::current_dir()?;
+    let cwd = cwd_pathbuf.to_str().expect("Failed to parse cwd to str");
+    let logged_in_atproto = fetch_logged_in_data(&db_conn.common)?;
+    let session_data: Option<Session> = fetch_session(&db_conn.chat, session_id).ok();
+    let mut status_map: Vec<(&str, &str)> = vec![];
+    let session_status = if let Some(session) = session_data {
+        format!("{} ({})", session.name.yellow(), session.id.dimmed())
+    } else {
+        "Session not started yet".to_owned()
+    };
+    status_map.push(("Session", &session_status));
+    status_map.push(("Model", modelname));
+    status_map.push(("Working Directory", cwd));
+    let at_proto_status = if let Some(at_auth_user) = logged_in_atproto {
+        format!(
+            "{}{} ({})",
+            "@".blue(),
+            at_auth_user.handle.blue(),
+            at_auth_user.key.dimmed()
+        )
+    } else {
+        "Not logged-in".to_owned()
+    };
+    status_map.push(("ATProto", &at_proto_status));
+
+    // for padding
+    let max_length = status_map
+        .iter()
+        .fold(0, |acc, x| if x.0.len() > acc { x.0.len() } else { acc });
+
+    println!("\n");
+    for status in status_map {
+        let final_str = format!(
+            "{}:{}\t{}",
+            status.0,
+            " ".repeat(max_length - status.0.len()),
+            status.1
+        );
+
+        println!("{}", final_str);
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {}
