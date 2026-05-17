@@ -268,6 +268,8 @@ enum CommandType {
     Sessions,
     #[serde(rename = "resume")]
     Resume,
+    #[serde(rename = "sharep")]
+    ShareP,
     #[serde(other)]
     Unknown,
 }
@@ -275,12 +277,12 @@ enum CommandType {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SharedSession {
     #[serde(rename = "$type")]
-    r#type: String,
-    session_id: String,
-    name: String,
-    contents: Vec<SharedContent>,
-    created_at: String,
-    models_used: Vec<String>,
+    pub r#type: String,
+    pub session_id: String,
+    pub name: String,
+    pub contents: Vec<SharedContent>,
+    pub created_at: String,
+    pub models_used: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -331,6 +333,14 @@ fn show_help() {
                 (
                     "/share <sessionId>",
                     "Create a shareable link for a specific session (via ATProto)",
+                ),
+                (
+                    "/sharep",
+                    "Create an encrypted shareable link for the current session (via ATProto)",
+                ),
+                (
+                    "/sharep <sessionId>",
+                    "Create an encrypted shareable link for a specific session (via ATProto)",
                 ),
             ],
         ),
@@ -494,7 +504,11 @@ async fn start_repl(modelfile: &Modelfile, _run_args: &RunArgs, db_conn: &Dbconn
                         continue;
                     }
                     CommandType::Share => {
-                        process_share_session(db_conn, &session_id, &args).await?;
+                        process_share_session(db_conn, &session_id, &args, false).await?;
+                        continue;
+                    }
+                    CommandType::ShareP => {
+                        process_share_session(db_conn, &session_id, &args, true).await?;
                         continue;
                     }
                     CommandType::Sessions => {
@@ -825,6 +839,7 @@ async fn process_share_session(
     conn: &Dbconn,
     current_session_id: &str,
     args: &[&str],
+    is_private: bool,
 ) -> Result<()> {
     let args = if let Some((_main_command, sub_commands)) = args.split_first() {
         sub_commands
@@ -870,7 +885,7 @@ async fn process_share_session(
         models_used,
     };
 
-    match share_session(&conn.common, shared_sessions.clone()).await {
+    match share_session(&conn.common, shared_sessions.clone(), is_private).await {
         Err(err) if &err.to_string() == "NOT_LOGGED_IN" => {
             let login_prompt = format!("{}", "Sharing a chat session requires logging in, as the data is stored on your Bluesky-based ATProto PDS.\nDo you want to proceed with the login flow? (Y/n)".yellow());
 
@@ -885,7 +900,7 @@ async fn process_share_session(
                 println!("Please enter your Bluesky handle (ex: john.bsky.team)");
                 stdin.read_line(&mut input)?;
                 login(conn, input.trim()).await?;
-                share_session(&conn.common, shared_sessions).await?;
+                share_session(&conn.common, shared_sessions, is_private).await?;
             }
         }
         Err(err) => {
