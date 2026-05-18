@@ -128,7 +128,7 @@ class ResponsesRequest(BaseModel):
         ]
     )
     reasoning: ReasoningParam = ReasoningParam(
-        effort=ReasoningEffortEnum.medium, summary=None
+        effort=ReasoningEffortEnum.low, summary=None
     )
     previous_response_id: str | None = None
     stream: bool | None = False

@@ -17,12 +17,16 @@ from openai_harmony import (
 from openresponses_types import (
     AssistantMessageItemParam,
     ReasoningEffortEnum,
+    ResponseCompletedStreamingEvent,
     SystemMessageItemParam,
 )
 from openresponses_types.types import (
     DeveloperMessageItemParam,
     Error,
     IncompleteDetails,
+    InputTokensDetails,
+    OutputTokensDetails,
+    Usage,
     UserMessageItemParam,
 )
 
@@ -91,110 +95,6 @@ def get_or_load_model(
         return _model_cache[_current_model_path]  # pyright: ignore
 
 
-async def generate_chat_stream(
-    messages: List[ChatMessage], request: ChatCompletionRequest
-) -> AsyncGenerator[str, None]:
-    """Generate streaming chat completion response."""
-
-    _messages = messages
-    completion_id = f"chatcmpl-{uuid.uuid4()}"
-    created = int(time.time())
-    runner = get_or_load_model(request.model, None)
-    if request.chat_start:
-        _messages.extend(request.messages)
-    # Convert messages to dict format for runner
-    message_dicts = format_chat_messages_for_runner(_messages)
-
-    # Let the runner format with chat templates
-    prompt = runner._format_conversation(message_dicts, use_chat_template=True)
-
-    # lYield initial response
-    initial_response = {
-        "id": completion_id,
-        "object": "chat.completion.chunk",
-        "created": created,
-        "model": request.model,
-        "choices": [
-            {
-                "index": 0,
-                "delta": {"role": "assistant", "content": ""},
-                "finish_reason": None,
-            }
-        ],
-    }
-
-    yield f"data: {json.dumps(initial_response)}\n\n"
-
-    # Stream tokens
-    metrics = None
-    try:
-        for token in runner.generate_streaming(
-            prompt=prompt,
-            max_tokens=runner.get_effective_max_tokens(
-                request.max_tokens or _default_max_tokens, interactive=False
-            ),
-            temperature=request.temperature,
-            top_p=request.top_p,
-            repetition_penalty=request.repetition_penalty,
-            use_chat_template=False,  # Already applied in _format_conversation
-            use_chat_stop_tokens=False,  # Server mode shouldn't stop on chat markers
-        ):
-            if isinstance(token, GenerationMetrics):
-                metrics = token
-                continue
-
-            chunk_response = {
-                "id": completion_id,
-                "object": "chat.completion.chunk",
-                "created": created,
-                "model": request.model,
-                "choices": [
-                    {"index": 0, "delta": {"content": token}, "finish_reason": None}
-                ],
-            }
-
-            yield f"data: {json.dumps(chunk_response)}\n\n"
-
-            # Check for stop sequences
-            if request.stop:
-                stop_sequences = (
-                    request.stop if isinstance(request.stop, list) else [request.stop]
-                )
-                if any(stop in token for stop in stop_sequences):
-                    break
-
-    except Exception as e:
-        error_response = {
-            "id": completion_id,
-            "object": "chat.completion.chunk",
-            "created": created,
-            "model": request.model,
-            "choices": [{"index": 0, "delta": {}, "finish_reason": "error"}],
-            "error": str(e),
-        }
-        yield f"data: {json.dumps(error_response)}\n\n"
-
-    # Final response
-    final_response = {
-        "id": completion_id,
-        "object": "chat.completion.chunk",
-        "created": created,
-        "model": request.model,
-        "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
-    }
-
-    # Include benchmarking metrics if available
-    if metrics:
-        final_response["metrics"] = {
-            "ttft_ms": metrics.ttft_ms,
-            "total_tokens": metrics.total_tokens,
-            "tokens_per_second": metrics.tokens_per_second,
-            "total_latency_s": metrics.total_latency_s,
-        }
-    yield f"data: {json.dumps(final_response)}\n\n"
-    yield "data: [DONE]\n\n"
-
-
 def format_chat_messages_for_runner(
     messages: List[ChatMessage],
 ) -> List[Dict[str, str]]:
@@ -205,26 +105,7 @@ def format_chat_messages_for_runner(
     return [{"role": msg.role, "content": msg.content} for msg in messages]
 
 
-def _prepend_previous_response(user_input: str, prev_id: Optional[str]) -> str:
-    """If prev_id points to a stored response, prepend its output text as context."""
-
-    if not prev_id:
-        return user_input
-
-    prev = _responses.get(prev_id)  # pyright: ignore
-
-    if not prev or not getattr(prev, "output", None):
-        return user_input
-    prev_text_parts: List[str] = []
-    for out in prev.output:
-        for c in out.get("content", []):
-            if c.get("type") == "output_text":
-                prev_text_parts.append(c.get("text", ""))
-    if prev_text_parts:
-        return "\n".join(prev_text_parts) + "\n\n" + user_input
-    return user_input
-
-
+# TODO: probly will remove wrto new open-responses api
 def _calc_usage(
     runner: MLXRunner, input_text: str, generated_text: str
 ) -> Dict[str, int]:
@@ -294,36 +175,20 @@ def handle_response_input(request: ResponsesRequest):
     return user_input_content
 
 
-# TODO: Please refactor for Deus sake
+# DOING: Please refactor for Deus sake
 # TODO: Add more tests for this api
+# TODO: Consider benchmark stuff
 async def generate_response_chat_stream(
     request: ResponsesRequest,
 ) -> AsyncGenerator[str, None]:
     """Generate streaming chat responses for OpenResponses API."""
 
-    # TODO: Move the model loading, runner creation to diff fn and return runner only
-    model = request.model
     created = int(time.time())
-    response = await client.get(
-        f"http://127.0.0.1:1729/model-cache-path?model_name={model}"
-    )
-
-    model_cache_path = None
-    if response.status_code == 200:
-        model_cache_path = response.text
-    else:
-        raise HTTPException(status_code=500, detail="Model not found")
-
-    runner = get_or_load_model(model, model_cache_path)
-    metrics = None
-
-    user_input_content = ""
-    convo: Conversation
+    runner = await _get_runner(request.model)
     user_input_content = handle_response_input(request)
 
-    if is_harmony_family(model):
-        # reasoning_effort = get_reasoning_effort(request.reasoning.effort)
-        reasoning_effort = ReasoningEffort.MEDIUM
+    if is_harmony_family(request.model):
+        reasoning_effort = get_reasoning_effort(request.reasoning.effort)
         convo = build_harmony_conversation(
             reasoning_effort, request.input  # pyright: ignore
         )
@@ -335,29 +200,14 @@ async def generate_response_chat_stream(
     response_id = f"resp_{uuid.uuid4()}"
     message_id = f"msg_{uuid.uuid4()}"
     sequence_number = 0
-    # TODO: Move the output creation also to get_response_chunk fn
-    output = [
-        {
-            "type": "message",
-            "id": message_id,
-            "status": "in_progress",
-            "role": "assistant",
-            "content": [],
-        }
-    ]
-    initial_chunk = _get_response_chunk(
-        response_id,
-        request,
-        input_tokens,
-        input_tokens,
-        created,
-        None,
-        output,
-    )
+
+    ## response.created envelope event ##
+    initial_response = _get_response_on_create(response_id, request, created)
     resp_str, sequence_number = _sse(
-        "response.created", {"response": initial_chunk}, sequence_number
+        "response.created", {"response": initial_response}, sequence_number
     )
     yield resp_str
+    ############
 
     accumulated_text = ""
     answer_text = ""
@@ -388,7 +238,6 @@ async def generate_response_chat_stream(
 
         for token in iterator:
             if isinstance(token, GenerationMetrics):
-                metrics = token
                 continue
 
             if not isinstance(token, str):
@@ -446,26 +295,31 @@ async def generate_response_chat_stream(
         incomplete_details = {"reason": "internal server error"}
 
         # TODO: fix error response acc to the standard
-        error_chunk = {
-            "id": response_id,
-            "object": "response",
-            "created_at": created,
-            "model": model,
-            "status": "failed",
-            "error": error,
-            "incomplete_details": incomplete_details,
-            "output": [],
-            "usage": {"input_tokens": input_tokens, "output_tokens": output_tokens},
-        }
-        event = {"error": error}
-        resp_str, sequence_number = _sse("error", event, sequence_number)
+        err_response = _get_response_on_error(
+            response_id, request, created, incomplete_details, error
+        )
+        resp_str, sequence_number = _sse(
+            "response.failed", {"response": err_response}, sequence_number
+        )
         yield resp_str
         return
 
-    # Final chunk
-    completed_at = int(time.time())
-    # Build final chunk with accumulated text and store response for follow-ups
+    payload = {
+        "item_id": message_id,
+        "output_index": output_index,
+        "content_index": content_index,
+        # TODO: shouldnt be only answer ig, but check once w pi rendering
+        "text": answer_text,
+    }
+    resp_str, sequence_number = _sse(
+        "response.output_text.done", payload, sequence_number
+    )
+    yield resp_str
 
+    ## Envelope, response.completed
+    #
+    # TODO: This shld be final output array which i think contains all output items. This is `ResponseOutputMessage`. And the output_text only answer and not thinking, is this a Pi fuckup, hmm there is reasoning item for reasoning output
+    #
     output = [
         {
             "type": "message",
@@ -481,47 +335,25 @@ async def generate_response_chat_stream(
             ],
         }
     ]
-    final_chunk = _get_response_chunk(
-        response_id,
-        request,
-        input_tokens,
-        output_tokens,
-        created,
-        completed_at,
-        output,
+    usage = Usage(
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        total_tokens=input_tokens + output_tokens,
+        input_tokens_details=InputTokensDetails(cached_tokens=0),
+        # TODO: Will revisit this when we handling output_item=reasoning for putting actual value
+        output_tokens_details=OutputTokensDetails(reasoning_tokens=0),
     )
-
-    # Store and return a typed ResponsesResponse for follow-ups
-
-    # TODO: this kind of stuff is not working when PI in the middle
-    # need to check in openresponses api to add custom stuff
-    metrics_obj = None
-    if metrics:
-        metrics_obj = {
-            "ttft_ms": metrics.ttft_ms,
-            "total_tokens": metrics.total_tokens,
-            "tokens_per_second": metrics.tokens_per_second,
-            "total_latency_s": metrics.total_latency_s,
-        }
-        final_chunk["metrics"] = metrics_obj
-
-    payload = {
-        "item_id": message_id,
-        "output_index": output_index,
-        "content_index": content_index,
-        # TODO: shouldnt be only answer ig, but check once w pi rendering
-        "text": answer_text,
-    }
-    resp_str, sequence_number = _sse(
-        "response.output_text.done", payload, sequence_number
+    final_response = _get_response_on_completed(
+        response_id, request, created, output, usage
     )
-    yield resp_str
 
     # TODO: Add the token usage here as its completed..
     resp_str, sequence_number = _sse(
-        "response.completed", {"response": final_chunk}, sequence_number
+        "response.completed", {"response": final_response}, sequence_number
     )
     yield resp_str
+    ###############
+
     yield "data: [DONE]\n\n"
 
 
@@ -713,24 +545,100 @@ def _sse(event_name: str, payload: dict, current_seq_no: int) -> tuple[str, int]
     return event_str, seq_no
 
 
-def _get_response_chunk(
+def _get_response_on_create(
     response_id: str,
     request: ResponsesRequest,
-    input_tokens: int,
-    output_tokens: int,
     created_at: int,
-    completed_at: int | None,
-    output: list,
 ) -> dict:
-    return {
+    created_response = {
+        "id": response_id,
+        "object": "response",
+        "created_at": created_at,
+        "completed_at": None,
+        "status": "in_progress",
+        "output": [],
+        "incomplete_details": None,
+        "text": {"format": {"type": "text"}, "verbosity": "low"},
+        "paralell_tool_calls": 0,
+        "truncation": "disabled",
+        "tool_choice": "auto",
+        # TODO:  will revisit on tool call impl
+        "tools": [{"name": "", "type": "function"}],
+        "error": {"code": "", "message": ""},
+    }
+    created_response.update(_get_commons_responses(request))
+    return created_response
+
+
+def _get_response_on_completed(
+    response_id: str,
+    request: ResponsesRequest,
+    created_at: int,
+    output: list,
+    usage: Usage,
+) -> dict:
+    completed_at = int(time.time())
+    completed_response = {
         "id": response_id,
         "object": "response",
         "created_at": created_at,
         "completed_at": completed_at,
-        "model": request.model,
-        "status": "in_progress",
+        "status": "completed",
         "output": output,
-        "incomplete_details": {"reason": ""},
+        "incomplete_details": None,
+        "text": {"format": {"type": "text"}, "verbosity": "low"},
+        "paralell_tool_calls": 0,
+        "truncation": "disabled",
+        "tool_choice": "auto",
+        # TODO:  will revisit on tool call impl
+        "tools": [{"name": "", "type": "function"}],
+        "error": {"code": "", "message": ""},
+        "usage": {
+            "input_tokens": usage.input_tokens,
+            "output_tokens": usage.output_tokens,
+            "total_tokens": usage.total_tokens,
+            "input_token_details": {
+                "cached_tokens": usage.input_tokens_details.cached_tokens
+            },
+            "output_token_details": {
+                "reasoning_tokens": usage.output_tokens_details.reasoning_tokens
+            },
+        },
+    }
+    completed_response.update(_get_commons_responses(request))
+    return completed_response
+
+
+def _get_response_on_error(
+    response_id: str,
+    request: ResponsesRequest,
+    created_at: int,
+    incomplete_details: dict,
+    error: dict,
+) -> dict:
+    created_response = {
+        "id": response_id,
+        "object": "response",
+        "created_at": created_at,
+        "completed_at": None,
+        "status": "failed",
+        "output": [],
+        "incomplete_details": incomplete_details,
+        "text": {"format": {"type": "text"}, "verbosity": "low"},
+        "paralell_tool_calls": 0,
+        "truncation": "disabled",
+        "tool_choice": "auto",
+        # TODO:  will revisit on tool call impl
+        "tools": [{"name": "", "type": "function"}],
+        "error": error,
+    }
+    created_response.update(_get_commons_responses(request))
+    return created_response
+
+
+def _get_commons_responses(request: ResponsesRequest):
+    return {
+        "model": request.model,
         "previous_response_id": request.previous_response_id,
         "instructions": request.instructions,
         "temperature": request.temperature,
@@ -741,24 +649,25 @@ def _get_response_chunk(
         "store": request.store,
         "max_tool_calls": request.max_tool_calls,
         "max_output_tokens": request.max_output_tokens,
-        # TODO: input and output token details are 0, since we dont do cache now or
-        # i dont know, how to do cache too
-        "usage": {
-            "input_tokens": input_tokens,
-            "output_tokens": output_tokens,
-            "total_tokens": input_tokens + output_tokens,
-            "input_tokens_details": 0,
-            "output_tokens_details": 0,
-        },
-        "reasoning": {"effort": "medium", "summary": "auto"},
+        "reasoning": {"effort": request.reasoning.effort, "summary": "disabled"},
         "top_logprobs": request.top_logprobs,
         "frequency_penalty": 0,
         "presence_penalty": 0,
         "top_p": request.top_p,
-        "text": {"format": {"type": "text"}, "verbosity": "low"},
-        "paralell_tool_calls": 0,
-        "truncation": "disabled",
-        "tool_choice": "auto",
-        "tools": [{"name": "", "type": "function"}],
-        "error": {"code": "", "message": ""},
     }
+
+
+async def _get_runner(model: str):
+    # comms w tiles daemon to get correct model local path
+    response = await client.get(
+        f"http://127.0.0.1:1729/model-cache-path?model_name={model}"
+    )
+
+    model_cache_path = None
+    if response.status_code == 200:
+        model_cache_path = response.text
+    else:
+        raise HTTPException(status_code=500, detail="Model not found")
+
+    runner = get_or_load_model(model, model_cache_path)
+    return runner
