@@ -25,7 +25,7 @@ use serde_json::{Value, json};
 use std::fs::{self, OpenOptions};
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::PathBuf;
-use std::process::{Child, Command};
+use std::process::{Child, ChildStdout, Command};
 use std::process::{ChildStdin, Stdio};
 use std::time::Duration;
 use tilekit::modelfile::Modelfile;
@@ -111,7 +111,7 @@ struct PiMessageUpdate {
 
 #[derive(Serialize, Deserialize, Debug)]
 struct PiAsstTextMsg {
-    r#type: String,
+    r#type: AsstMsgEventType,
     delta: Option<String>,
 }
 
@@ -136,7 +136,26 @@ struct PiTurnEndEventMsg {
 #[derive(Serialize, Deserialize, Debug)]
 struct PiMsgContent {
     r#type: String,
-    text: String,
+    text: Option<String>,
+    thinking: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+enum AsstMsgEventType {
+    #[serde(rename = "start")]
+    Start,
+    #[serde(rename = "text_start")]
+    TextStart,
+    #[serde(rename = "text_delta")]
+    TextDelta,
+    #[serde(rename = "text_end")]
+    TextEnd,
+    #[serde(rename = "thinking_start")]
+    ThinkingStart,
+    #[serde(rename = "thinking_delta")]
+    ThinkingDelta,
+    #[serde(rename = "thinking_end")]
+    ThinkingEnd,
 }
 
 const PY_PORT: u32 = 6969;
@@ -286,6 +305,56 @@ pub struct SharedContent {
     content: String,
 }
 
+struct ReplSession {
+    pub session_id: String,
+    turn_count: usize,
+    // if true, we will prepend the resumed session history to the input
+    resume_session_pending: bool,
+    resumed_session: String,
+    pub current_modelname: String,
+    pub last_chat_id: String,
+}
+
+impl ReplSession {
+    pub fn new(session_id: &str, model_name: &str) -> Self {
+        ReplSession {
+            session_id: session_id.to_owned(),
+            turn_count: 0,
+            resume_session_pending: false,
+            resumed_session: String::from(""),
+            current_modelname: model_name.to_owned(),
+            last_chat_id: String::from(""),
+        }
+    }
+
+    pub fn set_pending_resume_session(&mut self, flag: bool) {
+        self.resume_session_pending = flag
+    }
+
+    pub fn get_pending_resume_session(&self) -> bool {
+        self.resume_session_pending
+    }
+
+    pub fn get_resumed_session(&self) -> String {
+        self.resumed_session.clone()
+    }
+
+    pub fn set_resumed_session(&mut self, session: String) {
+        self.resumed_session = session
+    }
+
+    pub fn get_turn_count(&self) -> usize {
+        self.turn_count
+    }
+
+    pub fn set_turn_count(&mut self, count: usize) {
+        self.turn_count = count
+    }
+
+    pub fn inc_turn_count(&mut self) {
+        self.turn_count = self.turn_count + 1
+    }
+}
 fn handle_input(input: &str) -> InputType {
     if let Some(cmd) = input.strip_prefix('/') {
         match cmd {
@@ -372,10 +441,11 @@ async fn run_model_with_server(
     // loading the model from mem-agent via daemon server
     let memory_path = get_memory_path().context("Setting/Retrieving memory_path failed")?;
     match load_model(&modelfile, &default_modelfile, &memory_path, 0).await {
-        Ok(_) => start_repl(&modelfile, run_args, db_conn).await?,
-        Err(err) => return Err(anyhow::anyhow!(err)),
+        Ok(_) => start_repl(&modelfile, run_args, db_conn)
+            .await
+            .map_err(|e| anyhow!(e)),
+        Err(err) => Err(anyhow!(err)),
     }
-    Ok(())
 }
 
 #[allow(unused_assignments)]
@@ -390,35 +460,26 @@ async fn start_repl(modelfile: &Modelfile, _run_args: &RunArgs, db_conn: &Dbconn
     let current_user = get_current_user(&db_conn.common)?;
 
     let config = Config::builder().auto_add_history(true).build();
-    let mut editor = Editor::<TilesHinter, DefaultHistory>::with_config(config).unwrap();
+    let mut editor = Editor::<TilesHinter, DefaultHistory>::with_config(config)
+        .context("Failed to create editor")?;
     editor.set_helper(Some(TilesHinter));
 
+    // Setting up Pi rpc process handles
     let mut pi_process = start_pi_rpc(&modelname, &system_prompt)?;
-    let mut session_id = String::new();
-    let pi_stdin = pi_process.stdin.as_mut().unwrap();
-    let mut stdout = pi_process.stdout.take().expect("stdout");
+    let mut pi_stdin = pi_process.stdin.as_mut().unwrap();
+    let mut pi_stdout = pi_process.stdout.take().expect("stdout");
     let inti_cmd_payload = get_command_payload(CommandType::Status);
-    send_to_pi(pi_stdin, inti_cmd_payload).inspect_err(|_e| eprintln!("send pi failed"))?;
+    send_to_pi(pi_stdin, inti_cmd_payload)
+        .inspect_err(|_e| eprintln!("sending command to  pi failed"))?;
 
-    //TODO: Refactor session_id fetching
-    let mut pi_session_state = String::new();
-    let mut reader = BufReader::new(&mut stdout);
-    let _ = reader
-        .read_line(&mut pi_session_state)
-        .context("Failed reading pi session state")?;
-    let response: PiResponse = serde_json::from_str(&pi_session_state)?;
-    if let PiResponse::Response(msg) = response {
-        let state: GetStateData =
-            serde_json::from_value(msg.data.expect("get state parsing failed"))?;
-        session_id = state.session_id;
-    }
-    info!("session_id: {}", session_id);
-    let mut session_turn_count = 0;
-    // if true, we will prepend the resumed session history to the input
-    let mut is_resume_session_pending = false;
-    let mut resumed_session: String = String::from("");
+    let pi_session_id = get_initial_session_id(&mut pi_stdin, &mut pi_stdout)?;
+    let mut repl_session = ReplSession::new(&pi_session_id, &modelname);
+
+    // The great REPL loop
     loop {
-        is_resume_session_pending = false;
+        repl_session.set_pending_resume_session(false);
+
+        // Reads the user input
         let readline = editor.readline(">>> ");
         let input = match readline {
             Ok(line) => line.trim().to_string().to_lowercase(),
@@ -427,16 +488,7 @@ async fn start_repl(modelfile: &Modelfile, _run_args: &RunArgs, db_conn: &Dbconn
                 // called `Result::unwrap()` on an `Err` value: Os { code: 32, kind: BrokenPipe, message: "Broken pipe" }
                 //
                 // User pressed Ctrl+C or Ctrl+D
-                let end_payload = json!({
-                    "type": "abort",
-                });
-                let payload_str = format!("{}\n", serde_json::to_string(&end_payload)?);
-                pi_stdin.write_all(payload_str.as_bytes())?;
-                pi_stdin.flush()?;
-                println!("Exiting interactive mode");
-                if !cfg!(debug_assertions) {
-                    let _res = stop_server_daemon().await;
-                }
+                handle_repl_exit(pi_stdin).await?;
                 break;
             }
         };
@@ -444,162 +496,48 @@ async fn start_repl(modelfile: &Modelfile, _run_args: &RunArgs, db_conn: &Dbconn
         if input.is_empty() {
             continue;
         }
+
+        // Process the user input in the repl
         match handle_input(&input) {
             InputType::Skip => continue,
             InputType::Exit => {
-                let end_payload = json!({
-                    "type": "abort",
-                });
-                let payload_str = format!("{}\n", serde_json::to_string(&end_payload)?);
-                pi_stdin.write_all(payload_str.as_bytes())?;
-                pi_stdin.flush()?;
-                println!("Exiting interactive mode");
-                if !cfg!(debug_assertions) {
-                    let _res = stop_server_daemon().await;
-                }
+                handle_repl_exit(pi_stdin).await?;
                 break;
             }
             InputType::Prompt => {
-                let final_input = if is_resume_session_pending {
-                    info!("Pending resumed session, prepend the history");
-                    format!(
-                        "user_chat_history - {}\nUser question- {}",
-                        resumed_session, input
-                    )
-                } else {
-                    input.to_owned()
-                };
-                let payload = json!({
-                    "type": "prompt",
-                    "message": final_input
-                });
-                send_to_pi(pi_stdin, payload)?;
+                handle_input_prompt(pi_stdin, &repl_session, &input)?;
             }
             InputType::Command(cmd) => {
-                let args: Vec<&str> = cmd.split(" ").collect();
-                let main_cmd = args.first().expect("Main command should be there");
-
-                let cmd_json = json!(main_cmd);
-
-                let command: CommandType = serde_json::from_value(cmd_json)?;
-                match command {
-                    CommandType::Unknown => {
-                        println!(
-                            "Unknown command: /{}. Type /help for available commands.",
-                            cmd
-                        );
-                        continue;
-                    }
-                    CommandType::Share => {
-                        process_share_session(db_conn, &session_id, &args).await?;
-                        continue;
-                    }
-                    CommandType::Sessions => {
-                        show_session_info(db_conn)?;
-                        continue;
-                    }
-                    CommandType::Resume => {
-                        match load_session(db_conn, &args) {
-                            Ok((sesh_id, turn_count, history)) => {
-                                session_id = sesh_id;
-                                session_turn_count = turn_count;
-                                is_resume_session_pending = true;
-                                resumed_session = history;
-                            }
-
-                            Err(err) => {
-                                println!("{}", err)
-                            }
-                        }
-                        continue;
-                    }
-                    CommandType::Status => {
-                        if let Err(err) = show_status(&session_id, &modelname, db_conn) {
-                            println!("Failed to display status due to {}", err);
-                        }
-                        continue;
-                    }
-                }
+                handle_input_commands(cmd, &mut repl_session, db_conn, &modelname).await?;
+                continue;
             }
         }
 
-        let reader = BufReader::new(&mut stdout);
-        let mut last_chat_id: String = "".to_owned();
-        let mut has_answer_start = false;
+        // Reads the output from Pi and process and responds to the repl
+        let reader = BufReader::new(&mut pi_stdout);
         for line in reader.lines() {
             let line = line?;
-            let response: PiResponse = serde_json::from_str(&line)?;
+            let response: PiResponse =
+                serde_json::from_str(&line).context("Failed to parse Pi response")?;
             match response {
-                PiResponse::AgentStart => {}
+                PiResponse::AgentStart => {
+                    info!("agent start")
+                }
                 PiResponse::MessageUpdate(msg_update) => {
-                    if msg_update.assistant_message_event.r#type == "text_delta"
-                        && let Some(delta) = msg_update.assistant_message_event.delta
-                    {
-                        if delta.contains("**[Answer]**") {
-                            has_answer_start = true;
-                        }
-                        if has_answer_start {
-                            print!("{}", delta);
-                        } else {
-                            print!("{}", delta.dimmed());
-                        }
-                        use std::io::Write;
-                        std::io::stdout().flush().ok();
-                    }
+                    handle_pi_message_update(msg_update);
                 }
                 PiResponse::AgentEnd => {
-                    has_answer_start = false;
+                    info!("agent end");
                     break;
                 }
                 PiResponse::TurnEnd(turn_event) => {
-                    println!("\n");
-                    // will just toggle off if was toggledon, since we dont need to compact
-                    // every time
-                    is_resume_session_pending = false;
-                    session_turn_count += 1;
-
-                    // on agent end create a new session entry, only for the
-                    // first time
-                    if session_turn_count == 1 {
-                        // info!("Created session {}", session_id);
-                        create_session(&db_conn.chat, &session_id, &input, &current_user.user_id)?;
-                    }
-                    let parent_chat_id = if session_turn_count == 1 {
-                        None
-                    } else {
-                        Some(last_chat_id.clone())
-                    };
-                    let chat_response = ChatResponse {
-                        input: input.clone(),
-                        session_id: session_id.clone(),
-                        role: Role::User,
-                        code: None,
-                        prev_response_id: None,
-                        parent_chat_id,
-                        metrics: None,
-                        model_used: modelname.clone(),
-                    };
-                    let prompt_chat = save_chat(&db_conn.chat, &current_user, chat_response)?;
-                    last_chat_id = prompt_chat.id;
-                    if turn_event.message.role == "assistant" {
-                        let mut content = turn_event.message.content;
-                        if let Some(msg) = content.pop() {
-                            let chat_response = ChatResponse {
-                                input: msg.text.clone(),
-                                session_id: session_id.clone(),
-                                role: Role::Assistant,
-                                code: None,
-                                prev_response_id: None,
-                                parent_chat_id: Some(last_chat_id.clone()),
-                                metrics: None,
-                                model_used: modelname.clone(),
-                            };
-                            let chat = save_chat(&db_conn.chat, &current_user, chat_response)?;
-                            last_chat_id = chat.id;
-                        }
-                    } else {
-                        info!("Not handling {} role now", turn_event.message.role);
-                    }
+                    process_pi_turn_event(
+                        turn_event,
+                        &mut repl_session,
+                        db_conn,
+                        &current_user,
+                        &input,
+                    )?;
                 }
                 PiResponse::Response(response_msg) => {
                     if response_msg.success {
@@ -615,7 +553,7 @@ async fn start_repl(modelfile: &Modelfile, _run_args: &RunArgs, db_conn: &Dbconn
                     break;
                 }
                 PiResponse::Unknown => {
-                    // println!("Unsupported command");
+                    // info!("Unsupported command");
                     continue;
                 }
             }
@@ -680,17 +618,6 @@ async fn load_model(
     }
 }
 
-#[allow(dead_code)]
-fn extract_python(content: &str) -> String {
-    if content.contains("<python>") && content.contains("</python>") {
-        let list_a = content.split("<python>").collect::<Vec<&str>>();
-        let list_b = list_a[1].split("</python>").collect::<Vec<&str>>();
-        list_b[0].to_owned()
-    } else {
-        "".to_owned()
-    }
-}
-
 async fn wait_until_server_is_up() {
     loop {
         match ping().await {
@@ -698,7 +625,7 @@ async fn wait_until_server_is_up() {
                 break;
             }
             Err(_err) => {
-                println!("tiling...");
+                println!("### tiling ###...");
                 sleep(Duration::from_secs(5)).await;
             }
         }
@@ -990,5 +917,205 @@ fn show_status(session_id: &str, modelname: &str, db_conn: &Dbconn) -> Result<()
     Ok(())
 }
 
+fn handle_pi_message_update(msg_update: PiMessageUpdate) {
+    match msg_update.assistant_message_event.r#type {
+        AsstMsgEventType::TextStart => {}
+        AsstMsgEventType::TextDelta => {
+            if let Some(delta) = msg_update.assistant_message_event.delta {
+                print!("{}", delta);
+                use std::io::Write;
+                std::io::stdout().flush().ok();
+            }
+        }
+        AsstMsgEventType::TextEnd => {}
+        AsstMsgEventType::ThinkingStart => {}
+        AsstMsgEventType::ThinkingDelta => {
+            if let Some(delta) = msg_update.assistant_message_event.delta {
+                print!("{}", delta.dimmed());
+                use std::io::Write;
+                std::io::stdout().flush().ok();
+            }
+        }
+        AsstMsgEventType::ThinkingEnd => {}
+        _ => (),
+    }
+}
+
+fn get_initial_session_id(
+    pi_stdin: &mut ChildStdin,
+    pi_stdout: &mut ChildStdout,
+) -> Result<String> {
+    let inti_cmd_payload = get_command_payload(CommandType::Status);
+    send_to_pi(pi_stdin, inti_cmd_payload)
+        .inspect_err(|_e| eprintln!("sending command to  pi failed"))?;
+
+    let mut pi_session_state = String::new();
+    let mut reader = BufReader::new(pi_stdout);
+    let _ = reader
+        .read_line(&mut pi_session_state)
+        .context("Failed reading pi session state")?;
+    let response: PiResponse = serde_json::from_str(&pi_session_state)?;
+    if let PiResponse::Response(msg) = response {
+        let state: GetStateData =
+            serde_json::from_value(msg.data.expect("get state parsing failed"))?;
+        Ok(state.session_id)
+    } else {
+        Err(anyhow!("Failed to fetch session_id from Pi"))
+    }
+}
+
+async fn handle_repl_exit(pi_stdin: &mut ChildStdin) -> Result<()> {
+    let end_payload = json!({
+        "type": "abort",
+    });
+    let payload_str = format!("{}\n", serde_json::to_string(&end_payload)?);
+    pi_stdin.write_all(payload_str.as_bytes())?;
+    pi_stdin.flush()?;
+    println!("Exiting interactive mode");
+    if !cfg!(debug_assertions) {
+        let _res = stop_server_daemon().await;
+    }
+    Ok(())
+}
+
+fn handle_input_prompt(
+    pi_stdin: &mut ChildStdin,
+    repl_session: &ReplSession,
+    input: &str,
+) -> Result<()> {
+    let final_input = if repl_session.get_pending_resume_session() {
+        info!("Pending resumed session, prepend the history");
+        format!(
+            "user_chat_history - {}\nUser question- {}",
+            repl_session.get_resumed_session(),
+            input
+        )
+    } else {
+        input.to_owned()
+    };
+    let payload = json!({
+        "type": "prompt",
+        "message": final_input
+    });
+    send_to_pi(pi_stdin, payload)
+}
+
+async fn handle_input_commands(
+    cmd: String,
+    repl_session: &mut ReplSession,
+    db_conn: &Dbconn,
+    modelname: &str,
+) -> Result<()> {
+    let args: Vec<&str> = cmd.split(" ").collect();
+    let main_cmd = args.first().expect("Main command should be there");
+
+    let cmd_json = json!(main_cmd);
+
+    let command: CommandType = serde_json::from_value(cmd_json)?;
+    match command {
+        CommandType::Unknown => {
+            println!(
+                "Unknown command: /{}. Type /help for available commands.",
+                cmd
+            );
+        }
+        CommandType::Share => {
+            process_share_session(db_conn, &repl_session.session_id, &args).await?;
+        }
+        CommandType::Sessions => {
+            show_session_info(db_conn)?;
+        }
+        CommandType::Resume => match load_session(db_conn, &args) {
+            Ok((sesh_id, turn_count, history)) => {
+                repl_session.session_id = sesh_id;
+                repl_session.set_turn_count(turn_count);
+                repl_session.set_pending_resume_session(true);
+                repl_session.set_resumed_session(history);
+            }
+
+            Err(err) => {
+                println!("{}", err)
+            }
+        },
+        CommandType::Status => {
+            if let Err(err) = show_status(&repl_session.session_id, &modelname, db_conn) {
+                println!("Failed to display status due to {}", err);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn process_pi_turn_event(
+    turn_event: PiTurnEndEvent,
+    repl_session: &mut ReplSession,
+    db_conn: &Dbconn,
+    current_user: &crate::core::account::local::User,
+    input: &str,
+) -> Result<()> {
+    info!("Turn end");
+    // will just toggle off if was toggledon, since we dont need to compact
+    // every time
+    repl_session.set_pending_resume_session(false);
+    repl_session.inc_turn_count();
+    // on agent end create a new session entry, only for the
+    // first time
+    if repl_session.get_turn_count() == 1 {
+        create_session(
+            &db_conn.chat,
+            &repl_session.session_id,
+            input,
+            &current_user.user_id,
+        )?;
+    }
+    let parent_chat_id = if repl_session.get_turn_count() == 1 {
+        None
+    } else {
+        Some(repl_session.last_chat_id.clone())
+    };
+    let chat_response = ChatResponse {
+        input: input.to_owned(),
+        session_id: repl_session.session_id.clone(),
+        role: Role::User,
+        code: None,
+        prev_response_id: None,
+        parent_chat_id,
+        metrics: None,
+        model_used: repl_session.current_modelname.clone(),
+    };
+    let prompt_chat = save_chat(&db_conn.chat, &current_user, chat_response)?;
+    repl_session.last_chat_id = prompt_chat.id;
+    //TODO: Refactor this..
+    if turn_event.message.role == "assistant" {
+        let content = turn_event.message.content;
+        let full_content = content.iter().fold(String::new(), |mut acc, x| {
+            if x.r#type == "thinking" {
+                acc.push_str(&x.thinking.clone().unwrap_or("".to_owned()));
+                acc
+            } else if x.r#type == "text" {
+                acc.push_str(&x.text.clone().unwrap_or("".to_owned()));
+                acc
+            } else {
+                acc.push_str("");
+                acc
+            }
+        });
+        let chat_response = ChatResponse {
+            input: full_content,
+            session_id: repl_session.session_id.clone(),
+            role: Role::Assistant,
+            code: None,
+            prev_response_id: None,
+            parent_chat_id: Some(repl_session.last_chat_id.clone()),
+            metrics: None,
+            model_used: repl_session.current_modelname.clone(),
+        };
+        let chat = save_chat(&db_conn.chat, &current_user, chat_response)?;
+        repl_session.last_chat_id = chat.id;
+    } else {
+        info!("Not handling {} role now", turn_event.message.role);
+    }
+    Ok(())
+}
 #[cfg(test)]
 mod tests {}

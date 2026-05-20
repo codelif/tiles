@@ -35,11 +35,14 @@ from ..reasoning_utils import ReasoningExtractor
 from ..schemas import (
     CAssistantMessageItemParam,
     CDeveloperMessageItemParam,
+    CReasoningItemParam,
     CSystemMessageItemParam,
     CUserMessageItemParam,
     ChatCompletionRequest,
     ChatMessage,
     GenerationMetrics,
+    OutputIndex,
+    OutputItemDeltaModel,
     ResponsesRequest,
     ResponsesResponse,
 )
@@ -149,7 +152,7 @@ def _store_response(
         except Exception:
             pass
     try:
-        _responses[response_id] = resp
+        is_answerresponses[response_id] = resp
     except Exception:
         pass
     return resp
@@ -167,6 +170,8 @@ def handle_response_input(request: ResponsesRequest):
     if isinstance(request.input, str):
         user_input_content = request.input
     else:
+        # cz the assumption is the last one in the array will be
+        # user role input
         user_msg_item = request.input[-1]
         if isinstance(user_msg_item.content, list):
             user_input_content = user_msg_item.content[0].text
@@ -175,7 +180,6 @@ def handle_response_input(request: ResponsesRequest):
     return user_input_content
 
 
-# DOING: Please refactor for Deus sake
 # TODO: Add more tests for this api
 # TODO: Consider benchmark stuff
 async def generate_response_chat_stream(
@@ -193,12 +197,11 @@ async def generate_response_chat_stream(
             reasoning_effort, request.input  # pyright: ignore
         )
 
-    # TODO: DO we need it here, or in response.complete event?, so
-    # we can avoid using tokenizer encoding here...
     input_tokens = len(runner.tokenizer.encode(user_input_content))  # pyright: ignore
 
     response_id = f"resp_{uuid.uuid4()}"
     message_id = f"msg_{uuid.uuid4()}"
+    reasoning_id = f"reasoning_{uuid.uuid4()}"
     sequence_number = 0
 
     ## response.created envelope event ##
@@ -211,14 +214,12 @@ async def generate_response_chat_stream(
 
     accumulated_text = ""
     answer_text = ""
+    reasoning_text = ""
     output_tokens = 0
-    error = None
-    incomplete_details = None
-    has_answer_started: bool = False
-    # TODO: This will increment if we have multiple items than only text
-    output_index = 0
     content_index = 0
-
+    output_index = 0
+    output_items = []
+    state = ""
     try:
         iterator: Iterator
         if is_harmony_family(request.model):
@@ -243,111 +244,89 @@ async def generate_response_chat_stream(
             if not isinstance(token, str):
                 continue
 
-            if "**[Answer]**" in token or has_answer_started:
-                has_answer_started = True
-                answer_text += token
-
             accumulated_text += token
-            output_tokens += 1  # Each yield is one token
+            output_tokens += 1
 
-            event_name = ""
-            item_chunk = {}
-            # TODO: Maybe we can avoid this?, comeback pls
-            if sequence_number == 1:
-                event_name = "response.output_item.added"
-                # TODO: Maybe we dont need content for this event
-                # yeah response.content_part.added for initializing..
-                item_chunk = {
-                    "type": "message",
-                    "id": message_id,
-                    "status": "in_progress",
-                    "role": "assistant",
-                    "content": [
-                        {
-                            "type": "output_text",
-                            "text": token,
-                            "annotations": [],
-                        }
-                    ],
-                }
-                event = {
-                    "output_index": output_index,
-                    "item": item_chunk,
-                }
-                resp_str, sequence_number = _sse(event_name, event, sequence_number)
+            if "**[Reasoning]**" in token:
+                state = "reasoning"
+
+            if "**[Answer]**" in token:
+                state = "answer"
+                # Resetting content_index as reasoning output_item is finished
+                content_index = 0
+
+            if state == "reasoning":
+                if content_index == 0:
+                    resp_str, sequence_number = _process_init_reasoning_events(
+                        reasoning_id, token, output_index, sequence_number
+                    )
+                    yield resp_str
+
+                reasoning_text += token
+                output_item = OutputItemDeltaModel(
+                    item_name="reasoning_summary_text",
+                    item_id=reasoning_id,
+                    index=output_index,
+                    delta=token,
+                    content_index=content_index,
+                )
+                resp_str, sequence_number = _process_output_item_delta(
+                    output_item, sequence_number
+                )
                 yield resp_str
-            event_name = "response.output_text.delta"
-            event = {
-                "output_index": output_index,
-                # TODO: item_id is not message Id, change it
-                "item_id": message_id,
-                "delta": token,
-                "content_index": content_index,
-            }
+            elif state == "answer":
+                if content_index == 0:
+                    resp_str, sequence_number, output_index, item = (
+                        _process_stop_reasoning_events(
+                            reasoning_id, output_index, reasoning_text, sequence_number
+                        )
+                    )
+                    output_items.append(item)
+                    yield resp_str
+                    resp_str, sequence_number = _process_output_item_added(
+                        "message", message_id, token, output_index, sequence_number
+                    )
+                    yield resp_str
+                answer_text += token
+                output_item = OutputItemDeltaModel(
+                    item_name="output_text",
+                    item_id=message_id,
+                    index=output_index,
+                    delta=token,
+                    content_index=content_index,
+                )
+                resp_str, sequence_number = _process_output_item_delta(
+                    output_item, sequence_number
+                )
+                yield resp_str
 
             content_index += 1
 
-            resp_str, sequence_number = _sse(event_name, event, sequence_number)
-            yield resp_str
-
     except Exception as e:
-        error = {"message": str(e), "code": "500"}
-        incomplete_details = {"reason": "internal server error"}
-
-        # TODO: fix error response acc to the standard
-        err_response = _get_response_on_error(
-            response_id, request, created, incomplete_details, error
-        )
-        resp_str, sequence_number = _sse(
-            "response.failed", {"response": err_response}, sequence_number
+        resp_str, sequence_number = _process_error_event(
+            str(e), response_id, request, created, sequence_number
         )
         yield resp_str
         return
 
-    payload = {
-        "item_id": message_id,
-        "output_index": output_index,
-        "content_index": content_index,
-        # TODO: shouldnt be only answer ig, but check once w pi rendering
-        "text": answer_text,
-    }
-    resp_str, sequence_number = _sse(
-        "response.output_text.done", payload, sequence_number
+    resp_str, sequence_number, output_index, item = _process_output_item_done(
+        "message", message_id, answer_text, output_index, sequence_number
     )
+    output_items.append(item)
     yield resp_str
 
     ## Envelope, response.completed
-    #
-    # TODO: This shld be final output array which i think contains all output items. This is `ResponseOutputMessage`. And the output_text only answer and not thinking, is this a Pi fuckup, hmm there is reasoning item for reasoning output
-    #
-    output = [
-        {
-            "type": "message",
-            "id": message_id,
-            "status": "completed",
-            "role": "assistant",
-            "content": [
-                {
-                    "type": "output_text",
-                    "text": answer_text,
-                    "annotations": [],
-                }
-            ],
-        }
-    ]
     usage = Usage(
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         total_tokens=input_tokens + output_tokens,
         input_tokens_details=InputTokensDetails(cached_tokens=0),
-        # TODO: Will revisit this when we handling output_item=reasoning for putting actual value
-        output_tokens_details=OutputTokensDetails(reasoning_tokens=0),
+        output_tokens_details=OutputTokensDetails(reasoning_tokens=len(reasoning_text)),
     )
     final_response = _get_response_on_completed(
-        response_id, request, created, output, usage
+        response_id, request, created, output_items, usage
     )
 
-    # TODO: Add the token usage here as its completed..
     resp_str, sequence_number = _sse(
         "response.completed", {"response": final_response}, sequence_number
     )
@@ -355,108 +334,6 @@ async def generate_response_chat_stream(
     ###############
 
     yield "data: [DONE]\n\n"
-
-
-async def generate_response_chat(request: ResponsesRequest):
-    """Generate chat responses for Responses API"""
-
-    model = request.model
-    response_id = f"resp-{uuid.uuid4()}"
-    msg_id = f"msg_{uuid.uuid4()}"
-    created = int(time.time())
-    runner = get_or_load_model(model, None)
-
-    user_input_content = ""
-
-    user_input_content = handle_response_input(request)
-
-    reasoning_effort = get_reasoning_effort(request.reasoning.effort)
-    convo: Conversation | None = None
-    if is_harmony_family(model):
-        convo = build_harmony_conversation(
-            reasoning_effort, request.input  # pyright: ignore
-        )
-
-    metrics_obj = None
-    error = None
-    incomplete_details = None
-
-    try:
-        generated_text = ""
-        start_time = time.time()
-        if is_harmony_family(model):
-            runner.generate_batch_gpt(
-                conversation=convo,  # pyright: ignore
-                max_tokens=runner.get_effective_max_tokens(request.max_output_tokens),
-                temperature=request.temperature or 1,
-                top_p=request.top_p or 1,
-                use_chat_template=True,
-            )
-        else:
-            runner.generate_batch(
-                prompt=user_input_content,  # pyright: ignore
-                max_tokens=runner.get_effective_max_tokens(request.max_output_tokens),
-                temperature=request.temperature or 1,
-                top_p=request.top_p or 1,
-                use_chat_template=True,
-            )
-        # Metrics for batch generation (approximate)
-        generation_time = time.time() - start_time
-
-        completed_at = int(time.time())
-        status = "completed"
-        error = None
-        incomplete_details = None
-        # Calculate token usage
-        usage = _calc_usage(runner, user_input_content, generated_text)
-        output_tokens = usage.get("output_tokens", 0)
-        metrics_obj = {
-            "ttft_ms": generation_time * 1000.0,
-            "total_tokens": output_tokens,
-            "tokens_per_second": (
-                (output_tokens / generation_time) if generation_time > 0 else 0.0
-            ),
-            "total_latency_s": generation_time,
-        }
-
-    except Exception as e:
-        completed_at = None
-        status = "failed"
-        error = {"message": str(e), "code": "500"}
-        incomplete_details = {"reason": "internal server error"}
-        generated_text = ""
-        usage = {"input_tokens": 0, "output_tokens": 0}
-
-    output_block = (
-        [
-            {
-                "type": "message",
-                "id": msg_id,
-                "status": "completed" if status == "completed" else "failed",
-                "role": "assistant",
-                "content": [
-                    {"type": "output_text", "text": generated_text, "annotations": []}
-                ],
-            }
-        ]
-        if status == "completed"
-        else []
-    )
-
-    resp = _store_response(
-        response_id=response_id,
-        created=created,
-        completed_at=completed_at,
-        model=model,
-        status=status,
-        output=output_block,
-        usage=usage,
-        error=error,
-        incomplete_details=incomplete_details,
-        metrics=(metrics_obj if status == "completed" else None),
-    )
-
-    return resp
 
 
 def get_reasoning_effort(reasoning_effort_enum: ReasoningEffortEnum | None):
@@ -486,7 +363,6 @@ def build_harmony_conversation(
         )
     ]
     for item in convos:
-        # print(f"ITEM {item}")
         match item:
             case CUserMessageItemParam():
                 content = ""
@@ -522,6 +398,8 @@ def build_harmony_conversation(
                 convo_list.append(
                     Message.from_role_and_content(Role.SYSTEM, item.content.root)
                 )
+            case CReasoningItemParam():
+                continue
             case _:
                 raise TypeError("unknown type")
 
@@ -671,3 +549,132 @@ async def _get_runner(model: str):
 
     runner = get_or_load_model(model, model_cache_path)
     return runner
+
+
+def _process_output_item_delta(
+    output_item: OutputItemDeltaModel, sequence_number: int
+) -> tuple[str, int]:
+    event_name = ".".join(["response", output_item.item_name, "delta"])
+
+    event = {
+        "output_index": output_item.index,
+        "item_id": output_item.item_id,
+        "delta": output_item.delta,
+        "content_index": output_item.content_index,
+    }
+
+    return _sse(event_name, event, sequence_number)
+
+
+def _process_output_item_added(
+    type: str, id: str, token: str, output_index, sequence_number: int
+) -> tuple[str, int]:
+    event_name = "response.output_item.added"
+    item_chunk = {
+        "type": type,
+        "id": id,
+        "status": "in_progress",
+        "role": "assistant",
+        "content": [
+            {
+                "type": "output_text",
+                "text": token,
+            }
+        ],
+    }
+    event = {
+        "output_index": output_index,
+        "item": item_chunk,
+    }
+    return _sse(event_name, event, sequence_number)
+
+
+def _process_init_reasoning_events(
+    id: str, token: str, output_index, sequence_number: int
+) -> tuple[str, int]:
+    resp_str_a, sequence_number = _process_output_item_added(
+        "reasoning", id, token, output_index, sequence_number
+    )
+
+    event_name = "response.reasoning_summary_part.added"
+    event = {
+        "output_index": output_index,
+        "item_id": id,
+        "part": {"text": token, "type": "summary_text"},
+        "summary_index": 0,
+    }
+    resp_str, sequence_number = _sse(event_name, event, sequence_number)
+    return resp_str_a + resp_str, sequence_number
+
+
+def _process_stop_reasoning_events(
+    id: str, output_index: int, text: str, sequence_number: int
+) -> tuple[str, int, int, dict]:
+    payload = {
+        "item_id": id,
+        "output_index": output_index,
+        "text": text,
+    }
+    resp_str_a, sequence_number = _sse(
+        "response.reasoning_summary_text.done", payload, sequence_number
+    )
+    event_name = "response.reasoning_summary_part.done"
+    event = {
+        "output_index": output_index,
+        "item_id": id,
+        "part": {"text": text, "type": "summary_text"},
+        "summary_index": 0,
+    }
+    resp_str_b, sequence_number = _sse(event_name, event, sequence_number)
+    resp_str_c, sequence_number, output_index, item_chunk = _process_output_item_done(
+        "reasoning", id, text, output_index, sequence_number
+    )
+    return (
+        resp_str_a + resp_str_b + resp_str_c,
+        sequence_number,
+        output_index,
+        item_chunk,
+    )
+
+
+def _process_output_item_done(
+    type: str, id: str, final_text: str, output_index, sequence_number: int
+) -> tuple[str, int, int, dict]:
+    event_name = "response.output_item.done"
+    item_chunk = {
+        "type": type,
+        "id": id,
+        "status": "completed",
+        "role": "assistant",
+        "content": [
+            {
+                "type": "output_text",
+                "text": final_text,
+            }
+        ],
+    }
+    if type == "reasoning":
+        item_chunk.update({"summary": [{"type": "summary_text", "text": final_text}]})
+    event = {
+        "output_index": output_index,
+        "item": item_chunk,
+    }
+    resp_str, sequence_number = _sse(event_name, event, sequence_number)
+    output_index = output_index + 1
+    return resp_str, sequence_number, output_index, item_chunk
+
+
+def _process_error_event(
+    err: str,
+    response_id: str,
+    request: ResponsesRequest,
+    created_at: int,
+    sequence_number: int,
+) -> tuple[str, int]:
+    error = {"message": err, "code": "500"}
+    incomplete_details = {"reason": "internal server error"}
+
+    err_response = _get_response_on_error(
+        response_id, request, created_at, incomplete_details, error
+    )
+    return _sse("response.failed", {"response": err_response}, sequence_number)

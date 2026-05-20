@@ -13,13 +13,12 @@ from openresponses_types.types import (
     IncompleteDetails,
     ItemReferenceParam,
     ReasoningEffortEnum,
-    ReasoningItemParam,
     StreamOptionsParam,
     SystemMessageItemParam,
     ToolChoiceParam,
     UserMessageItemParam,
 )
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 
 
 class CompletionRequest(BaseModel):
@@ -104,6 +103,14 @@ class CAssistantMessageItemParam(AssistantMessageItemParam):
     type: Literal["message"] = "message"
 
 
+class CReasoningItemParam(BaseModel):
+    id: str | None = None
+    type: Literal["reasoning"] = "reasoning"
+    summary: list[Dict[str, Any]] = Field(default_factory=list)
+    content: Any | None = None
+    encrypted_content: str | None = None
+
+
 class CFunctionCallItemParam(FunctionCallItemParam):
     type: Literal["function_call"] = "function_call"
 
@@ -118,7 +125,7 @@ class ResponsesRequest(BaseModel):
         str
         | list[
             ItemReferenceParam
-            | ReasoningItemParam
+            | CReasoningItemParam
             | CUserMessageItemParam
             | CSystemMessageItemParam
             | CDeveloperMessageItemParam
@@ -146,7 +153,9 @@ class ResponsesRequest(BaseModel):
     instructions: str | None = None
     # auto/disabled, returns 400 on disabled
     truncation: TruncationEnum = TruncationEnum.disabled
-    prompt_cache: str | None = None
+    prompt_cache: str | None = Field(
+        default=None, validation_alias=AliasChoices("prompt_cache", "prompt_cache_key")
+    )
     safety_identifier: str | None = None
     max_tool_calls: int | None = None
     background: bool = False
@@ -187,3 +196,19 @@ class GenerationMetrics:
     total_tokens: int  # Total tokens generated
     tokens_per_second: float  # Throughput
     total_latency_s: float  # End-to-end latency in seconds
+
+
+from enum import IntEnum
+
+
+class OutputIndex(IntEnum):
+    MESSAGE = 0
+    REASONING = 1
+
+
+class OutputItemDeltaModel(BaseModel):
+    item_name: str
+    index: int
+    item_id: str
+    delta: str
+    content_index: int

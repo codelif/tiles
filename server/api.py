@@ -7,7 +7,7 @@ from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.exceptions import RequestValidationError
 from openai_harmony import Role
 from openresponses_types import InputTextContentParam
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from . import runtime
 from .schemas import (
@@ -70,6 +70,11 @@ async def create_chat_response(request: ResponsesRequest):
     """
     Create a response stream/non-stream with openResponses format
     """
+    # try:
+    #     val_request = ResponsesRequest.model_validate(request)
+    # except ValidationError as e:
+    #     print(f"errorz\n{e}")
+    #     raise HTTPException(status_code=422, detail=e.errors())
 
     if request.stream:
         return StreamingResponse(

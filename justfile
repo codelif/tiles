@@ -10,6 +10,7 @@ check:
     just fmt
     just lint
     cargo test
+    just py_test
 
 serve:
     server/.venv/bin/python3 -m server.main
@@ -35,5 +36,7 @@ bundle_pkg_full:
 build_w_pi:
     ./scripts/build_with_pi_dev.sh
 
+py_test:
+    uv run --project server pytest server/tests
     
 # runtiles: RUST_LOG=tiles=info,iroh=off cargo run

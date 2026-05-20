@@ -504,7 +504,7 @@ class MLXRunner:
 
             if is_final is None and parser.current_channel == "final":
                 is_final = True
-                yield "\n\n---\n\n**[Answer]**\n\n"
+                yield "\n---\n**[Answer]**\n\n"
 
             if ttft is None:
                 ttft = time.time() - start_time
@@ -522,13 +522,13 @@ class MLXRunner:
         total_latency = time.time() - start_time
         tokens_per_second = tokens_generated / total_latency if total_latency > 0 else 0
         ttft_ms = (ttft * 1000) if ttft is not None else 0
-        metrics = GenerationMetrics(
-            ttft_ms=ttft_ms,
-            total_tokens=tokens_generated,
-            tokens_per_second=tokens_per_second,
-            total_latency_s=total_latency,
-        )
-        yield metrics  # pyright: ignore
+        # metrics = GenerationMetrics(
+        #     ttft_ms=ttft_ms,
+        #     total_tokens=tokens_generated,
+        #     tokens_per_second=tokens_per_second,
+        #     total_latency_s=total_latency,
+        # )
+        # yield metrics  # pyright: ignore
 
         # Print generation statistics if verbose
         if self.verbose:
@@ -707,12 +707,12 @@ class MLXRunner:
                             tokens_generated / total_latency if total_latency > 0 else 0
                         )
                         ttft_ms = (ttft * 1000) if ttft is not None else 0
-                        yield GenerationMetrics(
-                            ttft_ms=ttft_ms,
-                            total_tokens=tokens_generated,
-                            tokens_per_second=tokens_per_second,
-                            total_latency_s=total_latency,
-                        )  # pyright: ignore
+                        # yield GenerationMetrics(
+                        #     ttft_ms=ttft_ms,
+                        #     total_tokens=tokens_generated,
+                        #     tokens_per_second=tokens_per_second,
+                        #     total_latency_s=total_latency,
+                        # )  # pyright: ignore
                         return  # Stop generation without yielding stop token
 
                 # Only check chat stop tokens if no native stop token found (fallback)
@@ -753,12 +753,12 @@ class MLXRunner:
                             )
                             ttft_ms = (ttft * 1000) if ttft is not None else 0
                             # TODO: move these metrics to diff fn
-                            yield GenerationMetrics(
-                                ttft_ms=ttft_ms,
-                                total_tokens=tokens_generated,
-                                tokens_per_second=tokens_per_second,
-                                total_latency_s=total_latency,
-                            )  # pyright: ignore
+                            # yield GenerationMetrics(
+                            #     ttft_ms=ttft_ms,
+                            #     total_tokens=tokens_generated,
+                            #     tokens_per_second=tokens_per_second,
+                            #     total_latency_s=total_latency,
+                            # )  # pyright: ignore
                             return  # Stop generation without yielding stop token
 
                 if ttft is None:
