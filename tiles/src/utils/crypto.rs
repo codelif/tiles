@@ -27,24 +27,34 @@ pub fn encrypt_to_base64(content: &[u8]) -> Result<EncryptedBase64Content> {
 
     let ciphertext = cipher
         .encrypt(nonce, content.as_ref())
-        .expect("Encryption failed");
+        .map_err(|_e| anyhow!("Encryption failed for ciphertext"))?;
 
     Ok(EncryptedBase64Content {
         ciphertext: data_encoding::BASE64.encode(&ciphertext),
         nonce: data_encoding::BASE64.encode(nonce),
-        key: data_encoding::BASE64.encode(&key),
+        key: data_encoding::BASE64.encode(key),
     })
 }
 
 pub fn decrypt_from_base64(encrypted_content: EncryptedBase64Content) -> Result<Vec<u8>> {
     let nonce_bytes = data_encoding::BASE64.decode(encrypted_content.nonce.as_bytes())?;
 
-    println!("nonce len {}", nonce_bytes.len());
     let key_bytes = data_encoding::BASE64.decode(encrypted_content.key.as_bytes())?;
 
-    println!("key len {}", key_bytes.len());
     let ciphertext_bytes = data_encoding::BASE64.decode(encrypted_content.ciphertext.as_bytes())?;
 
+    if key_bytes.len() != 32 {
+        return Err(anyhow!(
+            "Invalid key length: expected 32 bytes, got {}",
+            key_bytes.len()
+        ));
+    }
+    if nonce_bytes.len() != 24 {
+        return Err(anyhow!(
+            "Invalid nonce length: expected 24 bytes, got {}",
+            nonce_bytes.len()
+        ));
+    }
     let key = Key::from_slice(&key_bytes);
     let cipher = XChaCha20Poly1305::new(key);
     let nonce = XNonce::from_slice(&nonce_bytes);

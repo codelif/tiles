@@ -33,10 +33,7 @@ use crate::{
     core::storage::db::Dbconn,
     daemon::start_internal_server,
     repl::SharedSession,
-    utils::{
-        crypto::{EncryptedBase64Content, encrypt_to_base64},
-        get_unix_time_now,
-    },
+    utils::{crypto::encrypt_to_base64, get_unix_time_now},
 };
 
 // TODO: Make this dynamic porting
@@ -323,6 +320,7 @@ pub fn fetch_logged_in_data(conn: &Connection) -> Result<Option<AtprotoAuthData>
 }
 
 //TODO: Move the login check to common fn
+// TODO: Add tests for share session plss
 pub async fn share_session(
     conn: &Connection,
     shared_session: SharedSession,
@@ -336,23 +334,32 @@ pub async fn share_session(
 
         mem_session_store.set(did_struct.clone(), session).await?;
 
-        println!("Writing to PDS and generating link...");
-        //TODO: Add a user friendly err latta
-        let oauth_session = client.restore(&did_struct).await?;
+        let write_info = if is_private {
+            "Writing to PDS with encrypted content  and generating private link..."
+        } else {
+            "Writing to PDS and generating link..."
+        };
+        println!("{}", write_info);
+        let oauth_session = client
+            .restore(&did_struct)
+            .await
+            .context("Failed to restore the oauth session")?;
+
         let agent = Agent::new(oauth_session);
 
-        let mut encrypted_session: Option<EncryptedBase64Content> = None;
-
-        let shared_session_value = if is_private {
-            let enc_content = encrypt_to_base64(&serde_json::to_vec(&shared_session)?)
+        let (shared_session_value, nonce, key) = if is_private {
+            let encrypted_content = encrypt_to_base64(&serde_json::to_vec(&shared_session)?)
                 .context("Failed to encrypt the session")?;
-            let ciphertxt = enc_content.ciphertext.clone();
-            encrypted_session = Some(enc_content);
-            serde_json::json!({
-                "enc_content": ciphertxt
-            })
+            let ciphertxt = encrypted_content.ciphertext;
+            (
+                serde_json::json!({
+                    "enc_content": ciphertxt
+                }),
+                Some(encrypted_content.nonce),
+                Some(encrypted_content.key),
+            )
         } else {
-            serde_json::to_value(shared_session)?
+            (serde_json::to_value(shared_session)?, None, None)
         };
 
         let record: Unknown = serde_json::from_value(shared_session_value)?;
@@ -383,10 +390,12 @@ pub async fn share_session(
 
         let shareable_base_url = format!("https://tiles.run/share/{}", base_encoded_at_url);
 
-        let shareable_url = if let Some(enc_session) = encrypted_session {
+        let shareable_url = if is_private {
             format!(
                 "{}#{}.{}",
-                shareable_base_url, enc_session.nonce, enc_session.key
+                shareable_base_url,
+                nonce.expect("Nonce not found"),
+                key.expect("Key not found")
             )
         } else {
             shareable_base_url

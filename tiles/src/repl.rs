@@ -268,8 +268,6 @@ enum CommandType {
     Sessions,
     #[serde(rename = "resume")]
     Resume,
-    #[serde(rename = "sharep")]
-    ShareP,
     #[serde(other)]
     Unknown,
 }
@@ -333,14 +331,6 @@ fn show_help() {
                 (
                     "/share <sessionId>",
                     "Create a shareable link for a specific session (via ATProto)",
-                ),
-                (
-                    "/sharep",
-                    "Create an encrypted shareable link for the current session (via ATProto)",
-                ),
-                (
-                    "/sharep <sessionId>",
-                    "Create an encrypted shareable link for a specific session (via ATProto)",
                 ),
             ],
         ),
@@ -504,11 +494,7 @@ async fn start_repl(modelfile: &Modelfile, _run_args: &RunArgs, db_conn: &Dbconn
                         continue;
                     }
                     CommandType::Share => {
-                        process_share_session(db_conn, &session_id, &args, false).await?;
-                        continue;
-                    }
-                    CommandType::ShareP => {
-                        process_share_session(db_conn, &session_id, &args, true).await?;
+                        process_share_session(db_conn, &session_id, &args).await?;
                         continue;
                     }
                     CommandType::Sessions => {
@@ -839,7 +825,6 @@ async fn process_share_session(
     conn: &Dbconn,
     current_session_id: &str,
     args: &[&str],
-    is_private: bool,
 ) -> Result<()> {
     let args = if let Some((_main_command, sub_commands)) = args.split_first() {
         sub_commands
@@ -884,6 +869,19 @@ async fn process_share_session(
         created_at: Datetime::now().as_str().to_string(),
         models_used,
     };
+
+    let share_choice_prompt = format!(
+        "{}",
+        "Do you want to share as a private session? (Y/n)".yellow()
+    );
+
+    println!("{}", share_choice_prompt);
+
+    let stdin = io::stdin();
+    let mut input = String::new();
+    stdin.read_line(&mut input)?;
+    let clean_input = input.trim();
+    let is_private = clean_input.is_empty() || clean_input.to_lowercase() == "y";
 
     match share_session(&conn.common, shared_sessions.clone(), is_private).await {
         Err(err) if &err.to_string() == "NOT_LOGGED_IN" => {
