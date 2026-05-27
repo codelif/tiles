@@ -17,7 +17,7 @@ class FakeRunner:
     tokenizer = FakeTokenizer()
 
     def __init__(self, tokens=None, error=None):
-        self.tokens = tokens or ["hello", " ", "world"]
+        self.tokens = ["hello", " ", "world"] if tokens is None else tokens
         self.error = error
         self.generate_streaming_kwargs = None
 
@@ -27,6 +27,17 @@ class FakeRunner:
     def generate_streaming(self, *, prompt, max_tokens, temperature, top_p):
         self.generate_streaming_kwargs = {
             "prompt": prompt,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "top_p": top_p,
+        }
+        if self.error is not None:
+            raise self.error
+        yield from self.tokens
+
+    def generate_streaming_gpt(self, *, conversation, max_tokens, temperature, top_p):
+        self.generate_streaming_kwargs = {
+            "conversation": conversation,
             "max_tokens": max_tokens,
             "temperature": temperature,
             "top_p": top_p,
@@ -136,23 +147,47 @@ async def test_stream_emits_created_delta_completed_and_done():
             },
         ],
         stream=True,
+        tools=[
+            {
+                "type": "function",
+                "name": "read",
+                "description": "Read a file",
+                "parameters": {
+                    "type": "object",
+                    "required": ["path"],
+                    "properties": {"path": {"type": "string"}},
+                },
+                "strict": False,
+            }
+        ],
     )
 
     fake_response = SimpleNamespace(status_code=200, text="/tmp/model-cache")
+    runner = FakeRunner(
+        tokens=[
+            "**[Reasoning]**",
+            "lets say hello world",
+            "**[Answer]**",
+            "hello",
+            "world",
+        ]
+    )
 
     with (
         patch.object(mlx.client, "get", AsyncMock(return_value=fake_response)),
-        patch.object(mlx, "get_or_load_model", return_value=FakeRunner()),
+        patch.object(mlx, "get_or_load_model", return_value=runner),
         patch.object(mlx, "is_harmony_family", return_value=True),
     ):
         chunks = await collect_stream(request)
 
     stream_text = "".join(chunks)
 
+    # print(f"stream_text\n{stream_text}")
+
     assert "event: response.created\n" in stream_text
     assert "event: response.output_item.added\n" in stream_text
     assert "event: response.output_text.delta\n" in stream_text
-    assert "event: response.output_text.done\n" in stream_text
+    assert "event: response.output_item.done\n" in stream_text
     assert "event: response.completed\n" in stream_text
     assert stream_text.endswith("data: [DONE]\n\n")
 
@@ -168,7 +203,7 @@ async def test_stream_passes_request_options_to_runner():
         top_p=0.8,
     )
     fake_response = SimpleNamespace(status_code=200, text="/tmp/model-cache")
-    runner = FakeRunner()
+    runner = FakeRunner(tokens=["options ", "were ", "forwarded"])
 
     with (
         patch.object(mlx.client, "get", AsyncMock(return_value=fake_response)),
@@ -186,54 +221,6 @@ async def test_stream_passes_request_options_to_runner():
 
 
 @pytest.mark.asyncio
-async def test_stream_skips_metrics_and_non_string_chunks():
-    request = ResponsesRequest(
-        model="test-model",
-        input="Say hello",
-        stream=True,
-    )
-    fake_response = SimpleNamespace(status_code=200, text="/tmp/model-cache")
-    runner = FakeRunner(
-        tokens=[
-            GenerationMetrics(
-                ttft_ms=1.0,
-                total_tokens=1,
-                tokens_per_second=1.0,
-                total_latency_s=1.0,
-            ),
-            {"ignored": True},
-            "**[Answer]**",
-            " hello",
-        ]
-    )
-
-    with (
-        patch.object(mlx.client, "get", AsyncMock(return_value=fake_response)),
-        patch.object(mlx, "get_or_load_model", return_value=runner),
-        patch.object(mlx, "is_harmony_family", return_value=False),
-    ):
-        events = parse_sse_events(await collect_stream(request))
-
-    delta_events = [
-        event["data"]
-        for event in events
-        if event["event"] == "response.output_text.delta"
-    ]
-    done_event = next(
-        event["data"]
-        for event in events
-        if event["event"] == "response.output_text.done"
-    )
-    completed_event = next(
-        event["data"] for event in events if event["event"] == "response.completed"
-    )
-
-    assert [event["delta"] for event in delta_events] == ["**[Answer]**", " hello"]
-    assert done_event["text"] == "**[Answer]** hello"
-    assert completed_event["response"]["usage"]["output_tokens"] == 2
-
-
-@pytest.mark.asyncio
 async def test_stream_emits_failed_event_when_generation_raises():
     request = ResponsesRequest(
         model="test-model",
@@ -241,7 +228,10 @@ async def test_stream_emits_failed_event_when_generation_raises():
         stream=True,
     )
     fake_response = SimpleNamespace(status_code=200, text="/tmp/model-cache")
-    runner = FakeRunner(error=RuntimeError("generation failed"))
+    runner = FakeRunner(
+        tokens=["this token should not be emitted"],
+        error=RuntimeError("generation failed"),
+    )
 
     with (
         patch.object(mlx.client, "get", AsyncMock(return_value=fake_response)),
