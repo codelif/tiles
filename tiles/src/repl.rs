@@ -83,8 +83,8 @@ enum PiResponse {
     MessageUpdate(PiMessageUpdate),
     #[serde(rename = "agent_end")]
     AgentEnd(PiAgentEndEvent),
-    // #[serde(rename = "turn_end")]
-    // TurnEnd(PiTurnEndEvent),
+    #[serde(rename = "turn_end")]
+    TurnEnd(PiTurnEndEvent),
     #[serde[other]]
     Unknown,
 }
@@ -119,10 +119,16 @@ struct PiResponseMessage {
     data: Option<Value>,
 }
 
-// #[derive(Serialize, Deserialize, Debug)]
-// struct PiTurnEndEvent {
-//     message: PiMsgEvent,
-// }
+#[derive(Serialize, Deserialize, Debug)]
+struct PiTurnEndEvent {
+    message: PiTurnEndEventMsg,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct PiTurnEndEventMsg {
+    role: String,
+    content: Vec<PiMsgContent>,
+}
 
 #[derive(Serialize, Deserialize, Debug)]
 struct PiMsgEvent {
@@ -488,7 +494,7 @@ async fn start_repl(modelfile: &Modelfile, _run_args: &RunArgs, db_conn: &Dbconn
         let input = match readline {
             Ok(line) => line.trim().to_string().to_lowercase(),
             Err(_) => {
-                //TODO: Panic when entering another prompt after ctr-l C
+                // FIXME: Panic when entering another prompt after ctr-l C
                 // called `Result::unwrap()` on an `Err` value: Os { code: 32, kind: BrokenPipe, message: "Broken pipe" }
                 //
                 // User pressed Ctrl+C or Ctrl+D
@@ -541,10 +547,9 @@ async fn start_repl(modelfile: &Modelfile, _run_args: &RunArgs, db_conn: &Dbconn
                     )?;
                     break;
                 }
-                // PiResponse::TurnEnd(_turn_event) => {
-                //     println!("\n");
-                //     process_pi_turn_event();
-                // }
+                PiResponse::TurnEnd(_turn_event) => {
+                    println!("\n");
+                }
                 PiResponse::Response(response_msg) => {
                     if response_msg.success {
                         match response_msg.command {
@@ -967,6 +972,7 @@ fn build_status_lines(
 fn handle_pi_message_update(msg_update: PiMessageUpdate) {
     match msg_update.assistant_message_event.r#type {
         AsstMsgEventType::TextStart => {
+            println!();
             info!("msg text_start")
         }
         AsstMsgEventType::TextDelta => {
@@ -979,7 +985,9 @@ fn handle_pi_message_update(msg_update: PiMessageUpdate) {
         AsstMsgEventType::TextEnd => {
             info!("msg text_end")
         }
-        AsstMsgEventType::ThinkingStart => {}
+        AsstMsgEventType::ThinkingStart => {
+            println!();
+        }
         AsstMsgEventType::ThinkingDelta => {
             if let Some(delta) = msg_update.assistant_message_event.delta {
                 print!("{}", delta.dimmed());
@@ -990,6 +998,7 @@ fn handle_pi_message_update(msg_update: PiMessageUpdate) {
         AsstMsgEventType::ThinkingEnd => {}
         AsstMsgEventType::ToolcallStart => {
             info!("Selecting tool to execute");
+            println!();
             let delta = "**[Tool Calling]**";
             println!("{}", delta.dimmed());
         }

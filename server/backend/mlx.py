@@ -74,7 +74,6 @@ def get_or_load_model(
         return _model_cache[_current_model_path]  # pyright: ignore
 
 
-# TODO: Add more tests for this api
 # TODO: Consider benchmark stuff
 async def generate_response_chat_stream(
     request: ResponsesRequest,
@@ -93,8 +92,6 @@ async def generate_response_chat_stream(
 
     input_tokens = len(runner.tokenizer.encode(user_input_content))  # pyright: ignore
 
-    # TODO: we could make this on-demand, for ex: tool_id is not needed
-    # everytime
     response_id = f"resp_{uuid.uuid4()}"
     message_id = f"msg_{uuid.uuid4()}"
     reasoning_id = f"reasoning_{uuid.uuid4()}"
@@ -343,8 +340,6 @@ def _get_response_on_create(
         "paralell_tool_calls": 0,
         "truncation": "disabled",
         "tool_choice": "auto",
-        # TODO:  will revisit on tool call impl
-        "tools": [{"name": "", "type": "function"}],
         "error": {"code": "", "message": ""},
     }
     created_response.update(_get_commons_responses(request))
@@ -371,8 +366,6 @@ def _get_response_on_completed(
         "paralell_tool_calls": 0,
         "truncation": "disabled",
         "tool_choice": "auto",
-        # TODO:  will revisit on tool call impl
-        "tools": [{"name": "", "type": "function"}],
         "error": {"code": "", "message": ""},
         "usage": {
             "input_tokens": usage.input_tokens,
@@ -409,8 +402,6 @@ def _get_response_on_error(
         "paralell_tool_calls": 0,
         "truncation": "disabled",
         "tool_choice": "auto",
-        # TODO:  will revisit on tool call impl
-        "tools": [{"name": "", "type": "function"}],
         "error": error,
     }
     created_response.update(_get_commons_responses(request))
@@ -418,6 +409,11 @@ def _get_response_on_error(
 
 
 def _get_commons_responses(request: ResponsesRequest):
+    if request.tools != None:
+        tools_as_dicts = [t.model_dump() for t in request.tools]  # pyright: ignore
+    else:
+        tools_as_dicts = None
+
     return {
         "model": request.model,
         "previous_response_id": request.previous_response_id,
@@ -435,6 +431,7 @@ def _get_commons_responses(request: ResponsesRequest):
         "frequency_penalty": 0,
         "presence_penalty": 0,
         "top_p": request.top_p,
+        "tools": tools_as_dicts,
     }
 
 
@@ -478,7 +475,7 @@ def _process_output_item_added(
             "type": type,
             "id": id,
             "name": "name",
-            "call_id": id,
+            "call_id": "call_" + _random_alphanum(),
             "status": "in_progress",
         }
     else:
@@ -573,7 +570,7 @@ def _process_output_item_done(
             "type": type,
             "id": id,
             "name": tool_name,
-            "call_id": id,
+            "call_id": "call_" + _random_alphanum(),
             "status": "completed",
             "arguments": json.dumps(new_args),
         }
@@ -617,8 +614,7 @@ def _process_error_event(
     return _sse("response.failed", {"response": err_response}, sequence_number)
 
 
-# TODO: Maybe use this as call_id
-def _random_alphanum(n=5):
+def _random_alphanum(n=10):
     return "".join(random.choices(string.ascii_letters + string.digits, k=n))
 
 
