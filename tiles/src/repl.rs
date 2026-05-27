@@ -1059,7 +1059,7 @@ fn handle_input_prompt(
         repl_session.set_pending_resume_session(false);
         info!("Pending resumed session, prepend the history");
         format!(
-            "user_chat_history - {}.\nUse the history as context.\nUser followup question - {}",
+            "user_chat_history:\n{}.\nUse the history as context.\n[Followup question] - {}",
             repl_session.get_resumed_session(),
             input
         )
@@ -1205,7 +1205,7 @@ fn get_pi_msg_content(msgs: Vec<PiMsgContent>) -> String {
         } else if msg.r#type == "toolCall"
             && let Some(args) = msg.arguments
         {
-            content.push("**[ToolCall]**\n".to_string());
+            content.push("\n**[ToolCall]**\n".to_string());
             let arguments = serde_json::to_string(&args).unwrap_or("{}".to_string());
             content.push(arguments);
         }
