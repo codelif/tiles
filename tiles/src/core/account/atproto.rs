@@ -1,6 +1,6 @@
 //! Handles atprotocol stuff
 
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use atrium_api::{
     agent::Agent,
     types::{Unknown, string::Did},
@@ -30,8 +30,10 @@ use std::error::Error;
 use hickory_resolver::TokioResolver;
 
 use crate::{
-    core::storage::db::Dbconn, daemon::start_internal_server, runtime::mlx::SharedSession,
-    utils::get_unix_time_now,
+    core::storage::db::Dbconn,
+    daemon::start_internal_server,
+    repl::SharedSession,
+    utils::{crypto::encrypt_to_base64, get_unix_time_now},
 };
 
 // TODO: Make this dynamic porting
@@ -76,13 +78,21 @@ struct HickoryDnsTxtResolver {
     resolver: TokioResolver,
 }
 
-impl Default for HickoryDnsTxtResolver {
-    fn default() -> Self {
-        Self {
-            resolver: TokioResolver::builder_tokio()
-                .expect("Failed to create TokioResolver builder")
-                .build()
-                .expect("Failed to build tokio resolver"),
+impl HickoryDnsTxtResolver {
+    fn new() -> Result<Self> {
+        let build_resolver = if let Ok(resolver_builder) = TokioResolver::builder_tokio() {
+            resolver_builder.build()
+        } else {
+            return Err(anyhow!(
+                "Failed to resolve DNS, please check your internet connection"
+            ));
+        };
+        if let Ok(resolved) = build_resolver {
+            Ok(Self { resolver: resolved })
+        } else {
+            Err(anyhow!(
+                "Failed to resolve DNS, please check your internet connection"
+            ))
         }
     }
 }
@@ -129,21 +139,43 @@ pub async fn login(conn: &Dbconn, handle: &str) -> Result<()> {
         .await
         .inspect_err(|_| eprintln!("Failed to generate authorization url"))?;
 
-    let mut program = cfg_select! {
+    let program_name = cfg_select! {
         target_os = "macos" => {
-            Command::new("open").arg(url).spawn()?
+            "open"
                     }
         target_os = "linux" => {
-            Command::new("xdg-open").arg(url).spawn()?
+            "xdg-open"
                     }
         _ => {
-            panic!("Unsupported OS")
+            ""
         }
     };
-    program.wait()?;
+
+    // adding this override due to  clippy not playing good w macro above
+    #[allow(clippy::const_is_empty)]
+    if program_name.is_empty() {
+        println!(
+            "Failed to open the url automatically, Please open the url in any browser {}",
+            url
+        )
+    } else {
+        if let Ok(mut program) = Command::new(program_name).arg(&url).spawn() {
+            if program.wait().is_err() {
+                println!(
+                    "Failed to open the url automatically, Please open the url in any browser: {}",
+                    url
+                )
+            }
+        } else {
+            println!(
+                "Failed to open the url automatically, Please open the url\n{} in any browser",
+                url
+            )
+        }
+    };
+
     let (callback_tx, callback_rx) = oneshot::channel();
 
-    //TODO: can we randomze port
     start_internal_server(Some(LOGIN_PORT), callback_tx).await?;
     let params = callback_rx.await?;
     info!("params recieved {:?}", params);
@@ -282,7 +314,7 @@ pub fn fetch_logged_in_data(conn: &Connection) -> Result<Option<AtprotoAuthData>
         [],
         |row| {
             Ok(AtprotoAuthData {
-                key: row.get(0)?,
+               key: row.get(0)?,
                 session: row.get(1)?,
                 state: row.get(2)?,
                 is_logged_in: row.get(3)?,
@@ -295,7 +327,12 @@ pub fn fetch_logged_in_data(conn: &Connection) -> Result<Option<AtprotoAuthData>
 }
 
 //TODO: Move the login check to common fn
-pub async fn share_session(conn: &Connection, shared_session: SharedSession) -> Result<()> {
+// TODO: Add tests for share session plss
+pub async fn share_session(
+    conn: &Connection,
+    shared_session: SharedSession,
+    is_private: bool,
+) -> Result<()> {
     if let Some(auth_data) = fetch_logged_in_data(conn)? {
         let (client, mem_session_store) = create_oauth_client()?;
         let session: Session = serde_json::from_str(&auth_data.session)?;
@@ -304,15 +341,36 @@ pub async fn share_session(conn: &Connection, shared_session: SharedSession) -> 
 
         mem_session_store.set(did_struct.clone(), session).await?;
 
-        println!("Writing to PDS and generating link...");
-        //TODO: Add a user friendly err latta
-        let oauth_session = client.restore(&did_struct).await?;
+        let write_info = if is_private {
+            "Writing to PDS with encrypted content and generating private link..."
+        } else {
+            "Writing to PDS and generating link..."
+        };
+        println!("{}", write_info);
+        let oauth_session = client
+            .restore(&did_struct)
+            .await
+            .context("Failed to restore the oauth session, Try re-login with ATproto")?;
+
         let agent = Agent::new(oauth_session);
 
-        let shared_session_value = serde_json::to_value(shared_session)?;
+        let (shared_session_value, nonce, key) = if is_private {
+            let encrypted_content = encrypt_to_base64(&serde_json::to_vec(&shared_session)?)
+                .context("Failed to encrypt the session")?;
+            let ciphertxt = encrypted_content.ciphertext;
+            (
+                serde_json::json!({
+                    "enc_content": ciphertxt
+                }),
+                Some(encrypted_content.nonce),
+                Some(encrypted_content.key),
+            )
+        } else {
+            (serde_json::to_value(shared_session)?, None, None)
+        };
+
         let record: Unknown = serde_json::from_value(shared_session_value)?;
 
-        //TODO: can we remove the unwrap at collection
         let create_result = agent
             .api
             .com
@@ -320,7 +378,9 @@ pub async fn share_session(conn: &Connection, shared_session: SharedSession) -> 
             .repo
             .create_record(
                 atrium_api::com::atproto::repo::create_record::InputData {
-                    collection: "run.tiles.session".parse().unwrap(),
+                    collection: "run.tiles.session"
+                        .parse()
+                        .map_err(|_e| anyhow!("Failed to parse to nsid"))?,
                     repo: did_struct.clone().into(),
                     rkey: None,
                     record,
@@ -335,7 +395,19 @@ pub async fn share_session(conn: &Connection, shared_session: SharedSession) -> 
 
         let base_encoded_at_url = data_encoding::BASE64.encode(url.as_bytes());
 
-        let shareable_url = format!("https://tiles.run/share/{}", base_encoded_at_url);
+        let shareable_base_url = format!("https://tiles.run/share/{}", base_encoded_at_url);
+
+        let shareable_url = if is_private {
+            format!(
+                "{}#{}.{}",
+                shareable_base_url,
+                nonce.expect("Nonce not found"),
+                key.expect("Key not found")
+            )
+        } else {
+            shareable_base_url
+        };
+
         println!("successfully posted at {}", shareable_url);
 
         // Updating the session token
@@ -384,7 +456,7 @@ fn create_oauth_client() -> Result<(TOAuthClient, MemorySessionStore)> {
                 http_client: http_client.clone(),
             }),
             handle_resolver: AtprotoHandleResolver::new(AtprotoHandleResolverConfig {
-                dns_txt_resolver: HickoryDnsTxtResolver::default(),
+                dns_txt_resolver: HickoryDnsTxtResolver::new()?,
                 http_client: http_client.clone(),
             }),
             authorization_server_metadata: Default::default(),

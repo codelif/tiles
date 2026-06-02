@@ -11,7 +11,7 @@ use tiles::{
         network::{link, sync},
     },
     daemon::{start_cmd, start_server, stop_cmd},
-    runtime::{RunArgs, build_runtime},
+    repl::{self, RunArgs},
     utils::installer,
 };
 
@@ -317,7 +317,6 @@ enum AtCommands {
 pub async fn main() -> Result<(), Box<dyn Error>> {
     build_logger();
     let cli = Cli::parse();
-    let runtime = build_runtime();
     let db_conn = core::init()?;
 
     match cli.command {
@@ -344,7 +343,7 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
             core::init_account(&db_conn)
                 .inspect_err(|e| eprintln!("Tiles core init failed due to {:?}", e))?;
             if !cli.flags.no_repl {
-                commands::run(&runtime, run_args, &db_conn)
+                repl::run(run_args, &db_conn)
                     .await
                     .inspect_err(|e| eprintln!("Tiles failed to run due to {:?}", e))?;
             }
@@ -368,7 +367,7 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
             t.await?;
             core::init_account(&db_conn)
                 .inspect_err(|e| eprintln!("Tiles core init failed due to {:?}", e))?;
-            commands::run(&runtime, run_args, &db_conn)
+            repl::run(run_args, &db_conn)
                 .await
                 .inspect_err(|e| eprintln!("Tiles failed to run due to {:?}", e))?;
         }
@@ -379,8 +378,8 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
             commands::check_health().await?;
         }
         Some(Commands::System(SystemCommands::Server(server))) => match server.command {
-            Some(ServerCommands::Start) => commands::start_server(&runtime).await,
-            Some(ServerCommands::Stop) => commands::stop_server(&runtime).await,
+            Some(ServerCommands::Start) => commands::start_server().await,
+            Some(ServerCommands::Stop) => commands::stop_server().await,
             _ => println!("Expected start or stop"),
         },
         Some(Commands::Accounts(AccountCommandsGroup::Data(data))) => match data.command {
@@ -463,7 +462,7 @@ fn print_help_for_command(command_path: &[String]) -> Result<(), Box<dyn Error>>
 fn build_logger() {
     if cfg!(debug_assertions) {
         env_logger::Builder::from_env(
-            env_logger::Env::default().default_filter_or("info,iroh=error,tracing=off"),
+            env_logger::Env::default().default_filter_or("warn,iroh=error,tracing=off"),
         )
         .init()
     } else {

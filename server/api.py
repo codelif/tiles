@@ -5,15 +5,13 @@ from typing import Optional
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.exceptions import RequestValidationError
-from pydantic import BaseModel, Field
+from openai_harmony import Role
+from openresponses_types import InputTextContentParam
+from pydantic import BaseModel, Field, ValidationError
 
 from . import runtime
-from .mem_agent.engine import execute_sandboxed_code
-from .mem_agent.utils import (
-    create_memory_if_not_exists,
-    format_results,
-)
 from .schemas import (
+    CUserMessageItemParam,
     ChatCompletionRequest,
     ChatMessage,
     ResponsesRequest,
@@ -50,34 +48,6 @@ async def start_model(request: StartRequest):
     return {"message": "Model loaded"}
 
 
-@app.post("/v1/chat/completions")
-async def create_chat_completion(request: ChatCompletionRequest):
-    """Create a chat completion."""
-    global _messages, _memory_path
-    try:
-        if request.stream:
-            result = ({}, "")
-            if request.python_code:
-                result = execute_sandboxed_code(
-                    code=request.python_code,
-                    allowed_path=_memory_path,
-                    import_module="server.mem_agent.tools",
-                )
-
-            _messages.append(
-                ChatMessage(role="user", content=format_results(result[0], result[1]))
-            )
-
-            # Streaming response
-            return StreamingResponse(
-                runtime.backend.generate_chat_stream(_messages, request),
-                media_type="text/plain",
-                headers={"Cache-Control": "no-cache"},
-            )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
 @app.exception_handler(HTTPException)
 async def validation_exception_handler(request: Request, exc: HTTPException):
     return JSONResponse(
@@ -95,22 +65,22 @@ async def catch_all(request, call_next):
         raise
 
 
+# Can be used to debug the streaming responses
+async def passthrough_log_raw(reader):
+    async for chunk in reader:
+        logger.info("stream chunk: %r\n", chunk)  # logs raw bytes/str repr
+        yield chunk
+
+
 @app.post("/v1/responses")
 async def create_chat_response(request: ResponsesRequest):
     """
-    Create a response with openResponses format
+    Create a response stream/non-stream with openResponses format
     """
-
-    try:
-        ResponsesRequest.model_validate(request)
-    except Exception as e:
-        print(e)
 
     if request.stream:
         return StreamingResponse(
             runtime.backend.generate_response_chat_stream(request),
-            media_type="text/plain",
             headers={"Cache-Control": "no-cache", "Content-Type": "text/event-stream"},
         )
-    else:
-        return await runtime.backend.generate_response_chat(request)
+    return await runtime.backend.generate_response_chat(request)

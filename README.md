@@ -25,13 +25,9 @@
 
 
 > **Status: Alpha**  
-> Tiles is currently alpha-quality software. It is usable for everyday tasks, though you may encounter bugs and performance issues. Tilekit, the developer SDK, is experimental, not a current priority, and intended for exploratory use, not production.
+> Tiles is currently alpha-quality software. It is usable for everyday tasks, though you may encounter bugs and performance issues.
 
 ## Getting Started
-
-There are two primary ways to work with Tiles, depending on whether you are an end user or a developer.
-
-## Tiles CLI
 
 Tiles is a local-first private AI assistant for everyday use.
 
@@ -45,10 +41,6 @@ Then run the following command to start Tiles:
 tiles
 ```
 
-## Tilekit SDK
-
-Tilekit is the SDK for developers to build on the infrastructure behind Tiles. It aims to be the app-server interface behind Tiles and future rich client experiences. Developers can embed it into their local clients by bundling or fetching a platform-specific App Server binary, running as a long-lived child process and communicating over bidirectional stdio JSON-RPC.
-
 ## Documentation
 
 Full documentation is available in the Tiles Book:  
@@ -58,7 +50,7 @@ https://tiles.run/book
 
 Tiles is built by a small team working on private, local-first software, with a clear mission: to bring privacy technology to everyone. 
 
-This project is part of the [User & Agents](https://userandagents.com) network. The shared goal is to empower people by designing and building software that provides agency, control, and choice in our digital lives. We strive to deliver the best privacy-focused engineering while also offering unmatched convenience in our consumer products. We believe identity and memory belong together, and Tiles gives you a way to own both through your personal user agent.
+Tiles is part of [User & Agents](https://userandagents.org) network. The shared goal is to empower people by designing and building software that provides agency, control, and choice in our digital lives. We believe that privacy adoption at scale must work backwards from preserving utility. This means negligible impact on user experience, model intelligence, throughput, latency, tool use & agentic capabilities, and web access. With Tiles, we aim to deliver “just works” experiences through best-in-class privacy-focused engineering while offering unmatched convenience in our consumer products.
 
 ## Contributing
 

@@ -453,10 +453,11 @@ class MLXRunner:
         if not self.model or not self.tokenizer:
             raise RuntimeError("Model not loaded. Call load_model() first.")
 
-        effective_max_tokens = self.get_effective_max_tokens(max_tokens, False)
+        effective_max_tokens = self.get_effective_max_tokens(max_tokens, True)
 
         encoding = load_harmony_encoding(HarmonyEncodingName.HARMONY_GPT_OSS)
-        effective_max_tokens = self.get_effective_max_tokens(max_tokens, False)
+
+        stop_tokens = encoding.stop_tokens_for_assistant_actions()
 
         prompt_tokens = encoding.render_conversation_for_completion(
             conversation, Role.ASSISTANT
@@ -492,19 +493,23 @@ class MLXRunner:
         generated_tokens = []
         is_analysis = None
         is_final = None
+        is_commentary = None
         for token, _ in generator:
             token_id = token.item() if hasattr(token, "item") else token
             parser.process(token_id)  # pyright: ignore
-
             generated_tokens.append(token_id)
 
             if is_analysis is None and parser.current_channel == "analysis":
                 is_analysis = True
                 yield "**[Reasoning]**\n\n"
 
+            if is_commentary is None and parser.current_channel == "commentary":
+                is_commentary = True
+                yield "**[ToolCall]**\n\n"
+
             if is_final is None and parser.current_channel == "final":
                 is_final = True
-                yield "\n\n---\n\n**[Answer]**\n\n"
+                yield "\n---\n**[Answer]**\n\n"
 
             if ttft is None:
                 ttft = time.time() - start_time
@@ -515,20 +520,20 @@ class MLXRunner:
 
             # Check for EOS token - don't yield it
 
-            if token_id == self.tokenizer.eos_token_id:
+            if token_id in stop_tokens:
                 break
 
         # Yield metrics at the end
         total_latency = time.time() - start_time
         tokens_per_second = tokens_generated / total_latency if total_latency > 0 else 0
         ttft_ms = (ttft * 1000) if ttft is not None else 0
-        metrics = GenerationMetrics(
-            ttft_ms=ttft_ms,
-            total_tokens=tokens_generated,
-            tokens_per_second=tokens_per_second,
-            total_latency_s=total_latency,
-        )
-        yield metrics
+        # metrics = GenerationMetrics(
+        #     ttft_ms=ttft_ms,
+        #     total_tokens=tokens_generated,
+        #     tokens_per_second=tokens_per_second,
+        #     total_latency_s=total_latency,
+        # )
+        # yield metrics  # pyright: ignore
 
         # Print generation statistics if verbose
         if self.verbose:
@@ -593,7 +598,10 @@ class MLXRunner:
         ):
             messages = [{"role": "user", "content": prompt}]
             formatted_prompt = self.tokenizer.apply_chat_template(
-                messages, tokenize=False, add_generation_prompt=True
+                messages,
+                tokenize=False,
+                add_generation_prompt=True,
+                enable_thinking=True,
             )
         else:
             formatted_prompt = prompt
@@ -704,12 +712,12 @@ class MLXRunner:
                             tokens_generated / total_latency if total_latency > 0 else 0
                         )
                         ttft_ms = (ttft * 1000) if ttft is not None else 0
-                        yield GenerationMetrics(
-                            ttft_ms=ttft_ms,
-                            total_tokens=tokens_generated,
-                            tokens_per_second=tokens_per_second,
-                            total_latency_s=total_latency,
-                        )
+                        # yield GenerationMetrics(
+                        #     ttft_ms=ttft_ms,
+                        #     total_tokens=tokens_generated,
+                        #     tokens_per_second=tokens_per_second,
+                        #     total_latency_s=total_latency,
+                        # )  # pyright: ignore
                         return  # Stop generation without yielding stop token
 
                 # Only check chat stop tokens if no native stop token found (fallback)
@@ -749,12 +757,13 @@ class MLXRunner:
                                 else 0
                             )
                             ttft_ms = (ttft * 1000) if ttft is not None else 0
-                            yield GenerationMetrics(
-                                ttft_ms=ttft_ms,
-                                total_tokens=tokens_generated,
-                                tokens_per_second=tokens_per_second,
-                                total_latency_s=total_latency,
-                            )
+                            # TODO: move these metrics to diff fn
+                            # yield GenerationMetrics(
+                            #     ttft_ms=ttft_ms,
+                            #     total_tokens=tokens_generated,
+                            #     tokens_per_second=tokens_per_second,
+                            #     total_latency_s=total_latency,
+                            # )  # pyright: ignore
                             return  # Stop generation without yielding stop token
 
                 if ttft is None:
@@ -799,271 +808,6 @@ class MLXRunner:
             print(
                 f"\n\nGenerated {tokens_generated} tokens in {generation_time:.1f}s ({tokens_per_second:.1f} tokens/s)"
             )
-
-    def generate_batch_gpt(
-        self,
-        conversation: Conversation,
-        max_tokens: int = 500,
-        temperature: float = 0.7,
-        top_p: float = 0.9,
-        repetition_penalty: float = 1.0,
-        repetition_context_size: int = 20,
-        use_chat_template: bool = True,
-        interactive: bool = False,
-    ) -> str:
-        """
-        Generate text in batch mode (non-streaming) but for
-        """
-
-        if not self.model or not self.tokenizer:
-            raise RuntimeError("Model not loaded. Call load_model() first.")
-
-        # lets do stuff for harmoy
-        encoding = load_harmony_encoding(HarmonyEncodingName.HARMONY_GPT_OSS)
-        effective_max_tokens = self.get_effective_max_tokens(max_tokens, interactive)
-
-        prompt_tokens = encoding.render_conversation_for_completion(
-            conversation, Role.ASSISTANT
-        )
-
-        prompt_array = mx.array(prompt_tokens)
-        sampler = make_sampler(temp=temperature, top_p=top_p)
-        logits_processors = []
-
-        # TODO: Maybe add repetition penalty
-        generator = generate_step(
-            prompt=prompt_array,
-            model=self.model,
-            max_tokens=effective_max_tokens,
-            sampler=sampler,
-            logits_processors=logits_processors if logits_processors else None,
-        )
-
-        generated_tokens = []
-        all_tokens = []
-
-        for token, _ in generator:
-            # Token might be an array or an int
-            token_id = token.item() if hasattr(token, "item") else token
-            generated_tokens.append(token_id)
-            all_tokens.append(token_id)
-
-            # Check for EOS token - don't yield it
-            if token_id == self.tokenizer.eos_token_id:
-                break
-
-        response = encoding.parse_messages_from_completion_tokens(
-            generated_tokens, Role.ASSISTANT
-        )
-
-        reasoning_texts = [
-            msg.content[0].text for msg in response if msg.channel == "analysis"
-        ]
-        final_texts = [
-            msg.content[0].text for msg in response if msg.channel != "analysis"
-        ]
-
-        # Concatenate the lists and turn into a single string.
-        all_texts = reasoning_texts + final_texts
-        combined_text = "\n\n".join(filter(None, all_texts))
-
-        # if they are 2 different fields, then
-
-        return combined_text
-
-    def generate_batch(
-        self,
-        prompt: str,
-        max_tokens: int = 500,
-        temperature: float = 0.7,
-        top_p: float = 0.9,
-        repetition_penalty: float = 1.1,
-        repetition_context_size: int = 20,
-        use_chat_template: bool = True,
-        interactive: bool = False,
-    ) -> str:
-        """Generate text in batch mode (non-streaming).
-
-        Args:
-            prompt: Input prompt
-            max_tokens: Maximum tokens to generate
-            temperature: Sampling temperature
-            top_p: Top-p sampling parameter
-            repetition_penalty: Penalty for repeated tokens
-            repetition_context_size: Context size for repetition penalty
-            use_chat_template: Apply tokenizer's chat template if available
-            interactive: True if this is interactive mode (affects token limits)
-
-        Returns:
-            Generated text
-        """
-        if not self.model or not self.tokenizer:
-            raise RuntimeError("Model not loaded. Call load_model() first.")
-
-        # Apply context-aware token limits
-        effective_max_tokens = self.get_effective_max_tokens(max_tokens, interactive)
-
-        # Apply chat template if available and requested
-        if (
-            use_chat_template
-            and hasattr(self.tokenizer, "chat_template")
-            and self.tokenizer.chat_template
-        ):
-            messages = [{"role": "user", "content": prompt}]
-            formatted_prompt = self.tokenizer.apply_chat_template(
-                messages, tokenize=False, add_generation_prompt=True
-            )
-
-        else:
-            formatted_prompt = prompt
-
-        start_time = time.time()
-
-        # Tokenize the prompt
-        prompt_tokens = self.tokenizer.encode(formatted_prompt)
-        prompt_array = mx.array(prompt_tokens)
-
-        # Create sampler with our parameters
-        sampler = make_sampler(temp=temperature, top_p=top_p)
-
-        # Create repetition penalty processor if needed
-        logits_processors = []
-        if repetition_penalty > 1.0:
-            logits_processors.append(
-                make_repetition_penalty(repetition_penalty, repetition_context_size)
-            )
-
-        # Generate all tokens at once
-        generated_tokens = []
-        all_tokens = list(prompt_tokens)  # Keep prompt for proper decoding
-
-        generator = generate_step(
-            prompt=prompt_array,
-            model=self.model,
-            max_tokens=effective_max_tokens,
-            sampler=sampler,
-            logits_processors=logits_processors if logits_processors else None,
-        )
-
-        for token, _ in generator:
-            # Token might be an array or an int
-            token_id = token.item() if hasattr(token, "item") else token
-            generated_tokens.append(token_id)
-            all_tokens.append(token_id)
-
-            # Check for EOS token - don't yield it
-            if token_id == self.tokenizer.eos_token_id:
-                break
-
-        print(f"all tokens\n{all_tokens}")
-        # Decode all tokens together for proper spacing
-        full_response = self.tokenizer.decode(all_tokens)
-
-        # Remove the prompt part
-        if full_response.startswith(formatted_prompt):
-            response = full_response[len(formatted_prompt) :]
-        else:
-            # Fallback: just decode generated tokens
-            response = self.tokenizer.decode(generated_tokens)
-
-        # Apply end-token filtering (same logic as streaming mode for Issue #20)
-        response = self._filter_end_tokens_from_response(
-            response, use_chat_stop_tokens=False
-        )
-
-        response = self._format_reasoning_response(response)
-
-        generation_time = time.time() - start_time
-
-        # Count tokens for statistics
-        if self.verbose:
-            tokens_generated = len(generated_tokens)
-            tokens_per_second = (
-                tokens_generated / generation_time if generation_time > 0 else 0
-            )
-            print(
-                f"\nGenerated {tokens_generated} tokens in {generation_time:.1f}s ({tokens_per_second:.1f} tokens/s)"
-            )
-
-        return response
-
-    def interactive_chat(
-        self,
-        system_prompt: Optional[str] = None,
-        max_tokens: int = 500,
-        temperature: float = 0.7,
-        top_p: float = 0.9,
-        repetition_penalty: float = 1.1,
-        use_chat_template: bool = True,
-    ):
-        """Run an interactive chat session.
-
-        Args:
-            system_prompt: Optional system prompt to prepend
-            max_tokens: Maximum tokens per response
-            temperature: Sampling temperature
-            top_p: Top-p sampling parameter
-            repetition_penalty: Penalty for repeated tokens
-            use_chat_template: Use tokenizer's chat template if available
-        """
-        print("Starting interactive chat. Type 'exit' or 'quit' to end.\n")
-
-        conversation_history = []
-        if system_prompt:
-            conversation_history.append({"role": "system", "content": system_prompt})
-
-        while True:
-            try:
-                # Get user input
-                user_input = input("You: ").strip()
-
-                if user_input.lower() in ["exit", "quit", "q"]:
-                    print("\nGoodbye!")
-                    break
-
-                if not user_input:
-                    continue
-
-                # Add user message to history
-                conversation_history.append({"role": "user", "content": user_input})
-
-                # Format conversation for the model using chat template if available
-                prompt = self._format_conversation(
-                    conversation_history, use_chat_template=use_chat_template
-                )
-
-                # Generate response with streaming
-                print("\nAssistant: ", end="", flush=True)
-
-                response_tokens = []
-                for token in self.generate_streaming(
-                    prompt=prompt,
-                    max_tokens=max_tokens,
-                    temperature=temperature,
-                    top_p=top_p,
-                    repetition_penalty=repetition_penalty,
-                    use_chat_template=False,  # Already applied in _format_conversation
-                    use_chat_stop_tokens=True,  # Enable chat stop tokens in interactive mode
-                    interactive=True,  # Enable full context length for interactive mode
-                ):
-                    # Stream all tokens directly (already formatted by generate_streaming)
-                    print(token, end="", flush=True)
-                    response_tokens.append(token)
-
-                # Add assistant response to history
-                assistant_response = "".join(response_tokens).strip()
-                conversation_history.append(
-                    {"role": "assistant", "content": assistant_response}
-                )
-
-                print()  # New line after response
-
-            except KeyboardInterrupt:
-                print("\n\nChat interrupted. Goodbye!")
-                break
-            except Exception as e:
-                print(f"\n[ERROR] {e}")
-                continue
 
     def _format_conversation(
         self, messages: list, use_chat_template: bool = True
@@ -1272,102 +1016,3 @@ def check_memory_available(required_gb: float) -> bool:
     available = estimated_total - current_memory - 2.0  # 2GB headroom
 
     return available >= required_gb
-
-
-def run_model_enhanced(
-    model_path: str,
-    prompt: Optional[str] = None,
-    interactive: bool = False,
-    max_tokens: int = 500,
-    temperature: float = 0.7,
-    top_p: float = 0.9,
-    repetition_penalty: float = 1.1,
-    stream: bool = True,
-    use_chat_template: bool = True,
-    hide_reasoning: bool = False,
-    verbose: bool = False,
-) -> Optional[str]:
-    """Enhanced run function with direct MLX integration.
-
-    Uses context manager pattern for automatic resource cleanup.
-
-    Args:
-        model_path: Path to the MLX model
-        prompt: Input prompt (if None, enters interactive mode)
-        interactive: Force interactive mode
-        max_tokens: Maximum tokens to generate
-        temperature: Sampling temperature
-        top_p: Top-p sampling parameter
-        repetition_penalty: Penalty for repeated tokens
-        stream: Whether to stream output
-
-    Returns:
-        Generated text (in non-interactive mode)
-    """
-    try:
-        with MLXRunner(model_path, verbose=verbose) as runner:
-            # Interactive mode
-            if interactive or prompt is None:
-                runner.interactive_chat(
-                    max_tokens=max_tokens,
-                    temperature=temperature,
-                    top_p=top_p,
-                    repetition_penalty=repetition_penalty,
-                    use_chat_template=use_chat_template,
-                )
-                return None
-
-            # Single prompt mode
-            if verbose:
-                print(f"\nPrompt: {prompt}\n")
-                print("Response: ", end="", flush=True)
-
-            if stream:
-                # Streaming generation
-                response_tokens = []
-                try:
-                    for token in runner.generate_streaming(
-                        prompt=prompt,
-                        max_tokens=max_tokens,
-                        temperature=temperature,
-                        top_p=top_p,
-                        repetition_penalty=repetition_penalty,
-                        use_chat_template=use_chat_template,
-                        hide_reasoning=hide_reasoning,
-                    ):
-                        # Stream all tokens directly (already formatted by generate_streaming)
-                        print(token, end="", flush=True)
-                        response_tokens.append(token)
-                except KeyboardInterrupt:
-                    print("\n[INFO] Generation interrupted by user.")
-                response = "".join(response_tokens)
-            else:
-                # Batch generation
-                try:
-                    response = runner.generate_batch(
-                        prompt=prompt,
-                        max_tokens=max_tokens,
-                        temperature=temperature,
-                        top_p=top_p,
-                        repetition_penalty=repetition_penalty,
-                        use_chat_template=use_chat_template,
-                    )
-                except KeyboardInterrupt:
-                    print("\n[INFO] Generation interrupted by user.")
-                    response = ""
-                print(response)
-
-            # Show memory usage if verbose
-            if verbose:
-                memory_stats = runner.get_memory_usage()
-                print(
-                    f"\n\nMemory: {memory_stats['model_gb']:.1f}GB model, {memory_stats['current_gb']:.1f}GB total"
-                )
-
-            return response
-
-        # Note: cleanup happens automatically due to context manager
-
-    except Exception as e:
-        print(f"\n[ERROR] {e}")
-        return None
