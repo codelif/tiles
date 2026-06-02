@@ -4,6 +4,8 @@ Provides MLX-parity run experience with streaming and interactive chat
 for Linux backends using llama-cpp-python.
 """
 
+from __future__ import annotations
+
 import gc
 import json
 import os
@@ -11,10 +13,13 @@ import sys
 import time
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Dict, Optional, Union
+from typing import TYPE_CHECKING, Dict, Optional, Union
+
+if TYPE_CHECKING:
+    from llama_cpp import Llama
 
 from ..reasoning_utils import ReasoningExtractor, StreamingReasoningParser
-from ..schemas import GenerationMetrics
+from ..schemas import GenerationMetrics, ToolCallStart
 
 # Common end-of-sequence tokens across model families
 _COMMON_STOP_TOKENS = frozenset([
@@ -81,7 +86,7 @@ class LlamaRunner:
     """
 
     model_path: Path
-    model: object | None
+    model: Llama | None
     _stop_tokens: list[str] | None
     _message_end_tokens: list[str] | None
     _chat_stop_tokens: list[str] | None
@@ -469,7 +474,7 @@ class LlamaRunner:
                 messages = [{"role": "user", "content": prompt}]
             
             stream = self.model.create_chat_completion(
-                messages=messages,
+                messages=messages,  # pyright: ignore[reportArgumentType]
                 max_tokens=effective_max_tokens,
                 temperature=temperature,
                 top_p=top_p,
@@ -491,12 +496,12 @@ class LlamaRunner:
             )
             use_chat_api = False
 
-        for output in stream:
+        for output in stream:  # pyright: ignore[reportGeneralTypeIssues]
             if use_chat_api:
-                delta = output["choices"][0].get("delta", {})
+                delta = output["choices"][0].get("delta", {})  # pyright: ignore[reportArgumentType, reportAttributeAccessIssue]
                 text = delta.get("content", "")
             else:
-                text = output["choices"][0].get("text", "")
+                text = output["choices"][0].get("text", "")  # pyright: ignore[reportArgumentType, reportAttributeAccessIssue]
             if not text:
                 continue
 
@@ -701,14 +706,14 @@ class LlamaRunner:
                 messages = [{"role": "user", "content": prompt}]
             
             output = self.model.create_chat_completion(
-                messages=messages,
+                messages=messages,  # pyright: ignore[reportArgumentType]
                 max_tokens=effective_max_tokens,
                 temperature=temperature,
                 top_p=top_p,
                 repeat_penalty=repetition_penalty,
                 stream=False,
             )
-            response = output["choices"][0]["message"].get("content", "")
+            response = output["choices"][0]["message"].get("content", "")  # pyright: ignore[reportIndexIssue]
         else:
             text_prompt = prompt if isinstance(prompt, str) else json.dumps(prompt)
             output = self.model(
@@ -719,11 +724,11 @@ class LlamaRunner:
                 repeat_penalty=repetition_penalty,
                 stream=False,
             )
-            response = output["choices"][0].get("text", "")
+            response = output["choices"][0].get("text", "")  # pyright: ignore[reportIndexIssue]
 
         # Apply end-token filtering (same as streaming)
         response = self._filter_end_tokens_from_response(
-            response, use_chat_stop_tokens=False
+            response or "", use_chat_stop_tokens=False
         )
 
         # Format reasoning output
@@ -749,176 +754,91 @@ class LlamaRunner:
         top_p: float = 0.9,
         repetition_penalty: float = 1.1,
         # repetition_context_size: int = 20,
-    ) -> Iterator[str | GenerationMetrics]:
+    ) -> Iterator[str | ToolCallStart | GenerationMetrics]:
         """Generate Harmony/GPT streaming output.
 
         Extracts messages from the Harmony conversation as text and
-        uses llama-cpp-python's native chat completion.  Control tokens
-        (channel markers, start/end) are stripped and replaced with
-        **[Reasoning]** / **[Answer]** headers matching the MLX backend.
+        uses llama-cpp-python's raw text generation with Harmony encoding.
+        Control tokens (channel markers, start/end) are stripped and replaced
+        with **[Reasoning]** / **[Answer]** headers matching the MLX backend.
 
         Yields:
-            str chunks then GenerationMetrics
+            str chunks and tool-call metadata, then GenerationMetrics
         """
         if not self.model:
             raise RuntimeError("Model not loaded. Call load_model() first.")
 
-        from openai_harmony import Role
+        from openai_harmony import (
+            HarmonyEncodingName,
+            Role,
+            StreamableParser,
+            load_harmony_encoding,
+        )
 
         effective_max_tokens = self.get_effective_max_tokens(
             max_tokens, False
         )
 
-        # Convert Harmony Conversation to plain message dicts.
-        messages = []
-        for msg in conversation.messages:
-            role_str = "user"
-            role = msg.author.role
-            if role == Role.SYSTEM:
-                role_str = "system"
-            elif role == Role.ASSISTANT:
-                role_str = "assistant"
-            elif role == Role.DEVELOPER:
-                role_str = "system"  # map developer to system
+        encoding = load_harmony_encoding(HarmonyEncodingName.HARMONY_GPT_OSS)
 
-            # Extract text from content items
-            content_parts = []
-            for content_item in (msg.content or []):
-                if hasattr(content_item, 'text'):
-                    # TextContent (user/assistant messages)
-                    content_parts.append(content_item.text)
-                elif hasattr(content_item, 'model_identity'):
-                    # SystemContent — use identity text as system prompt
-                    content_parts.append(content_item.model_identity or "")
-                else:
-                    # Fallback: stringify
-                    content_parts.append(str(content_item))
-
-            content = "\n".join(p for p in content_parts if p)
-            if content:
-                messages.append({"role": role_str, "content": content})
+        # Render the conversation for completion to get token IDs
+        prompt_tokens = encoding.render_conversation_for_completion(
+            conversation, Role.ASSISTANT
+        )
+        context_length = self._context_length
+        if not context_length:
+            raise RuntimeError("Model context length is unavailable.")
+        if len(prompt_tokens) >= context_length:
+            self.model.reset()
+            raise ValueError(
+                f"Prompt has {len(prompt_tokens)} tokens, but the Linux llama.cpp "
+                f"context allows fewer than {context_length}. Start a new session "
+                "or reduce the conversation and tool output."
+            )
+        effective_max_tokens = min(
+            effective_max_tokens, context_length - len(prompt_tokens)
+        )
 
         start_time = time.time()
         tokens_generated = 0
         ttft = None
 
-        # GPT-OSS control tokens to detect and replace
-        ANALYSIS_START = "\x3c|channel|\x3eanalysis\x3c|message|\x3e"
-        REASONING_END = "\x3c|end|\x3e"
-        FINAL_START = "\x3c|channel|\x3efinal\x3c|message|\x3e"
-        # Intermediate tokens between reasoning and final
-        SKIP_TOKENS = [
-            "\x3c|start|\x3eassistant\x3c|channel|\x3efinal\x3c|message|\x3e",
-            "\x3c|start|\x3eassistant",
-            "\x3c|start|\x3e",
-        ]
-
-        stream = self.model.create_chat_completion(
-            messages=messages,
-            max_tokens=effective_max_tokens,
-            temperature=temperature,
+        stop_tokens = encoding.stop_tokens_for_assistant_actions()
+        generator = self.model.generate(
+            prompt_tokens,
+            temp=temperature,
             top_p=top_p,
             repeat_penalty=repetition_penalty,
-            stop=self._stop_tokens or [],
-            stream=True,
         )
 
-        # this might be the best solution I have till date for better token management
-        # State machine for control token stripping.
-        # Each state only buffers enough text to detect the next expected
-        # marker, keeping memory bounded.
-        #
-        # States: INIT → IN_REASONING → BETWEEN → IN_ANSWER
-        state = "INIT"
-        buf = ""
-        # Longest marker we need to detect in any state
-        max_marker_len = max(
-            len(ANALYSIS_START),
-            len(REASONING_END),
-            len(SKIP_TOKENS[0]),  # longest skip token includes FINAL_START
-        )
+        parser = StreamableParser(encoding, Role.ASSISTANT)
+        is_analysis = None
+        is_final = None
+        is_commentary = None
+        for token_id in generator:
+            parser.process(token_id)
 
-        for chunk in stream:
-            delta = chunk["choices"][0].get("delta", {})
-            text = delta.get("content", "")
-            if not text:
-                continue
+            if is_analysis is None and parser.current_channel == "analysis":
+                is_analysis = True
+                yield "**[Reasoning]**\n\n"
 
-            tokens_generated += 1
+            if is_commentary is None and parser.current_channel == "commentary":
+                is_commentary = True
+                yield ToolCallStart(parser.current_recipient or "")
+
+            if is_final is None and parser.current_channel == "final":
+                is_final = True
+                yield "\n---\n**[Answer]**\n\n"
+
             if ttft is None:
                 ttft = time.time() - start_time
 
-            buf += text
+            if parser.last_content_delta:
+                yield parser.last_content_delta
 
-            if state == "INIT":
-                # Looking for ANALYSIS_START
-                if ANALYSIS_START in buf:
-                    before = buf.split(ANALYSIS_START, 1)[0]
-                    if before.strip():
-                        yield before
-                    yield "**[Reasoning]**\n\n"
-                    buf = buf.split(ANALYSIS_START, 1)[1]
-                    state = "IN_REASONING"
-                elif len(buf) > max_marker_len:
-                    # Flush safe prefix, keep tail for partial match
-                    safe = buf[:-max_marker_len]
-                    buf = buf[-max_marker_len:]
-                    if safe:
-                        yield safe
-
-            if state == "IN_REASONING":
-                # Looking for REASONING_END, streaming reasoning text
-                if REASONING_END in buf:
-                    reasoning_text = buf.split(REASONING_END, 1)[0]
-                    if reasoning_text:
-                        yield reasoning_text
-                    yield "\n\n---\n\n**[Answer]**\n\n"
-                    buf = buf.split(REASONING_END, 1)[1]
-                    state = "BETWEEN"
-                else:
-                    # Stream reasoning content, keep tail for partial match
-                    safe_len = len(buf) - len(REASONING_END)
-                    if safe_len > 0:
-                        yield buf[:safe_len]
-                        buf = buf[safe_len:]
-
-            if state == "BETWEEN":
-                # Eating control tokens between reasoning and answer.
-                # Looking for FINAL_START, stripping everything before it.
-                if FINAL_START in buf:
-                    buf = buf.split(FINAL_START, 1)[1]
-                    state = "IN_ANSWER"
-                    if buf:
-                        yield buf
-                        buf = ""
-                elif len(buf) > max_marker_len:
-                    # Still waiting for FINAL_START — discard consumed
-                    # intermediate tokens but keep tail for partial match
-                    buf = buf[-max_marker_len:]
-
-            elif state == "IN_ANSWER":
-                # Past all markers — yield new text directly
-                if buf:
-                    yield buf
-                    buf = ""
-
-            finish = chunk["choices"][0].get("finish_reason")
-            if finish == "stop":
+            tokens_generated += 1
+            if token_id in stop_tokens or tokens_generated >= effective_max_tokens:
                 break
-
-        # Flush remaining buffer
-        if buf.strip():
-            if state == "BETWEEN":
-                # Never found FINAL_START — strip known control tokens
-                for skip in SKIP_TOKENS:
-                    buf = buf.replace(skip, "")
-                if FINAL_START in buf:
-                    buf = buf.split(FINAL_START, 1)[1]
-            if state == "INIT":
-                if ANALYSIS_START in buf:
-                    buf = buf.replace(ANALYSIS_START, "")
-            if buf.strip():
-                yield buf
 
         yield self._make_metrics(start_time, tokens_generated, ttft)
 
@@ -944,45 +864,58 @@ class LlamaRunner:
         """Generate Harmony/GPT output in batch mode.
 
         Extracts messages from the Harmony conversation as text,
-        generates via llama-cpp-python's native chat API, and
-        applies reasoning formatting at the text level.
+        generates via llama-cpp-python's raw text generation with Harmony encoding,
+        and applies reasoning formatting at the text level.
         """
         if not self.model:
             raise RuntimeError("Model not loaded. Call load_model() first.")
 
-        from openai_harmony import Role
+        from openai_harmony import HarmonyEncodingName, Role, load_harmony_encoding
 
         effective_max_tokens = self.get_effective_max_tokens(
             max_tokens, interactive
         )
 
-        # Convert Harmony Conversation to plain message dicts.
-        messages = []
-        for msg in conversation.messages:
-            role_str = "user"
-            if msg.role == Role.SYSTEM:
-                role_str = "system"
-            elif msg.role == Role.ASSISTANT:
-                role_str = "assistant"
-            elif msg.role == Role.DEVELOPER:
-                role_str = "system"
-            content = str(msg.content) if msg.content else ""
-            if content:
-                messages.append({"role": role_str, "content": content})
+        encoding = load_harmony_encoding(HarmonyEncodingName.HARMONY_GPT_OSS)
 
-        output = self.model.create_chat_completion(
-            messages=messages,
+        # Render the conversation for completion to get token IDs
+        prompt_tokens = encoding.render_conversation_for_completion(
+            conversation, Role.ASSISTANT
+        )
+
+        # Decode token IDs to a raw string prompt
+        raw_prompt = encoding.decode(prompt_tokens)
+
+        # Combine stop tokens for safety and accuracy
+        encoding_stop_tokens = [
+            encoding.decode([t]) for t in encoding.stop_tokens_for_assistant_actions()
+        ]
+        stop_words = list(set((self._stop_tokens or []) + encoding_stop_tokens))
+
+        output = self.model(
+            raw_prompt,
             max_tokens=effective_max_tokens,
             temperature=temperature,
             top_p=top_p,
             repeat_penalty=repetition_penalty,
+            stop=stop_words,
             stream=False,
         )
 
-        response = output["choices"][0]["message"].get("content", "")
+        response = output["choices"][0].get("text", "")  # pyright: ignore[reportIndexIssue]
 
-        # Apply reasoning formatting at text level
+        # Apply end-token filtering (same as streaming)
+        response = self._filter_end_tokens_from_response(
+            response or "", use_chat_stop_tokens=False
+        )
+
+        # Format reasoning output
         response = self._format_reasoning_response(response)
+
+        if self.verbose:
+            # Rough token count from response length
+            print(f"\nGenerated in batch mode")
+
         return response
 
 # private helpers
