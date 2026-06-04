@@ -25,6 +25,7 @@ pub fn create_identity(app: &str) -> Result<Identity> {
     let ed_did = Ed25519Did::from(signing_key.clone());
     let did = ed_did.to_string();
     let entry = Entry::new(app, &did)?;
+    println!("secure did {}", &did);
     entry.set_secret(&signing_key.to_keypair_bytes())?;
     Ok(did)
 }
@@ -53,6 +54,7 @@ pub fn get_secret_key(app: &str, did: &str) -> Result<SecretKey> {
 /// - `app`- The service for which Identity is made (for ex: tiles)
 /// - `did` - The `Identity` of the service
 pub fn get_signing_key(app: &str, did: &str) -> Result<SigningKey> {
+    println!("secure did {}", &did);
     let entry = Entry::new(app, did)?;
     let mut bytes: [u8; 64] = [0u8; 64];
     let secret_pair = entry.get_secret()?;

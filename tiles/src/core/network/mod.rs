@@ -445,6 +445,14 @@ pub async fn sync(did: Option<String>) -> Result<()> {
         // The sync gossip topic is basically derived from the receiver's
         // DID, so that initiator's can directly connect w/o any
         // initial handshake
+
+        // TODO: Try to fetch the token from the receiver_did
+        // if not found, Err
+        // Create an invocation token
+        // Pass the invocation token in NetworkMessage::SyncStart
+        // Have a state, that anyother event can't be done, if syncStart is not invoked - for security
+        // Verify the token in on_sync_start_event, handle accordingly
+
         let receiver_pub_key = get_public_key_from_did(&receiver_did)?;
         let receiver_user = if let Ok(receiver_user) = get_user_info(&user_db_conn, &receiver_did) {
             receiver_user
@@ -454,7 +462,7 @@ pub async fn sync(did: Option<String>) -> Result<()> {
                 return Ok(());
             }
             info!("creating a dummy user");
-            create_dummy_user()
+            create_dummy_user(&user_db_conn, None)
         };
 
         let receiver_endpoint_id = PublicKey::from_bytes(&receiver_pub_key)?;
@@ -818,7 +826,7 @@ mod tests {
     use tokio::sync::mpsc;
 
     use crate::core::{
-        account::local::create_dummy_user,
+        account::local::{create_dummy_user, tests::setup_db_conn_v2},
         chats::SyncOp,
         network::{
             create_topic_id, fetch_last_row_counter, parse_link_ticket,
@@ -829,7 +837,8 @@ mod tests {
     #[tokio::test]
     async fn test_valid_parse_link_ticket_online() {
         let topic_id = create_topic_id("test");
-        let user = create_dummy_user();
+        let db_conn = setup_db_conn_v2();
+        let user = create_dummy_user(&db_conn.common, None);
         let usr_data = EndpointUserData::new(&user.user_id, &user.username);
         let endpoint = Endpoint::builder(presets::N0)
             .user_data_for_address_lookup(UserData::try_from(usr_data.to_string()).unwrap())
@@ -850,7 +859,8 @@ mod tests {
     #[tokio::test]
     async fn test_invalid_parse_link_ticket_online() {
         let topic_id = create_topic_id("test");
-        let user = create_dummy_user();
+        let db_conn = setup_db_conn_v2();
+        let user = create_dummy_user(&db_conn.common, None);
         let usr_data = EndpointUserData::new(&user.user_id, &user.username);
         let endpoint = Endpoint::builder(presets::N0)
             .user_data_for_address_lookup(UserData::try_from(usr_data.to_string()).unwrap())

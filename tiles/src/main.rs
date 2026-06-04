@@ -8,7 +8,7 @@ use tiles::{
         self,
         account::{
             atproto::{login, logout},
-            local::{add_token, generate_invocation_token, generate_token, verify_invocation},
+            local::{add_token, create_token, generate_invocation_token, verify_invocation},
         },
         network::{link, sync},
     },
@@ -426,7 +426,7 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
                 show_peers(&db_conn)?;
             }
             LinkCommands::CreateToken { peer_did } => {
-                println!("{}", generate_token(&peer_did, &db_conn).await?);
+                println!("{}", create_token(&peer_did, &db_conn).await?);
             }
             LinkCommands::AddToken { token } => {
                 let token = add_token(&token, &db_conn)?;

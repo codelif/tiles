@@ -348,14 +348,18 @@ pub fn save_peer_account_db(db_conn: &Connection, user_id: &str, nickname: &str)
     Ok(())
 }
 
-pub async fn generate_token(aud_did: &str, db_conn: &Dbconn) -> Result<String> {
+pub async fn create_token(aud_did: &str, db_conn: &Dbconn) -> Result<String> {
     let user = get_current_user(&db_conn.common)?;
-    info!("current did {}", user.user_id);
     let app_name = get_app_name();
+    println!("{}", app_name);
     let signing_key = get_signing_key(&app_name, &user.user_id)?;
     let keyexport = KeyExport::from(&signing_key.to_bytes());
     let issuer: Ed25519Signer = Ed25519Signer::import(keyexport).await?;
     info!("issuer did {}", issuer.ed25519_did());
+    generate_token(issuer, aud_did).await
+}
+
+async fn generate_token(issuer: Ed25519Signer, aud_did: &str) -> Result<String> {
     let aud_did = Did::from_str(aud_did)?;
     let subject = Subject::Specific(Did::from_str(&issuer.ed25519_did().to_string())?);
     let delegation = DelegationBuilder::<Ed25519Signature>::new()
@@ -377,7 +381,6 @@ pub async fn generate_token(aud_did: &str, db_conn: &Dbconn) -> Result<String> {
     //TODO: Save it in delegation store
     Ok(delegation_token)
 }
-
 pub fn add_token(delegation_token: &str, db_conn: &Dbconn) -> Result<Token> {
     let delegation_token_bytes = data_encoding::BASE64
         .decode(delegation_token.as_bytes())
@@ -491,6 +494,7 @@ pub async fn verify_invocation(invocation: &str) -> Result<()> {
 fn create_root_user(root_user_config: &Table, nickname: Option<String>) -> Result<Table> {
     let mut root_user_table = root_user_config.clone();
     let app_name = get_app_name();
+    println!("{}", app_name);
     match create_identity(&app_name) {
         Ok(did) => {
             root_user_table.insert("id".to_owned(), toml::Value::String(did));
@@ -571,12 +575,17 @@ pub fn get_app_secret_key(did: &str) -> Result<SecretKey> {
     Ok(SecretKey::from_bytes(&signing_key))
 }
 
-pub fn create_dummy_user() -> User {
+pub fn create_dummy_user(conn: &Connection, did: Option<String>) -> User {
+    let user_id = if let Some(did_str) = did {
+        did_str
+    } else {
+        let uuid_did = Uuid::now_v7().to_string();
+        format!("did:key:{}", uuid_did.split('-').collect::<Vec<&str>>()[0])
+    };
+    let chunk = "nickname";
     let id = Uuid::now_v7().to_string();
-    let chunk = id.split('-').collect::<Vec<&str>>()[0];
-    let user_id = format!("did:key:{}", id.split('-').collect::<Vec<&str>>()[0]);
     let username = format!("nickname-{}", chunk);
-    User {
+    let user = User {
         id,
         user_id,
         username,
@@ -591,7 +600,21 @@ pub fn create_dummy_user() -> User {
             .duration_since(UNIX_EPOCH)
             .expect("time went backwards")
             .as_secs(),
-    }
+    };
+    conn.execute(
+        "insert into users (id, user_id, username, active_profile, account_type, root) values
+                (?1, ?2, ?3,?4, ?5, ?6)",
+        (
+            &user.id.to_string(),
+            &user.user_id,
+            &user.username,
+            &user.active_profile,
+            user.account_type.to_string(),
+            &user.root,
+        ),
+    )
+    .unwrap();
+    user
 }
 #[cfg(test)]
 pub mod tests {
@@ -1047,7 +1070,22 @@ pub mod tests {
 
         assert!(resp.is_err());
     }
-    fn setup_db_conn_v2() -> Dbconn {
+
+    #[tokio::test]
+    async fn test_generate_token() {
+        let signer = Ed25519Signer::import(&[80; 32]).await.unwrap();
+
+        assert!(
+            generate_token(
+                signer,
+                "did:key:z6Mkp1F7iJfUaj8Yp9nBNEvL3pCz42QBHtzaV4JQw3xjn5ww"
+            )
+            .await
+            .is_ok()
+        );
+    }
+
+    pub fn setup_db_conn_v2() -> Dbconn {
         Dbconn {
             chat: crate::core::chats::tests::setup_db_schema(),
             common: setup_db_schema(),
