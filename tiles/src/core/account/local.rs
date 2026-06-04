@@ -1,19 +1,16 @@
 //! Local Account
 // Stuff related to account and identity system
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use dialog_credentials::{Ed25519KeyResolver, Ed25519Signer, KeyExport};
 use dialog_ucan::{
-    Delegation, DelegationBuilder, Invocation, InvocationBuilder,
-    delegation::{self, DelegationPayload},
-    envelope::Envelope,
-    subject::Subject,
+    Delegation, DelegationBuilder, Invocation, InvocationBuilder, subject::Subject,
     time::timestamp::Timestamp,
 };
-use dialog_varsig::{Did, eddsa::Ed25519Signature};
+use dialog_varsig::{Did, Principal, eddsa::Ed25519Signature};
 // use dialog
 use iroh::SecretKey;
 use log::info;
-use rusqlite::{Connection, Row, types::FromSqlError};
+use rusqlite::{Connection, Row, params, types::FromSqlError};
 use std::{
     cell::RefCell,
     collections::HashMap,
@@ -28,7 +25,10 @@ use uuid::Uuid;
 
 use crate::{
     core::storage::db::Dbconn,
-    utils::config::{get_app_name, get_or_create_config, save_config},
+    utils::{
+        config::{get_app_name, get_or_create_config, save_config},
+        get_unix_time_now,
+    },
 };
 const ROOT_USER_CONFIG_KEY: &str = "root-user";
 
@@ -97,6 +97,15 @@ pub struct User {
     pub account_type: ACCOUNT,
     // The first identity created locally
     pub root: bool,
+    pub created_at: u64,
+    pub updated_at: u64,
+}
+
+#[derive(Debug)]
+pub struct Token {
+    pub id: String,
+    pub did: String,
+    pub token: String,
     pub created_at: u64,
     pub updated_at: u64,
 }
@@ -346,7 +355,7 @@ pub async fn generate_token(aud_did: &str, db_conn: &Dbconn) -> Result<String> {
     let signing_key = get_signing_key(&app_name, &user.user_id)?;
     let keyexport = KeyExport::from(&signing_key.to_bytes());
     let issuer: Ed25519Signer = Ed25519Signer::import(keyexport).await?;
-    info!("issuer did {}", issuer.ed25519_did().to_string());
+    info!("issuer did {}", issuer.ed25519_did());
     let aud_did = Did::from_str(aud_did)?;
     let subject = Subject::Specific(Did::from_str(&issuer.ed25519_did().to_string())?);
     let delegation = DelegationBuilder::<Ed25519Signature>::new()
@@ -354,9 +363,9 @@ pub async fn generate_token(aud_did: &str, db_conn: &Dbconn) -> Result<String> {
         .audience(&aud_did)
         .subject(subject)
         .policy(vec![])
-        // TODO: generating token with an expiry of an year, assuming this is for powerline user, will make it configurable later
+        //generating token with an expiry of an year, assuming this is for powerline user, will make it configurable later
         .expiration(Timestamp::new(
-            SystemTime::now() + Duration::from_secs(86400 * 365),
+            SystemTime::now() + Duration::from_secs(86400 * 365 * 10),
         )?)
         .command(vec![])
         .try_build()
@@ -365,9 +374,82 @@ pub async fn generate_token(aud_did: &str, db_conn: &Dbconn) -> Result<String> {
     let delegation_serialized = serde_ipld_dagcbor::to_vec(&delegation)?;
     let delegation_token = data_encoding::BASE64.encode(&delegation_serialized);
 
+    //TODO: Save it in delegation store
     Ok(delegation_token)
 }
 
+pub fn add_token(delegation_token: &str, db_conn: &Dbconn) -> Result<Token> {
+    let delegation_token_bytes = data_encoding::BASE64
+        .decode(delegation_token.as_bytes())
+        .context("Delegation token is in invalid base64")?;
+    let delegation: Delegation<Ed25519Signature> =
+        serde_ipld_dagcbor::from_slice(&delegation_token_bytes).context("Invalid DID")?;
+
+    let issuer_did = delegation.issuer().did();
+    let token = if let Some(_token) = fetch_token(issuer_did.as_str(), db_conn)? {
+        update_token(db_conn, issuer_did.as_str(), delegation_token)
+            .context("Updating delegation token failed")?
+    } else {
+        save_token(db_conn, issuer_did.as_str(), delegation_token)
+            .context("Saving delegation token failed")?
+    };
+    Ok(token)
+}
+
+fn fetch_token(did: &str, conn: &Dbconn) -> Result<Option<Token>> {
+    let fetch_resp = conn.common.query_row(
+        "SELECT id, did, token, created_at, updated_at FROM tokens WHERE did= ?1",
+        [did],
+        |row| {
+            Ok(Token {
+                id: row.get(0)?,
+                did: row.get(1)?,
+                token: row.get(2)?,
+                created_at: row.get::<usize, f64>(3)? as u64,
+                updated_at: row.get::<usize, f64>(4)? as u64,
+            })
+        },
+    );
+    match fetch_resp {
+        Ok(token) => Ok(Some(token)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(err) => Err(Into::into(err)),
+    }
+}
+
+fn save_token(conn: &Dbconn, did: &str, token: &str) -> Result<Token> {
+    let mut stmt = conn.common.prepare(
+        "insert into tokens(id, did, token, created_at, updated_at) values (?1, ?2, ?3, ?4, ?5)",
+    )?;
+
+    match stmt.execute(params![
+        Uuid::now_v7().to_string(),
+        did.to_owned(),
+        token.to_owned(),
+        get_unix_time_now() as f64,
+        get_unix_time_now() as f64
+    ]) {
+        Ok(_res) => {
+            let token = fetch_token(did, conn)?;
+            Ok(token.expect("Expected token"))
+        }
+        Err(err) => Err(anyhow!("Err inserting token due to {}", err)),
+    }
+}
+
+fn update_token(conn: &Dbconn, did: &str, token: &str) -> Result<Token> {
+    let mut stmt = conn
+        .common
+        .prepare("update tokens set token = ?1 where did = ?2")?;
+
+    match stmt.execute(params![token.to_owned(), did.to_owned(),]) {
+        Ok(_res) => {
+            let token = fetch_token(did, conn)?;
+            Ok(token.expect("Expected token"))
+        }
+        Err(err) => Err(anyhow!("Err inserting token due to {}", err)),
+    }
+}
 pub async fn generate_invocation_token(delegation: &str, db_conn: &Dbconn) -> Result<String> {
     // get the issuer DID.
     let user = get_current_user(&db_conn.common)?;
@@ -376,7 +458,7 @@ pub async fn generate_invocation_token(delegation: &str, db_conn: &Dbconn) -> Re
     let signing_key = get_signing_key(&app_name, &user.user_id)?;
     let keyexport = KeyExport::from(&signing_key.to_bytes());
     let issuer: Ed25519Signer = Ed25519Signer::import(keyexport).await?;
-    println!("issuer did {}", issuer.ed25519_did().to_string());
+    println!("issuer did {}", issuer.ed25519_did());
 
     let del_bytes = data_encoding::BASE64.decode(delegation.as_bytes())?;
     let del: Delegation<Ed25519Signature> = serde_ipld_dagcbor::from_slice(&del_bytes)?;
@@ -748,6 +830,17 @@ pub mod tests {
         )
         .unwrap();
 
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS tokens (
+            id TEXT PRIMARY KEY,
+            did TEXT NOT NULL,
+            token TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+        );",
+            [],
+        )
+        .unwrap();
         conn
     }
 
@@ -910,5 +1003,54 @@ pub mod tests {
         save_peer_account_db(&conn, "did:jey:varathan", "varathan").unwrap();
         let user_info = get_user_info(&conn, "did:jey:varathan");
         assert!(user_info.is_ok())
+    }
+
+    #[test]
+    fn test_valid_add_token() {
+        let token = "glhAPHPmeDM0le3YVN4oBkDEg6Yz0lqOIRo5HqkUQbbv3Kdh1jvig7YhpfC9fSO8FXaDP1MZXnz+nnuAT/YfwJ/KAqJhaEg0Ae0B7QETcXN1Y2FuL2RsZ0AxLjAuMC1yYy4xp2NhdWR4IGRpZDpwbGM6bWJrNndnbXhpYXRvdHp5NWIzcTU3bmF3Y2NtZGEvY2V4cBp87SFjY2lzc3g4ZGlkOmtleTp6Nk1rcWtQWVUzZVVTczdQZzROc1NUTmJtOWhLWjRNVTk5N3dLRmJCd3Q5Z0Q1azVjcG9sgGNzdWJ4OGRpZDprZXk6ejZNa3FrUFlVM2VVU3M3UGc0TnNTVE5ibTloS1o0TVU5OTd3S0ZiQnd0OWdENWs1ZW5vbmNlUEHHpLSbdxgpK1QfeHvBxmQ=";
+
+        let db_conn = setup_db_conn_v2();
+
+        let resp = add_token(token, &db_conn);
+
+        assert!(resp.is_ok());
+
+        assert_eq!(resp.unwrap().token, token);
+    }
+
+    #[test]
+    fn test_valid_add_token_multiple_same_did() {
+        let token = "glhAPHPmeDM0le3YVN4oBkDEg6Yz0lqOIRo5HqkUQbbv3Kdh1jvig7YhpfC9fSO8FXaDP1MZXnz+nnuAT/YfwJ/KAqJhaEg0Ae0B7QETcXN1Y2FuL2RsZ0AxLjAuMC1yYy4xp2NhdWR4IGRpZDpwbGM6bWJrNndnbXhpYXRvdHp5NWIzcTU3bmF3Y2NtZGEvY2V4cBp87SFjY2lzc3g4ZGlkOmtleTp6Nk1rcWtQWVUzZVVTczdQZzROc1NUTmJtOWhLWjRNVTk5N3dLRmJCd3Q5Z0Q1azVjcG9sgGNzdWJ4OGRpZDprZXk6ejZNa3FrUFlVM2VVU3M3UGc0TnNTVE5ibTloS1o0TVU5OTd3S0ZiQnd0OWdENWs1ZW5vbmNlUEHHpLSbdxgpK1QfeHvBxmQ=";
+
+        let did = "did:key:z6MkqkPYU3eUSs7Pg4NsSTNbm9hKZ4MU997wKFbBwt9gD5k5";
+        let db_conn = setup_db_conn_v2();
+
+        let resp = add_token(token, &db_conn);
+
+        assert!(resp.is_ok());
+
+        assert_eq!(resp.unwrap().token, token);
+
+        let tokenb = "glhACMCMJFAYFQBP/AwhUuH6A1B5eQWo1EWBg5X8B5CXAyDAb/LhTSM6ndct/N/0rz2K2tdOLkUFAkowwR4sd02zCKJhaEg0Ae0B7QETcXN1Y2FuL2RsZ0AxLjAuMC1yYy4xp2NhdWR4IGRpZDpwbGM6bWJrNndnbXhpYXRvdHp5NWIzcTU3bmF3Y2NtZGEvY2V4cBp87SJYY2lzc3g4ZGlkOmtleTp6Nk1rcWtQWVUzZVVTczdQZzROc1NUTmJtOWhLWjRNVTk5N3dLRmJCd3Q5Z0Q1azVjcG9sgGNzdWJ4OGRpZDprZXk6ejZNa3FrUFlVM2VVU3M3UGc0TnNTVE5ibTloS1o0TVU5OTd3S0ZiQnd0OWdENWs1ZW5vbmNlUFSdn3+p0ErihX4qr3oZZFo=";
+
+        let resp = add_token(tokenb, &db_conn);
+        assert_eq!(resp.unwrap().token, tokenb);
+        assert_eq!(fetch_token(did, &db_conn).unwrap().unwrap().token, tokenb);
+    }
+    #[test]
+    fn test_invalid_token_in_add_token() {
+        let token = "glhAPHPmeDM0le3YVN4oBkDEg6Yz0lqOIRo5HqkUQbbv3Kdh1jvig7YhpfC9fSO8FXaDP1MZXnz+nnuAT/YfwJ/KAqJhaEg0Ae0B7QETcXN1Y2FuL2RsZ0AxLjAuMC1yYy4xp2NhdWR4IGRpZDpwbGM6bWJrNndnbXhpYXRvdHp5NWIzcTU3bmF3Y2NtZGEvY2V4cBp87SFjY2lzc3g4ZGlkOmtleTp6Nk1rcWtQWVUzZVVTczdQZzROc1NUTmJtOWhLWjRNVTk5N3dLRmJCd3Q5Z0Q1azVjcG9sgGNzdWJ4OGRpZDprZXk6ejZNa3FrUFlVM2VVU3M3UGc0TnNTVE5ibTloS1o0TVU5OTd3S0ZiQnd0OWdENWs1ZW5vbmNlUEHHpLSbdxgpK1QfeHvBxmQ";
+
+        let db_conn = setup_db_conn_v2();
+
+        let resp = add_token(token, &db_conn);
+
+        assert!(resp.is_err());
+    }
+    fn setup_db_conn_v2() -> Dbconn {
+        Dbconn {
+            chat: crate::core::chats::tests::setup_db_schema(),
+            common: setup_db_schema(),
+        }
     }
 }

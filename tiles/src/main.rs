@@ -6,8 +6,10 @@ use clap::{Args, CommandFactory, Parser, Subcommand};
 use tiles::{
     core::{
         self,
-        account::atproto::{login, logout},
-        account::local::{generate_invocation_token, generate_token, verify_invocation},
+        account::{
+            atproto::{login, logout},
+            local::{add_token, generate_invocation_token, generate_token, verify_invocation},
+        },
         network::{link, sync},
     },
     daemon::{start_cmd, start_server, stop_cmd},
@@ -287,8 +289,11 @@ enum LinkCommands {
     },
     /// Start the daemon
     ListPeers,
-    GenerateToken {
+    CreateToken {
         peer_did: String,
+    },
+    AddToken {
+        token: String,
     },
     GenerateInvoc {
         delegation_token: String,
@@ -420,16 +425,18 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
             LinkCommands::ListPeers => {
                 show_peers(&db_conn)?;
             }
-            LinkCommands::GenerateToken { peer_did } => {
+            LinkCommands::CreateToken { peer_did } => {
                 println!("{}", generate_token(&peer_did, &db_conn).await?);
-                ()
+            }
+            LinkCommands::AddToken { token } => {
+                let token = add_token(&token, &db_conn)?;
+                println!("Added the token from DID={}", token.did);
             }
             LinkCommands::GenerateInvoc { delegation_token } => {
                 println!(
                     "{}",
                     generate_invocation_token(&delegation_token, &db_conn).await?
                 );
-                ()
             }
             LinkCommands::ValidateInvoc { invocation_token } => {
                 verify_invocation(&invocation_token).await?

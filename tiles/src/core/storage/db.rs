@@ -52,6 +52,17 @@ const COMMON_MIGRATION_ARRAY: &[M] = &[
             handle TEXT NOT NULL
         )",
     ),
+    M::up(
+        "CREATE TABLE IF NOT EXISTS tokens(
+            id TEXT PRIMARY KEY,
+            did TEXT NOT NULL,
+            token TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+        );
+        CREATE INDEX idx_tokens_token ON tokens(did);
+        ",
+    ),
 ];
 
 const COMMON_MIGRATIONS: Migrations = Migrations::from_slice(COMMON_MIGRATION_ARRAY);
