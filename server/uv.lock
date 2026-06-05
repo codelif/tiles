@@ -220,14 +220,47 @@ wheels = [
 [[package]]
 name = "llama-cpp-python"
 version = "0.3.25"
-source = { registry = "https://pypi.org/simple" }
+source = { url = "https://github.com/abetlen/llama-cpp-python/releases/download/v0.3.25-cu124/llama_cpp_python-0.3.25-py3-none-linux_x86_64.whl" }
 dependencies = [
     { name = "diskcache" },
     { name = "jinja2" },
     { name = "numpy" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f9/fc/b488e00ebbca5c6a0b2303fb8ce3ded39a5f2293f7da3d7dfb25bcbb1bd9/llama_cpp_python-0.3.25.tar.gz", hash = "sha256:b901792eb474b3c83b07d2f6ed1668257b80133943c1fa57386d636103a66163", size = 67938860, upload-time = "2026-06-02T04:50:40.086Z" }
+wheels = [
+    { url = "https://github.com/abetlen/llama-cpp-python/releases/download/v0.3.25-cu124/llama_cpp_python-0.3.25-py3-none-linux_x86_64.whl", hash = "sha256:d4651fe74e66275aa1f6f16027bc9113c91cc828c421c156151c3d392a27020d" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "diskcache", specifier = ">=5.6.1" },
+    { name = "fastapi", marker = "extra == 'server'", specifier = ">=0.100.0" },
+    { name = "fastapi", marker = "extra == 'test'", specifier = ">=0.100.0" },
+    { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.24.1" },
+    { name = "httpx", marker = "extra == 'test'", specifier = ">=0.24.1" },
+    { name = "huggingface-hub", marker = "extra == 'test'", specifier = ">=0.23.0" },
+    { name = "jinja2", specifier = ">=2.11.3" },
+    { name = "llama-cpp-python", extras = ["dev", "server", "test"], marker = "extra == 'all'" },
+    { name = "mkdocs", marker = "extra == 'dev'", specifier = ">=1.4.3" },
+    { name = "mkdocs-material", marker = "extra == 'dev'", specifier = ">=9.1.18" },
+    { name = "mkdocstrings", extras = ["python"], marker = "extra == 'dev'", specifier = ">=0.22.0" },
+    { name = "numpy", specifier = ">=1.20.0" },
+    { name = "pydantic-settings", marker = "extra == 'server'", specifier = ">=2.0.1" },
+    { name = "pydantic-settings", marker = "extra == 'test'", specifier = ">=2.0.1" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.4.0" },
+    { name = "pytest", marker = "extra == 'test'", specifier = ">=7.4.0" },
+    { name = "pyyaml", marker = "extra == 'server'", specifier = ">=5.1" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.15.7" },
+    { name = "scipy", marker = "extra == 'test'", specifier = ">=1.10" },
+    { name = "sse-starlette", marker = "extra == 'server'", specifier = ">=1.6.1" },
+    { name = "sse-starlette", marker = "extra == 'test'", specifier = ">=1.6.1" },
+    { name = "starlette-context", marker = "extra == 'server'", specifier = ">=0.3.6,<0.4" },
+    { name = "starlette-context", marker = "extra == 'test'", specifier = ">=0.3.6,<0.4" },
+    { name = "twine", marker = "extra == 'dev'", specifier = ">=4.0.2" },
+    { name = "typing-extensions", specifier = ">=4.5.0" },
+    { name = "uvicorn", marker = "extra == 'server'", specifier = ">=0.22.0" },
+]
+provides-extras = ["server", "test", "dev", "all"]
 
 [[package]]
 name = "markdown-it-py"
@@ -348,6 +381,33 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/c2/c9/fcfd5d0639222c6eac7f304829b04892ef51c96a75d479214d77e3ce6e33/numpy-2.4.4-cp313-cp313t-win32.whl", hash = "sha256:9c585a1790d5436a5374bac930dad6ed244c046ed91b2b2a3634eb2971d21008", size = 6083477, upload-time = "2026-03-29T13:20:20.195Z" },
     { url = "https://files.pythonhosted.org/packages/d5/e3/3938a61d1c538aaec8ed6fd6323f57b0c2d2d2219512434c5c878db76553/numpy-2.4.4-cp313-cp313t-win_amd64.whl", hash = "sha256:93e15038125dc1e5345d9b5b68aa7f996ec33b98118d18c6ca0d0b7d6198b7e8", size = 12457487, upload-time = "2026-03-29T13:20:22.946Z" },
     { url = "https://files.pythonhosted.org/packages/97/6a/7e345032cc60501721ef94e0e30b60f6b0bd601f9174ebd36389a2b86d40/numpy-2.4.4-cp313-cp313t-win_arm64.whl", hash = "sha256:0dfd3f9d3adbe2920b68b5cd3d51444e13a10792ec7154cd0a2f6e74d4ab3233", size = 10292002, upload-time = "2026-03-29T13:20:25.909Z" },
+]
+
+[[package]]
+name = "nvidia-cublas-cu12"
+version = "12.9.2.10"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "nvidia-cuda-nvrtc-cu12" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/cb/c0/0a517bfe63ccd3b92eb254d264e28fca3c7cab75d07daea315250fb1bf73/nvidia_cublas_cu12-12.9.2.10-py3-none-manylinux_2_27_x86_64.whl", hash = "sha256:e4f53a8ca8c5d6e8c492d0d0a3d565ecb59a751b19cfdaa4f6da0ab2104c1702", size = 581240110, upload-time = "2026-04-08T18:52:31.532Z" },
+]
+
+[[package]]
+name = "nvidia-cuda-nvrtc-cu12"
+version = "12.9.86"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b8/85/e4af82cc9202023862090bfca4ea827d533329e925c758f0cde964cb54b7/nvidia_cuda_nvrtc_cu12-12.9.86-py3-none-manylinux2010_x86_64.manylinux_2_12_x86_64.whl", hash = "sha256:210cf05005a447e29214e9ce50851e83fc5f4358df8b453155d5e1918094dcb4", size = 89568129, upload-time = "2025-06-05T20:02:41.973Z" },
+]
+
+[[package]]
+name = "nvidia-cuda-runtime-cu12"
+version = "12.9.79"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/bc/46/a92db19b8309581092a3add7e6fceb4c301a3fd233969856a8cbf042cd3c/nvidia_cuda_runtime_cu12-12.9.79-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:25bba2dfb01d48a9b59ca474a1ac43c6ebf7011f1b0b8cc44f54eb6ac48a96c3", size = 3493179, upload-time = "2025-06-05T20:00:53.735Z" },
 ]
 
 [[package]]
@@ -619,8 +679,10 @@ source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
     { name = "httpx" },
-    { name = "llama-cpp-python", marker = "sys_platform == 'linux'" },
+    { name = "llama-cpp-python", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
     { name = "mlx-lm" },
+    { name = "nvidia-cublas-cu12", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
+    { name = "nvidia-cuda-runtime-cu12", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
     { name = "openai-harmony" },
     { name = "openresponses-types" },
     { name = "uvicorn" },
@@ -636,8 +698,10 @@ dev = [
 requires-dist = [
     { name = "fastapi", specifier = "==0.119.0" },
     { name = "httpx", specifier = "==0.28.1" },
-    { name = "llama-cpp-python", marker = "sys_platform == 'linux'" },
+    { name = "llama-cpp-python", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'", url = "https://github.com/abetlen/llama-cpp-python/releases/download/v0.3.25-cu124/llama_cpp_python-0.3.25-py3-none-linux_x86_64.whl" },
     { name = "mlx-lm", specifier = "==0.31.0" },
+    { name = "nvidia-cublas-cu12", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
+    { name = "nvidia-cuda-runtime-cu12", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
     { name = "openai-harmony", specifier = "==0.0.8" },
     { name = "openresponses-types" },
     { name = "uvicorn", specifier = "==0.38.0" },

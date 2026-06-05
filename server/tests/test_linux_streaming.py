@@ -92,6 +92,27 @@ async def test_gpt_streaming_emits_completed_tool_call_and_done():
 
 
 @pytest.mark.asyncio
+async def test_gpt_streaming_strips_harmony_function_namespace():
+    request = make_request()
+    runner = FakeRunner()
+    runner.tool_name = "functions.read"
+
+    with patch.object(linux, "get_or_load_model", return_value=runner):
+        chunks = [
+            chunk async for chunk in linux.generate_response_chat_stream(request)
+        ]
+
+    done_event = next(
+        chunk
+        for chunk in chunks
+        if chunk.startswith("event: response.function_call_arguments.done")
+    )
+    done_payload = json.loads(done_event.splitlines()[1].removeprefix("data: "))
+
+    assert done_payload["name"] == "read"
+
+
+@pytest.mark.asyncio
 async def test_gpt_streaming_infers_tool_when_commentary_has_no_recipient():
     request = make_request()
     runner = FakeRunner()

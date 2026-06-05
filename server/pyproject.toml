@@ -10,7 +10,9 @@ dependencies = [
     "openai-harmony==0.0.8",
     "httpx==0.28.1",
     "openresponses-types",
-    "llama-cpp-python; sys_platform == 'linux'",
+    "llama-cpp-python @ https://github.com/abetlen/llama-cpp-python/releases/download/v0.3.25-cu124/llama_cpp_python-0.3.25-py3-none-linux_x86_64.whl ; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "nvidia-cuda-runtime-cu12; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "nvidia-cublas-cu12; sys_platform == 'linux' and platform_machine == 'x86_64'",
     "httpx==0.28.1",
 ]
 

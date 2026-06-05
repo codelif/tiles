@@ -16,6 +16,7 @@ from openai_harmony import (
     ReasoningEffort,
     Role,
     SystemContent,
+    ToolDescription,
 )
 
 from ..schemas import (
@@ -23,6 +24,7 @@ from ..schemas import (
     CDeveloperMessageItemParam,
     CFunctionCallItemParam,
     CFunctionCallOutputItemParam,
+    CFunctionTool,
     CReasoningItemParam,
     CSystemMessageItemParam,
     CUserMessageItemParam,
@@ -52,10 +54,29 @@ def get_reasoning_effort(reasoning_effort_enum: ReasoningEffortEnum | None):
     return reasoning_effort
 
 
+def normalize_harmony_tool_name(
+    tool_name: str | None,
+    tools: list[CFunctionTool] | None,
+) -> str | None:
+    if tool_name is None:
+        return None
+
+    valid_tool_names = {tool.name for tool in tools or []}
+    if tool_name in valid_tool_names:
+        return tool_name
+
+    normalized = tool_name.removeprefix("functions.")
+    if normalized in valid_tool_names:
+        return normalized
+
+    return tool_name
+
+
 def build_harmony_conversation(
     reasoning_effort: ReasoningEffort,
     convos: list,
     replay_function_calls: bool = False,
+    tools: list[CFunctionTool] | None = None,
 ):
 
     convo_list = [
@@ -63,6 +84,22 @@ def build_harmony_conversation(
             Role.SYSTEM, SystemContent.new().with_reasoning_effort(reasoning_effort)
         )
     ]
+
+    if tools:
+        tool_descriptions = [
+            ToolDescription.new(
+                tool.name,
+                tool.description or "",
+                tool.parameters,
+            )
+            for tool in tools
+        ]
+        convo_list.append(
+            Message.from_role_and_content(
+                Role.DEVELOPER,
+                DeveloperContent.new().with_function_tools(tool_descriptions),
+            )
+        )
 
     # Handle single string query fallback gracefully
     if isinstance(convos, str):

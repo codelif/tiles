@@ -7,6 +7,8 @@ for Linux backends using llama-cpp-python.
 from __future__ import annotations
 
 import gc
+import ctypes
+import importlib.util
 import json
 import os
 import sys
@@ -44,6 +46,36 @@ _CHAT_STOP_TOKENS = frozenset([
     "\n\nA:",
     "\n\nY:",
 ])
+
+
+def _preload_cuda_runtime_libs() -> None:
+    """Load CUDA runtime wheels before importing llama-cpp-python."""
+    if sys.platform != "linux":
+        return
+
+    module_names = ("nvidia.cuda_runtime", "nvidia.cublas")
+    lib_names = ("libcudart.so.12", "libcublasLt.so.12", "libcublas.so.12")
+
+    for module_name in module_names:
+        spec = importlib.util.find_spec(module_name)
+        if spec is None:
+            continue
+
+        locations = list(spec.submodule_search_locations or [])
+        if not locations:
+            continue
+
+        lib_dir = Path(locations[0]) / "lib"
+        if not lib_dir.exists():
+            continue
+
+        os.environ["LD_LIBRARY_PATH"] = (
+            f"{lib_dir}:{os.environ.get('LD_LIBRARY_PATH', '')}"
+        )
+        for lib_name in lib_names:
+            lib_path = lib_dir / lib_name
+            if lib_path.exists():
+                ctypes.CDLL(str(lib_path), mode=ctypes.RTLD_GLOBAL)
 
 
 def get_model_context_length_gguf(model_path: str) -> int:
@@ -155,8 +187,7 @@ class LlamaRunner:
                 print("Model already loaded, skipping...")
             return
 
-        # NOT SURE ABOUT THIS.conditional import llama-cpp-python may not be installed everywhere
-        # CUDA installation might have a different approach
+        _preload_cuda_runtime_libs()
         try:
             from llama_cpp import Llama
         except ImportError as exc:

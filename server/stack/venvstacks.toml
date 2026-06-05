@@ -27,6 +27,8 @@ requirements = [
     "mlx-lm==0.31.0",
     "openai-harmony==0.0.8",
     "llama-cpp-python==0.3.25; sys_platform == 'linux'",
+    "nvidia-cuda-runtime-cu12; sys_platform == 'linux'",
+    "nvidia-cublas-cu12; sys_platform == 'linux'",
     "openresponses-types",
     "httpx==0.28.1",
     ]

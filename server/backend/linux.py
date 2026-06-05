@@ -6,7 +6,12 @@ import uuid
 from collections.abc import AsyncGenerator
 
 from fastapi import HTTPException
-from openai_harmony import Conversation
+from openai_harmony import (
+    Conversation,
+    HarmonyEncodingName,
+    Role,
+    load_harmony_encoding,
+)
 from openresponses_types.types import (
     Usage,
     InputTokensDetails,
@@ -30,6 +35,7 @@ from .commons import (
     _process_output_item_done,
     _process_error_event,
     _process_stop_tool_call_events,
+    normalize_harmony_tool_name,
 )
 
 
@@ -190,7 +196,18 @@ async def generate_response_chat_stream(
     if is_harmony_family(request.model):
         reasoning_effort = get_reasoning_effort(request.reasoning.effort)
         convo = build_harmony_conversation(
-            reasoning_effort, request.input, replay_function_calls=True  # pyright: ignore
+            reasoning_effort,
+            request.input,  # pyright: ignore
+            replay_function_calls=True,
+            tools=request.tools,
+        )
+        encoding = load_harmony_encoding(HarmonyEncodingName.HARMONY_GPT_OSS)
+        prompt_tokens = encoding.render_conversation_for_completion(convo, Role.ASSISTANT)
+        logger.info(
+            "\n========== HARMONY PROMPT START ==========\n"
+            "%s\n"
+            "========== HARMONY PROMPT END ==========",
+            encoding.decode(prompt_tokens),
         )
 
     input_tokens = _calc_usage(runner, user_input_content, "").get("input_tokens", 0)
@@ -242,7 +259,7 @@ async def generate_response_chat_stream(
                 continue
 
             if isinstance(token, ToolCallStart):
-                tool_name = token.name
+                tool_name = normalize_harmony_tool_name(token.name, request.tools)
                 token = "**[ToolCall]**\n\n"
 
             if not isinstance(token, str):
@@ -442,7 +459,10 @@ async def generate_response_chat(request: ResponsesRequest):
     if is_harmony_family(model):
         reasoning_effort = get_reasoning_effort(request.reasoning.effort)
         convo = build_harmony_conversation(
-            reasoning_effort, request.input, replay_function_calls=True  # pyright: ignore
+            reasoning_effort,
+            request.input,  # pyright: ignore
+            replay_function_calls=True,
+            tools=request.tools,
         )
 
     metrics_obj = None
