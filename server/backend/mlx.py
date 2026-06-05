@@ -25,7 +25,6 @@ from .commons import (
     handle_response_input,
     is_harmony_family,
 )
-from .commons import get_tool_call_id
 
 from ..schemas import (
     GenerationMetrics,
@@ -192,6 +191,7 @@ async def generate_response_chat_stream(
                             output_index,
                             tool_call_text,
                             sequence_number,
+                            request,
                             tool_name,
                         )
                     )
@@ -230,7 +230,7 @@ async def generate_response_chat_stream(
                 )
                 yield resp_str
             elif state == "toolcall":
-                if content_index == 0:
+                if content_index == 0 and tool_name:
                     resp_str, sequence_number = _process_output_item_added(
                         "function_call",
                         tool_id,
@@ -243,6 +243,18 @@ async def generate_response_chat_stream(
                 # To avoid toolcall tag in the final arguments txt
                 if content_index != 0:
                     tool_call_text += token
+                    if tool_name:
+                        output_item = OutputItemDeltaModel(
+                            item_name="function_call_arguments",
+                            item_id=tool_id,
+                            index=output_index,
+                            delta=token,
+                            content_index=content_index,
+                        )
+                        resp_str, sequence_number = _process_output_item_delta(
+                            output_item, sequence_number
+                        )
+                        yield resp_str
             elif state == "answer":
                 if content_index == 0:
                     resp_str, sequence_number = _process_output_item_added(
@@ -281,7 +293,7 @@ async def generate_response_chat_stream(
         yield resp_str
     elif state == "toolcall":
         resp_str, sequence_number, output_index, item = _process_stop_tool_call_events(
-            tool_id, output_index, tool_call_text, sequence_number, tool_name
+            tool_id, output_index, tool_call_text, sequence_number, request, tool_name
         )
         output_items.append(item)
         yield resp_str
