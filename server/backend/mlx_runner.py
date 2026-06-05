@@ -517,13 +517,14 @@ class MLXRunner:
             if ttft is None:
                 ttft = time.time() - start_time
 
-            yield parser.last_content_delta  # pyright: ignore
+            if parser.last_content_delta:
+                yield parser.last_content_delta  # pyright: ignore
 
             tokens_generated += 1
 
             # Check for EOS token - don't yield it
 
-            if token_id in stop_tokens:
+            if token_id in stop_tokens or tokens_generated >= effective_max_tokens:
                 break
 
         # Yield metrics at the end

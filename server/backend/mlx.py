@@ -200,7 +200,7 @@ async def generate_response_chat_stream(
                     )
                     output_items.append(item)
                     yield resp_str
-                elif state == "answer":
+                elif last_state == "answer":
                     resp_str, sequence_number, output_index, item = (
                         _process_output_item_done(
                             "message",
