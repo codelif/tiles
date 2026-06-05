@@ -73,6 +73,12 @@ pub struct PiProviderConfig {
 pub struct PiProviderModelConfig {
     pub id: String,
     pub reasoning: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "contextWindow")]
+    pub context_window: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "maxTokens")]
+    pub max_tokens: Option<u32>,
 }
 const MODEL_SUB_PATH: &str = "models/huggingface/hub";
 pub trait ConfigProvider {
@@ -429,7 +435,21 @@ fn do_update_current_model(config: &mut RootConfig, model_name: &str) -> Result<
     Ok(())
 }
 
+fn get_env_u32(name: &str) -> Option<u32> {
+    env::var(name).ok().and_then(|value| value.parse().ok())
+}
+
+fn get_pi_context_window() -> Option<u32> {
+    get_env_u32("TILES_LLAMA_CPP_MAX_CTX")
+}
+
+fn get_pi_max_tokens() -> Option<u32> {
+    get_pi_context_window().map(|context_window| context_window.clamp(4_096, 16_384))
+}
+
 pub fn create_pi_provider_config(model_name: &str, enpoint_base_url: &str) -> Result<String> {
+    let context_window = get_pi_context_window();
+    let max_tokens = get_pi_max_tokens();
     let provider_config = PiProviderConfig {
         api: String::from("openai-responses"),
         api_key: String::from("tiles"),
@@ -437,6 +457,8 @@ pub fn create_pi_provider_config(model_name: &str, enpoint_base_url: &str) -> Re
         models: vec![PiProviderModelConfig {
             id: model_name.to_string(),
             reasoning: true,
+            context_window,
+            max_tokens,
         }],
     };
 
@@ -461,9 +483,13 @@ fn try_update_pi_provider_model(config: &str, model_name: &str) -> Result<String
         .clone();
 
     if tiles_provider_config.models[0].id != model_name {
+        let context_window = get_pi_context_window();
+        let max_tokens = get_pi_max_tokens();
         tiles_provider_config.models = vec![PiProviderModelConfig {
             id: model_name.to_owned(),
             reasoning: true,
+            context_window,
+            max_tokens,
         }];
         let mut provider: HashMap<String, PiProviderConfig> = HashMap::new();
         provider.insert("tiles".to_owned(), tiles_provider_config);
@@ -489,6 +515,44 @@ pub fn update_inference_config(config: InferenceConfig) -> Result<()> {
 mod tests {
 
     use super::*;
+    use serde_json::Value;
+    use serial_test::serial;
+    use std::sync::{Mutex, OnceLock};
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    fn expected_pi_provider_json(model_name: &str, endpoint_base_url: &str) -> Value {
+        let mut model = json!({
+            "id": model_name,
+            "reasoning": true
+        });
+
+        if let Some(context_window) = get_pi_context_window()
+            && let Value::Object(model_object) = &mut model
+        {
+            model_object.insert("contextWindow".to_owned(), json!(context_window));
+        }
+
+        if let Some(max_tokens) = get_pi_max_tokens()
+            && let Value::Object(model_object) = &mut model
+        {
+            model_object.insert("maxTokens".to_owned(), json!(max_tokens));
+        }
+
+        json!({
+          "providers": {
+            "tiles": {
+              "api": "openai-responses",
+              "apiKey": "tiles",
+              "baseUrl": endpoint_base_url,
+              "models": [model]
+            }
+          }
+        })
+    }
 
     #[test]
     fn test_updating_current_model_first_time() {
@@ -535,23 +599,39 @@ mod tests {
 
         let config: PiModelConfig = serde_json::from_str(&config_str).unwrap();
 
-        let expected_json = json!({
-          "providers": {
-            "tiles": {
-              "api": "openai-responses",
-              "apiKey": "tiles",
-              "baseUrl": "http://127.0.0.1:0000/v1",
-              "models": [
-                {
-                  "id": "mlx-community/Qwen3.5-4B-MLX-4bit",
-                  "reasoning": true
-                }
-              ]
-            }
-          }
-        });
+        let expected_json = expected_pi_provider_json(
+            "mlx-community/Qwen3.5-4B-MLX-4bit",
+            "http://127.0.0.1:0000/v1",
+        );
 
         assert_eq!(expected_json, serde_json::to_value(&config).unwrap())
+    }
+
+    #[test]
+    #[serial]
+    fn test_pi_provider_uses_llama_cpp_context_env() {
+        let _guard = env_lock().lock().unwrap();
+        let old_max_ctx = env::var("TILES_LLAMA_CPP_MAX_CTX").ok();
+        unsafe {
+            env::set_var("TILES_LLAMA_CPP_MAX_CTX", "12000");
+        }
+
+        let config_str =
+            create_pi_provider_config("unsloth/gpt-oss-20b-GGUF", "http://127.0.0.1:6969/v1")
+                .unwrap();
+        let config: Value = serde_json::from_str(&config_str).unwrap();
+        let model = &config["providers"]["tiles"]["models"][0];
+
+        assert_eq!(model["contextWindow"], 12_000);
+        assert_eq!(model["maxTokens"], 12_000);
+
+        unsafe {
+            if let Some(value) = old_max_ctx {
+                env::set_var("TILES_LLAMA_CPP_MAX_CTX", value);
+            } else {
+                env::remove_var("TILES_LLAMA_CPP_MAX_CTX");
+            }
+        }
     }
 
     #[test]
@@ -564,21 +644,10 @@ mod tests {
 
         let config: PiModelConfig = serde_json::from_str(&config_str).unwrap();
 
-        let expected_json = json!({
-          "providers": {
-            "tiles": {
-              "api": "openai-responses",
-              "apiKey": "tiles",
-              "baseUrl": "http://127.0.0.1:0000/v1",
-              "models": [
-                {
-                  "id": "mlx-community/Qwen3.5-4B-MLX-4bit",
-                  "reasoning": true
-                }
-              ]
-            }
-          }
-        });
+        let expected_json = expected_pi_provider_json(
+            "mlx-community/Qwen3.5-4B-MLX-4bit",
+            "http://127.0.0.1:0000/v1",
+        );
 
         assert_eq!(expected_json, serde_json::to_value(&config).unwrap());
 
@@ -586,22 +655,7 @@ mod tests {
 
         let new_config: PiModelConfig = serde_json::from_str(&new_config_str).unwrap();
 
-        let expected_json = json!({
-          "providers": {
-            "tiles": {
-              "api": "openai-responses",
-              "apiKey": "tiles",
-              "baseUrl": "http://127.0.0.1:0000/v1",
-              "models": [
-                {
-                  "id": "new_model",
-                  "reasoning": true
-                }
-
-              ]
-            }
-          }
-        });
+        let expected_json = expected_pi_provider_json("new_model", "http://127.0.0.1:0000/v1");
 
         assert_eq!(expected_json, serde_json::to_value(&new_config).unwrap());
         assert_ne!(config_str, new_config_str);
@@ -617,21 +671,10 @@ mod tests {
 
         let config: PiModelConfig = serde_json::from_str(&config_str).unwrap();
 
-        let expected_json = json!({
-          "providers": {
-            "tiles": {
-              "api": "openai-responses",
-              "apiKey": "tiles",
-              "baseUrl": "http://127.0.0.1:0000/v1",
-              "models": [
-                {
-                  "id": "mlx-community/Qwen3.5-4B-MLX-4bit",
-                  "reasoning": true
-                }
-              ]
-            }
-          }
-        });
+        let expected_json = expected_pi_provider_json(
+            "mlx-community/Qwen3.5-4B-MLX-4bit",
+            "http://127.0.0.1:0000/v1",
+        );
 
         assert_eq!(expected_json, serde_json::to_value(&config).unwrap());
 

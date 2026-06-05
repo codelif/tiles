@@ -86,9 +86,9 @@ def get_model_context_length_gguf(model_path: str) -> int:
 
     Returns:
         Maximum context length for the model (defaults to 4096 if not found),
-        capped at 8192 to prevent KV cache OOM on consumer GPUs.
+        capped by TILES_LLAMA_CPP_MAX_CTX or 30000 by default.
     """
-    MAX_CTX = 8192  # Safe cap for 8GB VRAM cards
+    max_ctx = int(os.environ.get("TILES_LLAMA_CPP_MAX_CTX", "30000"))
     config_path = os.path.join(model_path, "config.json")
     try:
         with open(config_path) as f:
@@ -102,12 +102,26 @@ def get_model_context_length_gguf(model_path: str) -> int:
         ]:
             if key in config:
                 raw = config[key]
-                if raw > MAX_CTX:
-                    print(f"[INFO] Model context {raw} exceeds safe limit, capping to {MAX_CTX}")
-                return min(raw, MAX_CTX)
+                if raw > max_ctx:
+                    print(
+                        f"[INFO] Model context {raw} exceeds configured limit, "
+                        f"capping to {max_ctx}"
+                    )
+                return min(raw, max_ctx)
     except (FileNotFoundError, json.JSONDecodeError, KeyError):
         pass
     return 4096
+
+
+def _get_env_int(name: str, default: int) -> int:
+    return int(os.environ.get(name, str(default)))
+
+
+def _get_env_bool(name: str, default: bool) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.lower() in {"1", "true", "yes", "on"}
 
 
 class LlamaRunner:
@@ -210,15 +224,22 @@ class LlamaRunner:
             if self.verbose:
                 print(f"Using GGUF file: {gguf_file}")
 
-            self._context_length = get_model_context_length_gguf(
+            requested_context_length = get_model_context_length_gguf(
                 str(self.model_path)
             )
+            n_gpu_layers = _get_env_int("TILES_LLAMA_CPP_N_GPU_LAYERS", 10)
+            offload_kqv = _get_env_bool("TILES_LLAMA_CPP_OFFLOAD_KQV", True)
+            n_batch = _get_env_int("TILES_LLAMA_CPP_N_BATCH", 512)
 
+            self._context_length = requested_context_length
             self.model = Llama(
                 model_path=str(gguf_file),
-                n_gpu_layers=10,
+                n_gpu_layers=n_gpu_layers,
                 n_ctx=self._context_length,
-                verbose=self.verbose,
+                n_batch=n_batch,
+                n_ubatch=n_batch,
+                offload_kqv=offload_kqv,
+                verbose=False,
                 use_mmap=True,
             )
 

@@ -7,7 +7,12 @@ from openai_harmony import (
     load_harmony_encoding,
 )
 
-from server.backend.llama_cpp_runner import LlamaRunner
+from server.backend.llama_cpp_runner import (
+    LlamaRunner,
+    _get_env_bool,
+    _get_env_int,
+    get_model_context_length_gguf,
+)
 from server.schemas import ToolCallStart
 
 
@@ -80,3 +85,26 @@ def test_gpt_streaming_rejects_prompt_that_exceeds_context_and_resets_model():
         list(runner.generate_streaming_gpt(conversation, max_tokens=16))
 
     assert model.was_reset
+
+
+def test_gguf_context_length_caps_at_30000_by_default(tmp_path):
+    (tmp_path / "config.json").write_text('{"context_length": 131072}')
+
+    assert get_model_context_length_gguf(str(tmp_path)) == 30000
+
+
+def test_gguf_context_length_uses_env_cap(tmp_path, monkeypatch):
+    (tmp_path / "config.json").write_text('{"context_length": 131072}')
+    monkeypatch.setenv("TILES_LLAMA_CPP_MAX_CTX", "12000")
+
+    assert get_model_context_length_gguf(str(tmp_path)) == 12000
+
+
+def test_llama_cpp_env_helpers(monkeypatch):
+    monkeypatch.setenv("TILES_TEST_INT", "12")
+    monkeypatch.setenv("TILES_TEST_BOOL", "false")
+
+    assert _get_env_int("TILES_TEST_INT", 3) == 12
+    assert _get_env_int("TILES_MISSING_INT", 3) == 3
+    assert _get_env_bool("TILES_TEST_BOOL", True) is False
+    assert _get_env_bool("TILES_MISSING_BOOL", True) is True
