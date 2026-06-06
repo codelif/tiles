@@ -465,6 +465,55 @@ class LlamaRunner:
         server_limit = self._context_length // 2
         return min(requested_tokens or server_limit, server_limit)
 
+    def count_text_tokens(self, text: str) -> int:
+        """Count BPE tokens for a text string."""
+        if not self.model or not text:
+            return 0
+        return len(
+            self.model.tokenize(text.encode("utf-8"), add_bos=False)
+        )
+
+    def count_prompt_tokens(
+        self, prompt: Union[str, list], use_chat_template: bool = True
+    ) -> int:
+        """Count BPE tokens for a prompt before generation."""
+        if not self.model:
+            return 0
+        if use_chat_template:
+            messages = (
+                prompt
+                if isinstance(prompt, list)
+                else [{"role": "user", "content": prompt}]
+            )
+            text = self._format_conversation(messages, use_chat_template=True)
+        else:
+            text = prompt if isinstance(prompt, str) else json.dumps(prompt)
+        return self.count_text_tokens(text)
+
+    def _build_stop_words(self, use_chat_stop_tokens: bool = False) -> list[str]:
+        """Combine native and optional chat stop tokens for llama.cpp."""
+        stop_words = list(self._stop_tokens or [])
+        if use_chat_stop_tokens and self._chat_stop_tokens:
+            stop_words.extend(self._chat_stop_tokens)
+        return list(dict.fromkeys(stop_words))
+
+    def _clamp_max_tokens_for_prompt(
+        self, max_tokens: int, prompt_token_count: int
+    ) -> int:
+        """Reserve context for the prompt and reject prompts that do not fit."""
+        context_length = self._context_length
+        if not context_length:
+            return max_tokens
+        if prompt_token_count >= context_length:
+            if self.model is not None:
+                self.model.reset()
+            raise ValueError(
+                f"Prompt has {prompt_token_count} tokens, but the Linux llama.cpp "
+                f"context allows fewer than {context_length}. Start a new session "
+                "or reduce the conversation and tool output."
+            )
+        return min(max_tokens, context_length - prompt_token_count)
+
     def generate_streaming(
         self,
         prompt: Union[str, list],
@@ -512,38 +561,51 @@ class LlamaRunner:
         effective_max_tokens = self.get_effective_max_tokens(
             max_tokens, interactive
         )
+        stop_words = self._build_stop_words(use_chat_stop_tokens)
 
-        start_time = time.time()
-        tokens_generated = 0
-        ttft = None
-        accumulated_response = ""
-
-        # Use llama-cpp-python's native chat completion when chat template
         if use_chat_template:
             if isinstance(prompt, list):
                 messages = prompt
             else:
                 messages = [{"role": "user", "content": prompt}]
-            
+            prompt_token_count = self.count_prompt_tokens(
+                messages, use_chat_template=True
+            )
+        else:
+            text_prompt = prompt if isinstance(prompt, str) else json.dumps(prompt)
+            prompt_token_count = self.count_prompt_tokens(
+                text_prompt, use_chat_template=False
+            )
+
+        effective_max_tokens = self._clamp_max_tokens_for_prompt(
+            effective_max_tokens, prompt_token_count
+        )
+
+        start_time = time.time()
+        ttft = None
+        accumulated_response = ""
+
+        # Use llama-cpp-python's native chat completion when chat template
+        if use_chat_template:
             stream = self.model.create_chat_completion(
                 messages=messages,  # pyright: ignore[reportArgumentType]
                 max_tokens=effective_max_tokens,
                 temperature=temperature,
                 top_p=top_p,
                 repeat_penalty=repetition_penalty,
+                stop=stop_words,
                 stream=True,
             )
             # create_chat_completion yields {"choices": [{"delta": {"content": ...}}]}
             use_chat_api = True
         else:
-            # If string, use directly; if list, fallback to basic json string repr
-            text_prompt = prompt if isinstance(prompt, str) else json.dumps(prompt)
             stream = self.model(
                 text_prompt,
                 max_tokens=effective_max_tokens,
                 temperature=temperature,
                 top_p=top_p,
                 repeat_penalty=repetition_penalty,
+                stop=stop_words,
                 stream=True,
             )
             use_chat_api = False
@@ -558,7 +620,6 @@ class LlamaRunner:
                 continue
 
             accumulated_response += text
-            tokens_generated += 1
 
             if ttft is None:
                 ttft = time.time() - start_time
@@ -578,8 +639,8 @@ class LlamaRunner:
                             )
                     if reasoning_parser:
                         yield from reasoning_parser.finalize()
-                    yield self._make_metrics(
-                        start_time, tokens_generated, ttft
+                    yield self._make_metrics_from_response(
+                        start_time, accumulated_response[:stop_pos], ttft
                     )
                     return
 
@@ -598,8 +659,8 @@ class LlamaRunner:
                                 )
                         if reasoning_parser:
                             yield from reasoning_parser.finalize()
-                        yield self._make_metrics(
-                            start_time, tokens_generated, ttft
+                        yield self._make_metrics_from_response(
+                            start_time, text_before, ttft
                         )
                         return
 
@@ -610,10 +671,13 @@ class LlamaRunner:
             yield from reasoning_parser.finalize()
 
         # Yield final metrics
-        yield self._make_metrics(start_time, tokens_generated, ttft)
+        yield self._make_metrics_from_response(
+            start_time, accumulated_response, ttft
+        )
 
         if self.verbose:
             gen_time = time.time() - start_time
+            tokens_generated = self.count_text_tokens(accumulated_response)
             tps = tokens_generated / gen_time if gen_time > 0 else 0
             print(
                 f"\n\nGenerated {tokens_generated} tokens in "
@@ -747,33 +811,48 @@ class LlamaRunner:
         effective_max_tokens = self.get_effective_max_tokens(
             max_tokens, interactive
         )
+        stop_words = self._build_stop_words(use_chat_stop_tokens=False)
 
-        start_time = time.time()
-
-        # Use native chat completion for proper template handling
         if use_chat_template:
             if isinstance(prompt, list):
                 messages = prompt
             else:
                 messages = [{"role": "user", "content": prompt}]
-            
+            prompt_token_count = self.count_prompt_tokens(
+                messages, use_chat_template=True
+            )
+        else:
+            text_prompt = prompt if isinstance(prompt, str) else json.dumps(prompt)
+            prompt_token_count = self.count_prompt_tokens(
+                text_prompt, use_chat_template=False
+            )
+
+        effective_max_tokens = self._clamp_max_tokens_for_prompt(
+            effective_max_tokens, prompt_token_count
+        )
+
+        start_time = time.time()
+
+        # Use native chat completion for proper template handling
+        if use_chat_template:
             output = self.model.create_chat_completion(
                 messages=messages,  # pyright: ignore[reportArgumentType]
                 max_tokens=effective_max_tokens,
                 temperature=temperature,
                 top_p=top_p,
                 repeat_penalty=repetition_penalty,
+                stop=stop_words,
                 stream=False,
             )
             response = output["choices"][0]["message"].get("content", "")  # pyright: ignore[reportIndexIssue]
         else:
-            text_prompt = prompt if isinstance(prompt, str) else json.dumps(prompt)
             output = self.model(
                 text_prompt,
                 max_tokens=effective_max_tokens,
                 temperature=temperature,
                 top_p=top_p,
                 repeat_penalty=repetition_penalty,
+                stop=stop_words,
                 stream=False,
             )
             response = output["choices"][0].get("text", "")  # pyright: ignore[reportIndexIssue]
@@ -837,18 +916,8 @@ class LlamaRunner:
         prompt_tokens = encoding.render_conversation_for_completion(
             conversation, Role.ASSISTANT
         )
-        context_length = self._context_length
-        if not context_length:
-            raise RuntimeError("Model context length is unavailable.")
-        if len(prompt_tokens) >= context_length:
-            self.model.reset()
-            raise ValueError(
-                f"Prompt has {len(prompt_tokens)} tokens, but the Linux llama.cpp "
-                f"context allows fewer than {context_length}. Start a new session "
-                "or reduce the conversation and tool output."
-            )
-        effective_max_tokens = min(
-            effective_max_tokens, context_length - len(prompt_tokens)
+        effective_max_tokens = self._clamp_max_tokens_for_prompt(
+            effective_max_tokens, len(prompt_tokens)
         )
 
         start_time = time.time()
@@ -934,27 +1003,27 @@ class LlamaRunner:
         prompt_tokens = encoding.render_conversation_for_completion(
             conversation, Role.ASSISTANT
         )
-
-        # Decode token IDs to a raw string prompt
-        raw_prompt = encoding.decode(prompt_tokens)
-
-        # Combine stop tokens for safety and accuracy
-        encoding_stop_tokens = [
-            encoding.decode([t]) for t in encoding.stop_tokens_for_assistant_actions()
-        ]
-        stop_words = list(set((self._stop_tokens or []) + encoding_stop_tokens))
-
-        output = self.model(
-            raw_prompt,
-            max_tokens=effective_max_tokens,
-            temperature=temperature,
-            top_p=top_p,
-            repeat_penalty=repetition_penalty,
-            stop=stop_words,
-            stream=False,
+        effective_max_tokens = self._clamp_max_tokens_for_prompt(
+            effective_max_tokens, len(prompt_tokens)
         )
 
-        response = output["choices"][0].get("text", "")  # pyright: ignore[reportIndexIssue]
+        stop_token_ids = set(encoding.stop_tokens_for_assistant_actions())
+        output_token_ids: list[int] = []
+        generator = self.model.generate(
+            prompt_tokens,
+            temp=temperature,
+            top_p=top_p,
+            repeat_penalty=repetition_penalty,
+        )
+        for token_id in generator:
+            output_token_ids.append(token_id)
+            if (
+                token_id in stop_token_ids
+                or len(output_token_ids) >= effective_max_tokens
+            ):
+                break
+
+        response = encoding.decode(output_token_ids)
 
         # Apply end-token filtering (same as streaming)
         response = self._filter_end_tokens_from_response(
@@ -971,6 +1040,14 @@ class LlamaRunner:
         return response
 
 # private helpers
+
+    def _make_metrics_from_response(
+        self, start_time: float, response_text: str, ttft: float | None
+    ) -> GenerationMetrics:
+        """Build GenerationMetrics using actual BPE token counts."""
+        filtered = self._filter_end_tokens_from_response(response_text)
+        tokens_generated = self.count_text_tokens(filtered)
+        return self._make_metrics(start_time, tokens_generated, ttft)
 
     @staticmethod
     def _make_metrics(

@@ -108,3 +108,81 @@ def test_llama_cpp_env_helpers(monkeypatch):
     assert _get_env_int("TILES_MISSING_INT", 3) == 3
     assert _get_env_bool("TILES_TEST_BOOL", True) is False
     assert _get_env_bool("TILES_MISSING_BOOL", True) is True
+
+
+class TokenizingFakeModel:
+    reset_called = False
+
+    def tokenize(self, text, add_bos=False):
+        return text.decode("utf-8").split()
+
+    def reset(self):
+        self.reset_called = True
+
+
+def test_build_stop_words_deduplicates():
+    runner = LlamaRunner("/tmp/model")
+    runner._stop_tokens = ["</s>", "<|return|>"]
+    runner._chat_stop_tokens = ["</s>", "\nHuman:"]
+
+    assert runner._build_stop_words(use_chat_stop_tokens=True) == [
+        "</s>",
+        "<|return|>",
+        "\nHuman:",
+    ]
+
+
+def test_clamp_max_tokens_for_prompt_reserves_context():
+    runner = LlamaRunner("/tmp/model")
+    runner._context_length = 100
+    runner.model = TokenizingFakeModel()
+
+    assert runner._clamp_max_tokens_for_prompt(80, 30) == 70
+
+
+def test_clamp_max_tokens_for_prompt_rejects_oversized_prompt():
+    runner = LlamaRunner("/tmp/model")
+    runner._context_length = 64
+    model = TokenizingFakeModel()
+    runner.model = model
+
+    with pytest.raises(ValueError, match="Start a new session"):
+        runner._clamp_max_tokens_for_prompt(16, 64)
+
+    assert model.reset_called is True
+
+
+def test_batch_gpt_generates_from_prompt_token_ids():
+    completion = (
+        "<|channel|>analysis<|message|>Say hello.<|end|>"
+        "<|start|>assistant<|channel|>final<|message|>Hello.<|return|>"
+    )
+    output_token_ids = ENCODING.encode(completion, allowed_special="all")
+
+    class BatchFakeModel:
+        prompt_tokens = None
+
+        def generate(self, prompt_tokens, **kwargs):
+            BatchFakeModel.prompt_tokens = prompt_tokens
+            yield from output_token_ids
+
+        def reset(self):
+            pass
+
+    runner = LlamaRunner("/tmp/gpt-oss")
+    runner.model = BatchFakeModel()
+    runner._context_length = 8192
+    runner._is_reasoning_model = True
+    runner._reasoning_start = "<|channel|>analysis<|message|>"
+    runner._reasoning_end = "<|end|>"
+    runner._final_start = "<|channel|>final<|message|>"
+
+    response = runner.generate_batch_gpt(
+        Conversation.from_messages([]), max_tokens=128
+    )
+
+    assert BatchFakeModel.prompt_tokens == ENCODING.render_conversation_for_completion(
+        Conversation.from_messages([]), Role.ASSISTANT
+    )
+    assert "**[Reasoning]**" in response
+    assert "Hello." in response

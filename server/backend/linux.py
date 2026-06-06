@@ -117,29 +117,37 @@ def get_or_load_model(model_spec: str, verbose: bool = True) -> LlamaRunner:
 
 
 def _calc_usage(
-    runner: LlamaRunner, input_text: Union[str, list], generated_text: str
+    runner: LlamaRunner,
+    generated_text: str,
+    *,
+    input_token_count: int | None = None,
+    input_text: Union[str, list] | None = None,
+    use_chat_template: bool = True,
 ) -> Dict[str, int]:
-    """Calculate token usage using llama-cpp-python tokenizer; fall back to estimate."""
-    # Convert list of dicts to string representation for rough token counting
-    if isinstance(input_text, list):
-        input_text_str = json.dumps(input_text)
-    else:
-        input_text_str = input_text
-        
+    """Calculate token usage using llama-cpp-python tokenizer."""
+    if input_token_count is None and input_text is not None:
+        input_token_count = runner.count_prompt_tokens(
+            input_text, use_chat_template=use_chat_template
+        )
+
     try:
         if runner.model is not None:
-            input_tokens = len(
-                runner.model.tokenize(input_text_str.encode("utf-8"), add_bos=False)
-            )
-            output_tokens = len(
-                runner.model.tokenize(generated_text.encode("utf-8"), add_bos=False)
-            )
-            return {"input_tokens": input_tokens, "output_tokens": output_tokens}
+            output_tokens = runner.count_text_tokens(generated_text)
+            return {
+                "input_tokens": input_token_count or 0,
+                "output_tokens": output_tokens,
+            }
     except Exception:
         pass
-    # Rough fallback
+
+    input_text_str = (
+        json.dumps(input_text)
+        if isinstance(input_text, list)
+        else (input_text or "")
+    )
     return {
-        "input_tokens": int(len(input_text_str.split()) * 1.3),
+        "input_tokens": input_token_count
+        or int(len(input_text_str.split()) * 1.3),
         "output_tokens": int(len(generated_text.split()) * 1.3),
     }
 
@@ -193,6 +201,7 @@ async def generate_response_chat_stream(
     runner = get_or_load_model(request.model)
     user_input_content = handle_response_input(request)
 
+    prompt_tokens: list[int] | None = None
     if is_harmony_family(request.model):
         reasoning_effort = get_reasoning_effort(request.reasoning.effort)
         convo = build_harmony_conversation(
@@ -209,8 +218,11 @@ async def generate_response_chat_stream(
             "========== HARMONY PROMPT END ==========",
             encoding.decode(prompt_tokens),
         )
-
-    input_tokens = _calc_usage(runner, user_input_content, "").get("input_tokens", 0)
+        input_tokens = len(prompt_tokens)
+    else:
+        input_tokens = runner.count_prompt_tokens(
+            user_input_content, use_chat_template=True
+        )
 
     response_id = f"resp_{uuid.uuid4()}"
     message_id = f"msg_{uuid.uuid4()}"
@@ -228,7 +240,6 @@ async def generate_response_chat_stream(
     accumulated_text = ""
     answer_text = ""
     reasoning_text = ""
-    output_tokens = 0
     content_index = 0
     output_index = 0
     output_items = []
@@ -236,6 +247,7 @@ async def generate_response_chat_stream(
     tool_name = None
     state = ""
     last_state = ""
+    generation_metrics: GenerationMetrics | None = None
     try:
         iterator: Iterator
         if is_harmony_family(request.model):
@@ -256,6 +268,7 @@ async def generate_response_chat_stream(
 
         for token in iterator:
             if isinstance(token, GenerationMetrics):
+                generation_metrics = token
                 continue
 
             if isinstance(token, ToolCallStart):
@@ -266,7 +279,6 @@ async def generate_response_chat_stream(
                 continue
 
             accumulated_text += token
-            output_tokens += 1
 
             if "**[Reasoning]**" in token:
                 last_state = state
@@ -421,12 +433,17 @@ async def generate_response_chat_stream(
         yield resp_str
 
     ## Envelope, response.completed
+    if generation_metrics is not None:
+        output_tokens = generation_metrics.total_tokens
+    else:
+        output_tokens = runner.count_text_tokens(accumulated_text)
+    reasoning_tokens = runner.count_text_tokens(reasoning_text)
     usage = Usage(
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         total_tokens=input_tokens + output_tokens,
         input_tokens_details=InputTokensDetails(cached_tokens=0),
-        output_tokens_details=OutputTokensDetails(reasoning_tokens=len(reasoning_text)),
+        output_tokens_details=OutputTokensDetails(reasoning_tokens=reasoning_tokens),
     )
     final_response = _get_response_on_completed(
         response_id, request, created, output_items, usage
@@ -500,8 +517,23 @@ async def generate_response_chat(request: ResponsesRequest):
         status = "completed"
         error = None
         incomplete_details = None
-        # Calculate token usage
-        usage = _calc_usage(runner, user_input_content, generated_text)
+        if is_harmony_family(model):
+            encoding = load_harmony_encoding(HarmonyEncodingName.HARMONY_GPT_OSS)
+            input_token_count = len(
+                encoding.render_conversation_for_completion(convo, Role.ASSISTANT)  # pyright: ignore[reportArgumentType]
+            )
+        elif isinstance(user_input_content, list):
+            input_token_count = runner.count_prompt_tokens(
+                user_input_content, use_chat_template=True
+            )
+        else:
+            input_token_count = runner.count_text_tokens(prompt_string)  # pyright: ignore[reportArgumentType]
+
+        usage = _calc_usage(
+            runner,
+            generated_text,
+            input_token_count=input_token_count,
+        )
         output_tokens = usage.get("output_tokens", 0)
         metrics_obj = {
             "ttft_ms": generation_time * 1000.0,

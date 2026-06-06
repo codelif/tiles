@@ -19,6 +19,12 @@ class FakeRunner:
     def get_effective_max_tokens(self, max_output_tokens):
         return max_output_tokens or 128
 
+    def count_prompt_tokens(self, prompt, use_chat_template=True):
+        return 1
+
+    def count_text_tokens(self, text):
+        return len(text.split())
+
     def generate_streaming_gpt(self, **kwargs):
         yield "**[Reasoning]**\n\n"
         yield "Need to read file."

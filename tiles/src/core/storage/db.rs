@@ -158,15 +158,17 @@ fn fetch_passkey() -> Result<String> {
     if cfg!(debug_assertions) {
         if let Ok(passwd) = env::var("TILES_DEV_DB_PASSWORD") {
             return Ok(passwd);
-        } else {
-            info!("DB passkey not found in development, creating one..");
-            let passwd = create_and_save_passkey(&app_name, "db_passkey")?;
-            info!(
-                "Save this password {} as an environment variable with name `TILES_DEV_DB_PASSWORD`",
-                passwd
-            );
-            return Ok(passwd);
         }
+        if let Ok(passkey) = get_passkey(&app_name, "db_passkey") {
+            return Ok(passkey);
+        }
+        info!("DB passkey not found in development, creating one..");
+        let passwd = create_and_save_passkey(&app_name, "db_passkey")?;
+        info!(
+            "Save this password {} as an environment variable with name `TILES_DEV_DB_PASSWORD`",
+            passwd
+        );
+        return Ok(passwd);
     }
 
     if let Ok(passkey) = get_passkey(&app_name, "db_passkey") {
