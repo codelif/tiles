@@ -439,17 +439,35 @@ fn get_env_u32(name: &str) -> Option<u32> {
     env::var(name).ok().and_then(|value| value.parse().ok())
 }
 
+fn get_pi_context_window_with_env<F>(get_env: &F) -> Option<u32>
+where
+    F: Fn(&str) -> Option<String>,
+{
+    get_env("TILES_LLAMA_CPP_MAX_CTX").and_then(|value| value.parse().ok())
+}
+
 fn get_pi_context_window() -> Option<u32> {
     get_env_u32("TILES_LLAMA_CPP_MAX_CTX")
 }
 
-fn get_pi_max_tokens() -> Option<u32> {
-    get_pi_context_window().map(|context_window| context_window.clamp(4_096, 16_384))
+fn get_pi_max_tokens(context_window: Option<u32>) -> Option<u32> {
+    context_window.map(|context_window| context_window.clamp(4_096, 16_384))
 }
 
 pub fn create_pi_provider_config(model_name: &str, enpoint_base_url: &str) -> Result<String> {
-    let context_window = get_pi_context_window();
-    let max_tokens = get_pi_max_tokens();
+    create_pi_provider_config_with_env(model_name, enpoint_base_url, &|name| env::var(name).ok())
+}
+
+fn create_pi_provider_config_with_env<F>(
+    model_name: &str,
+    enpoint_base_url: &str,
+    get_env: &F,
+) -> Result<String>
+where
+    F: Fn(&str) -> Option<String>,
+{
+    let context_window = get_pi_context_window_with_env(get_env);
+    let max_tokens = get_pi_max_tokens(context_window);
     let provider_config = PiProviderConfig {
         api: String::from("openai-responses"),
         api_key: String::from("tiles"),
@@ -484,7 +502,7 @@ fn try_update_pi_provider_model(config: &str, model_name: &str) -> Result<String
 
     if tiles_provider_config.models[0].id != model_name {
         let context_window = get_pi_context_window();
-        let max_tokens = get_pi_max_tokens();
+        let max_tokens = get_pi_max_tokens(context_window);
         tiles_provider_config.models = vec![PiProviderModelConfig {
             id: model_name.to_owned(),
             reasoning: true,
@@ -516,13 +534,6 @@ mod tests {
 
     use super::*;
     use serde_json::Value;
-    use serial_test::serial;
-    use std::sync::{Mutex, OnceLock};
-
-    fn env_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-    }
 
     fn expected_pi_provider_json(model_name: &str, endpoint_base_url: &str) -> Value {
         let mut model = json!({
@@ -536,7 +547,7 @@ mod tests {
             model_object.insert("contextWindow".to_owned(), json!(context_window));
         }
 
-        if let Some(max_tokens) = get_pi_max_tokens()
+        if let Some(max_tokens) = get_pi_max_tokens(get_pi_context_window())
             && let Value::Object(model_object) = &mut model
         {
             model_object.insert("maxTokens".to_owned(), json!(max_tokens));
@@ -608,30 +619,21 @@ mod tests {
     }
 
     #[test]
-    #[serial]
     fn test_pi_provider_uses_llama_cpp_context_env() {
-        let _guard = env_lock().lock().unwrap();
-        let old_max_ctx = env::var("TILES_LLAMA_CPP_MAX_CTX").ok();
-        unsafe {
-            env::set_var("TILES_LLAMA_CPP_MAX_CTX", "12000");
-        }
-
-        let config_str =
-            create_pi_provider_config("unsloth/gpt-oss-20b-GGUF", "http://127.0.0.1:6969/v1")
-                .unwrap();
+        let config_str = create_pi_provider_config_with_env(
+            "unsloth/gpt-oss-20b-GGUF",
+            "http://127.0.0.1:6969/v1",
+            &|name| match name {
+                "TILES_LLAMA_CPP_MAX_CTX" => Some("12000".to_owned()),
+                _ => None,
+            },
+        )
+        .unwrap();
         let config: Value = serde_json::from_str(&config_str).unwrap();
         let model = &config["providers"]["tiles"]["models"][0];
 
         assert_eq!(model["contextWindow"], 12_000);
         assert_eq!(model["maxTokens"], 12_000);
-
-        unsafe {
-            if let Some(value) = old_max_ctx {
-                env::set_var("TILES_LLAMA_CPP_MAX_CTX", value);
-            } else {
-                env::remove_var("TILES_LLAMA_CPP_MAX_CTX");
-            }
-        }
     }
 
     #[test]
