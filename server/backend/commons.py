@@ -50,7 +50,7 @@ def get_reasoning_effort(reasoning_effort_enum: ReasoningEffortEnum | None):
         case ReasoningEffortEnum.xhigh:
             reasoning_effort = ReasoningEffort.HIGH
         case _:
-            raise TypeError("unknown reasoing effort")
+            raise TypeError("unknown reasoning effort")
     return reasoning_effort
 
 
@@ -224,7 +224,7 @@ def _get_response_on_create(
         "output": [],
         "incomplete_details": None,
         "text": {"format": {"type": "text"}, "verbosity": "low"},
-        "paralell_tool_calls": 0,
+        "parallel_tool_calls": 0,
         "truncation": "disabled",
         "tool_choice": "auto",
         "error": {"code": "", "message": ""},
@@ -250,7 +250,7 @@ def _get_response_on_completed(
         "output": output,
         "incomplete_details": None,
         "text": {"format": {"type": "text"}, "verbosity": "low"},
-        "paralell_tool_calls": 0,
+        "parallel_tool_calls": 0,
         "truncation": "disabled",
         "tool_choice": "auto",
         "error": {"code": "", "message": ""},
@@ -286,7 +286,7 @@ def _get_response_on_error(
         "output": [],
         "incomplete_details": incomplete_details,
         "text": {"format": {"type": "text"}, "verbosity": "low"},
-        "paralell_tool_calls": 0,
+        "parallel_tool_calls": 0,
         "truncation": "disabled",
         "tool_choice": "auto",
         "error": error,

@@ -272,26 +272,23 @@ class LlamaRunner:
     def _find_gguf_file(self) -> Optional[Path]:
         """Discover the GGUF file inside model_path.
 
-        Returns the single .gguf file, or the most-recently-modified one
-        if there are several.
+        Returns the direct .gguf path or the single .gguf file in a directory.
         """
         if self.model_path.is_file() and self.model_path.suffix == ".gguf":
             return self.model_path
 
         gguf_files = list(self.model_path.glob("*.gguf"))
-        
+
         if not gguf_files:
             return None
         if len(gguf_files) == 1:
             return gguf_files[0]
 
-        # Multiple GGUFs -- pick the most recently modified
-        gguf_files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-        if self.verbose:
-            print(
-                f"Multiple GGUF files found, using newest: {gguf_files[0].name}"
-            )
-        return gguf_files[0]
+        names = ", ".join(sorted(p.name for p in gguf_files))
+        raise ValueError(
+            f"Multiple .gguf files found in {self.model_path}: {names}. "
+            "Use a model path that resolves to exactly one GGUF file."
+        )
 
     def _extract_stop_tokens(self):
         """Build centralised stop-token policy.
