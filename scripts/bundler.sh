@@ -20,6 +20,12 @@ case "${OS}" in
   linux) STACK_SPEC="server/stack/linux/venvstacks.toml" ;;
   *) echo "Unsupported OS for venvstack bundle: ${OS}" >&2; exit 1 ;;
 esac
+case "${ARCH}" in
+  x86_64) PI_ARCH="x64" ;;
+  aarch64|arm64) PI_ARCH="arm64" ;;
+  *) echo "Unsupported architecture for Pi bundle: ${ARCH}" >&2; exit 1 ;;
+esac
+PI_TARBALL="pi-${OS}-${PI_ARCH}.tar.gz"
 
 # Name for final tar.gz 
 
@@ -35,15 +41,16 @@ CLI_BIN_PATH="target/${TARGET}/${BINARY_NAME}"
   
 chmod +x "${CLI_BIN_PATH}"
 
-echo "Signing the Tiles binary..."
+if [[ "${OS}" == "darwin" ]]; then
+  echo "Signing the Tiles binary..."
 
-# Signing the tiles binary
-codesign --force \
-  --sign "$DEVELOPER_ID_APPLICATION"\
-  --options runtime \
-  --timestamp \
-  --strict \
-  "${CLI_BIN_PATH}"
+  codesign --force \
+    --sign "$DEVELOPER_ID_APPLICATION"\
+    --options runtime \
+    --timestamp \
+    --strict \
+    "${CLI_BIN_PATH}"
+fi
 
 
 mkdir -p "${DIST_DIR}/tmp"
@@ -51,27 +58,34 @@ mkdir -p "${DIST_DIR}/tmp"
 cp "${CLI_BIN_PATH}"  "${DIST_DIR}/tmp/"
 
 echo "Embedding Pi"
-# Copying pi artifacts into extracted pi folder
-cp pi-darwin-arm64.tar.gz "${DIST_DIR}/tmp/"
+if [[ ! -f "${PI_TARBALL}" ]]; then
+  echo "Missing Pi artifact: ${PI_TARBALL}" >&2
+  echo "Download or build it before bundling." >&2
+  exit 1
+fi
 
-tar -xvf "${DIST_DIR}/tmp/pi-darwin-arm64.tar.gz" -C "${DIST_DIR}/tmp"
+cp "${PI_TARBALL}" "${DIST_DIR}/tmp/"
 
-rm "${DIST_DIR}/tmp/pi-darwin-arm64.tar.gz"
+tar -xvf "${DIST_DIR}/tmp/${PI_TARBALL}" -C "${DIST_DIR}/tmp"
+
+rm "${DIST_DIR}/tmp/${PI_TARBALL}"
 
 # removing unnecessary files
 # rm -rf "${DIST_DIR}/tmp/pi/examples"
 
 # Signing the pi binary
 
-echo "Signing Pi binary..."
+if [[ "${OS}" == "darwin" ]]; then
+  echo "Signing Pi binary..."
 
-codesign --force \
-  --sign "$DEVELOPER_ID_APPLICATION" \
-  --options runtime \
-  --timestamp \
-  --entitlements entitleme.plist \
-  --strict \
-  "${DIST_DIR}/tmp/pi/pi" 
+  codesign --force \
+    --sign "$DEVELOPER_ID_APPLICATION" \
+    --options runtime \
+    --timestamp \
+    --entitlements entitleme.plist \
+    --strict \
+    "${DIST_DIR}/tmp/pi/pi"
+fi
 
 
 # flushing this folder, else the final zip will have previous app-server zips too (#84)

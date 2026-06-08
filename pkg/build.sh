@@ -10,9 +10,13 @@ TARGET="release"
 VERSION=$(grep '^version' tiles/Cargo.toml | head -1 | awk -F'"' '{print $2}')
 OS=$(uname -s | tr '[:upper:]' '[:lower:]')
 ARCH=$(uname -m)
+if [[ "${OS}" != "darwin" ]]; then
+  echo "pkg/build.sh builds the macOS .pkg installer only." >&2
+  echo "Use scripts/bundler.sh or 'just bundle' to create a Linux tarball." >&2
+  exit 1
+fi
 case "${OS}" in
   darwin) STACK_SPEC="server/stack/macos/venvstacks.toml" ;;
-  linux) STACK_SPEC="server/stack/linux/venvstacks.toml" ;;
   *) echo "Unsupported OS for venvstack bundle: ${OS}" >&2; exit 1 ;;
 esac
 
