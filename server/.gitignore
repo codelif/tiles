@@ -3,5 +3,7 @@ __pycache__/
 .venv/
 backend/__pycache__
 stack/_build
+stack/*/_build
+stack/*/requirements
 stack/stack_export
 stack_export_prod

@@ -78,7 +78,9 @@ done
 rm -rf *.tar.xz
 
 cpython3.13/bin/python cpython3.13/postinstall.py
-framework-mlx/bin/python framework-mlx/postinstall.py
+if [[ -x framework-mlx/bin/python ]]; then
+  framework-mlx/bin/python framework-mlx/postinstall.py
+fi
 app-server/bin/python app-server/postinstall.py
 
 rm -rf "${TMPDIR}"
