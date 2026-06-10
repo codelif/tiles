@@ -191,7 +191,17 @@ def _store_response(
 
 
 
+"""TODO: This current function has a similar setup that is used in MLX, in the future we
+might have to make a common function for them (and for the functions below). Things like:
+- get runner
+- build iterator
+- count input tokens
+- count output tokens
+- handle GenerationMetrics
+- Harmony prompt token rendering/logging
 
+These things are currently different in MLX, we will see how to make a common funcs outta these.
+"""
 async def generate_response_chat_stream(
     request: ResponsesRequest,
 ) -> AsyncGenerator[str, None]:
@@ -212,12 +222,6 @@ async def generate_response_chat_stream(
         )
         encoding = load_harmony_encoding(HarmonyEncodingName.HARMONY_GPT_OSS)
         prompt_tokens = encoding.render_conversation_for_completion(convo, Role.ASSISTANT)
-        logger.info(
-            "\n========== HARMONY PROMPT START ==========\n"
-            "%s\n"
-            "========== HARMONY PROMPT END ==========",
-            encoding.decode(prompt_tokens),
-        )
         input_tokens = len(prompt_tokens)
     else:
         input_tokens = runner.count_prompt_tokens(

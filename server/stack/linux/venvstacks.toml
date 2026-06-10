@@ -11,6 +11,14 @@ platforms = [
 name = "server"
 launch_module = "../../main.py"
 runtime = "cpython3.13"
+dynlib_exclude = [
+    "lib/libggml-base.so",
+    "lib/libggml-cpu.so",
+    "lib/libggml-cuda.so",
+    "lib/libggml.so",
+    "lib/libllama.so",
+    "lib/libmtmd.so",
+]
 requirements = [
     "fastapi==0.119.0",
     "uvicorn==0.38.0",
