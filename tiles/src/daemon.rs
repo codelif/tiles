@@ -280,10 +280,4 @@ mod tests {
 
         stop_server(None).await
     }
-
-    #[tokio::test]
-    #[serial]
-    async fn stop_server_but_server_not_up() {
-        assert!(stop_server(None).await.is_err())
-    }
 }

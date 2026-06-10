@@ -8,9 +8,11 @@ use std::{env, path::PathBuf};
 use anyhow::{Result, anyhow};
 use log::info;
 use rusqlite::Connection;
-use tilekit::accounts::{create_and_save_passkey, get_passkey};
 
-use crate::utils::config::{ConfigProvider, DefaultProvider, get_app_name};
+use crate::{
+    core::account::{create_and_save_passkey, get_passkey},
+    utils::config::{ConfigProvider, DefaultProvider, get_app_name},
+};
 use rusqlite_migration::{M, Migrations};
 
 #[derive(Debug)]
@@ -57,10 +59,12 @@ const COMMON_MIGRATION_ARRAY: &[M] = &[
             id TEXT PRIMARY KEY,
             did TEXT NOT NULL,
             token TEXT NOT NULL,
+            cid TEXT NOT NULL,
             created_at INTEGER NOT NULL,
-            updated_at INTEGER NOT NULL
+            updated_at INTEGER NOT NULL,
+            type TEXT NOT NULL
         );
-        CREATE INDEX idx_tokens_token ON tokens(did);
+        CREATE INDEX idx_tokens_did ON tokens(did);
         ",
     ),
 ];

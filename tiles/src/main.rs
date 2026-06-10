@@ -8,7 +8,7 @@ use tiles::{
         self,
         account::{
             atproto::{login, logout},
-            local::{add_token, generate_invocation_token, generate_token, verify_invocation},
+            local::{add_token, create_token},
         },
         network::{link, sync},
     },
@@ -62,8 +62,6 @@ const CLI_HELP_TEMPLATE: &str = concat!(
     "    health    Check the status of dependencies\n",
     "    server    Start or stop the daemon server\n",
     "    daemon    Configure daemon behavior\n\n",
-    "  Tilekit (Developer)\n",
-    "    optimize  Optimize the SYSTEM prompt in a Modelfile\n\n",
     "Options:\n",
     "  -h, --help       Show help\n",
     "  -V, --version    Show version\n\n",
@@ -102,9 +100,6 @@ enum Commands {
 
     #[command(flatten, next_help_heading = "System")]
     System(SystemCommands),
-
-    #[command(flatten, next_help_heading = "Tilekit (Developer)")]
-    Tilekit(TilekitCommands),
 }
 
 #[derive(Debug, Subcommand)]
@@ -287,19 +282,17 @@ enum LinkCommands {
     Disable {
         did: String,
     },
-    /// Start the daemon
+    /// List the peers connected locally
     ListPeers,
+
+    /// Creates a authorization token for syncing
     CreateToken {
         peer_did: String,
     },
-    AddToken {
+
+    /// Save the sync authorization token from peer
+    SaveToken {
         token: String,
-    },
-    GenerateInvoc {
-        delegation_token: String,
-    },
-    ValidateInvoc {
-        invocation_token: String,
     },
 }
 
@@ -335,6 +328,7 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
             };
 
             commands::run_setup_for_ftue(&run_args)
+                .await
                 .inspect_err(|e| eprintln!("Failed to setup Tiles due to {:?}", e))?;
             let _ = commands::try_app_update().await;
 
@@ -364,6 +358,7 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
                 pi: flags.pi,
             };
             commands::run_setup_for_ftue(&run_args)
+                .await
                 .inspect_err(|e| eprintln!("Failed to setup Tiles due to {:?}", e))?;
 
             let t = tokio::spawn(async move {
@@ -390,17 +385,8 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
         Some(Commands::Accounts(AccountCommandsGroup::Data(data))) => match data.command {
             DataCommands::SetPath { path } => commands::set_data(path.as_str()),
         },
-        Some(Commands::Tilekit(TilekitCommands::Optimize {
-            modelfile_path,
-            data,
-            model,
-        })) => {
-            let modelfile = commands::optimize(&modelfile_path, data, &model).await?;
-            std::fs::write(&modelfile_path, modelfile.to_string())?;
-            println!("Successfully updated {}", modelfile_path);
-        }
         Some(Commands::Accounts(AccountCommandsGroup::Account(account_args))) => {
-            commands::run_account_commands(account_args)?;
+            commands::run_account_commands(account_args).await?;
         }
         Some(Commands::System(SystemCommands::Update)) => {
             println!("Checking for updates...");
@@ -426,20 +412,11 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
                 show_peers(&db_conn)?;
             }
             LinkCommands::CreateToken { peer_did } => {
-                println!("{}", generate_token(&peer_did, &db_conn).await?);
+                println!("{}", create_token(&peer_did, &db_conn).await?);
             }
-            LinkCommands::AddToken { token } => {
+            LinkCommands::SaveToken { token } => {
                 let token = add_token(&token, &db_conn)?;
                 println!("Added the token from DID={}", token.did);
-            }
-            LinkCommands::GenerateInvoc { delegation_token } => {
-                println!(
-                    "{}",
-                    generate_invocation_token(&delegation_token, &db_conn).await?
-                );
-            }
-            LinkCommands::ValidateInvoc { invocation_token } => {
-                verify_invocation(&invocation_token).await?
             }
         },
         Some(Commands::Sync(SyncCommands::Sync { did })) => sync(did).await?,
@@ -448,7 +425,6 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
                 login(&db_conn, &handle).await?;
             }
             AtCommands::Logout => logout(&db_conn)?,
-            // AtCommands::Share => share_session(&db_conn).await?,
         },
     }
     Ok(())
