@@ -23,13 +23,17 @@ use rustyline::{Config, Editor, Helper};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::fs::{self, OpenOptions};
-use std::io::{self, BufRead, BufReader, Write};
+use std::io::{self};
 use std::path::PathBuf;
-use std::process::{Child, ChildStdout, Command};
-use std::process::{ChildStdin, Stdio};
+use std::process::Stdio;
+use std::str::FromStr;
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 use tilekit::modelfile::Modelfile;
 use tilekit::modelfile::Role;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::time::sleep;
 
 const MAX_LOAD_MODEL_RETRIES: u8 = 3;
@@ -91,15 +95,20 @@ enum PiResponse {
 
 #[derive(Serialize, Deserialize, Debug)]
 struct GetStateData {
-    model: Value,
+    model: PiModelInfo,
     #[serde(rename = "thinkingLevel")]
-    thinking_level: String,
+    pub thinking_level: String,
     #[serde(rename = "isStreaming")]
     is_streaming: bool,
     #[serde(rename = "sessionId")]
     session_id: String,
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+struct PiModelInfo {
+    id: String,
+    name: String,
+}
 #[derive(Serialize, Deserialize, Debug)]
 struct PiMessageUpdate {
     #[serde(rename = "assistantMessageEvent")]
@@ -179,6 +188,38 @@ enum AsstMsgEventType {
     Error,
 }
 
+#[derive(Clone, Copy)]
+enum ReasoningEffort {
+    High,
+    Medium,
+    Low,
+}
+
+enum InputCommandResponse {
+    WaitForNextLine,
+    ProcessNextInput,
+}
+impl FromStr for ReasoningEffort {
+    type Err = anyhow::Error;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "high" => Ok(ReasoningEffort::High),
+            "medium" => Ok(ReasoningEffort::Medium),
+            "low" => Ok(ReasoningEffort::Low),
+            _ => Err(anyhow!("Invalid Reasoning value, use /help".to_owned())),
+        }
+    }
+}
+
+impl From<ReasoningEffort> for String {
+    fn from(value: ReasoningEffort) -> Self {
+        match value {
+            ReasoningEffort::High => "high".to_owned(),
+            ReasoningEffort::Medium => "medium".to_owned(),
+            ReasoningEffort::Low => "low".to_owned(),
+        }
+    }
+}
 const PY_PORT: u32 = 6969;
 
 pub async fn run(run_args: RunArgs, db_conn: &Dbconn) -> Result<()> {
@@ -227,17 +268,29 @@ pub async fn start_server_daemon() -> Result<()> {
         .open(data_dir.join("logs/server.err.log"))?;
     let server_path = server_dir.join("stack_export_prod/app-server/bin/python");
     server_dir.pop();
-    let child = Command::new(server_path)
-        .args(["-m", "server.main"])
-        .current_dir(server_dir)
-        .stdin(Stdio::null())
-        .stdout(Stdio::from(stdout_log))
-        .stderr(Stdio::from(stderr_log))
-        .spawn()
-        .expect("failed to start server");
+    let child = unsafe {
+        Command::new(server_path)
+            .args(["-m", "server.main"])
+            .current_dir(server_dir)
+            .stdin(Stdio::null())
+            .stdout(Stdio::from(stdout_log))
+            .stderr(Stdio::from(stderr_log))
+            .pre_exec(|| {
+                if libc::setsid() == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            })
+            .spawn()
+            .expect("failed to start server")
+    };
 
-    std::fs::write(pid_file, child.id().to_string()).expect("Failed to write to pid file");
-    println!("Server started with PID {}", child.id());
+    std::fs::write(pid_file, child.id().expect("Not child Id").to_string())
+        .expect("Failed to write to pid file");
+    println!(
+        "Server started with PID {}",
+        child.id().expect("No child Id")
+    );
     Ok(())
 }
 
@@ -257,7 +310,9 @@ pub async fn stop_server_daemon() -> Result<()> {
     Command::new("kill")
         .arg(pid.trim())
         .status()
+        .await
         .context("Failed to initiate kill commad")?;
+
     std::fs::remove_file(pid_file).context("Failed to removed pid file")?;
     println!("Server stopped.");
     Ok(())
@@ -308,6 +363,12 @@ enum CommandType {
     Sessions,
     #[serde(rename = "resume")]
     Resume,
+    #[serde(rename = "reasoning")]
+    Reasoning,
+    #[serde(rename = "set_thinking_level")]
+    SetThinkingLevel,
+    #[serde(rename = "abort")]
+    Abort,
     #[serde(other)]
     Unknown,
 }
@@ -337,17 +398,19 @@ struct ReplSession {
     pub current_modelname: String,
     pub last_chat_id: Option<String>,
     pub session_started: bool,
+    pub reasoning: ReasoningEffort,
 }
 
 impl ReplSession {
-    pub fn new(session_id: &str, model_name: &str) -> Self {
+    pub fn new(state: &GetStateData) -> Self {
         ReplSession {
-            session_id: session_id.to_owned(),
+            session_id: state.session_id.clone(),
             resume_session_pending: false,
             resumed_session: String::from(""),
-            current_modelname: model_name.to_owned(),
+            current_modelname: state.model.name.to_owned(),
             last_chat_id: None,
             session_started: false,
+            reasoning: state.thinking_level.parse().unwrap_or(ReasoningEffort::Low),
         }
     }
 
@@ -391,6 +454,10 @@ fn show_help() {
         (
             "Session",
             vec![
+                (
+                    "/reasoning <effort>",
+                    "Sets the reasoning effort of current model (high, medium, low)",
+                ),
                 ("/status", "Show the current session state"),
                 ("/sessions", "List all available sessions"),
                 (
@@ -476,16 +543,21 @@ async fn start_repl(modelfile: &Modelfile, _run_args: &RunArgs, db_conn: &Dbconn
         .context("Failed to create editor")?;
     editor.set_helper(Some(TilesHinter));
 
+    let running = Arc::new(AtomicBool::new(true));
+    let r = running.clone();
+
+    ctrlc::set_handler(move || {
+        r.store(false, std::sync::atomic::Ordering::SeqCst);
+    })
+    .expect("Error setting Ctrl-C handler");
+
     // Setting up Pi rpc process handles
     let mut pi_process = start_pi_rpc(&modelname, &system_prompt)?;
     let pi_stdin = pi_process.stdin.as_mut().unwrap();
     let mut pi_stdout = pi_process.stdout.take().expect("stdout");
-    let inti_cmd_payload = get_command_payload(CommandType::Status);
-    send_to_pi(pi_stdin, inti_cmd_payload)
-        .inspect_err(|_e| eprintln!("sending command to  pi failed"))?;
 
-    let pi_session_id = get_initial_session_id(pi_stdin, &mut pi_stdout)?;
-    let mut repl_session = ReplSession::new(&pi_session_id, &modelname);
+    let pi_session_state = get_pi_state(pi_stdin, &mut pi_stdout).await?;
+    let mut repl_session = ReplSession::new(&pi_session_state);
 
     // The great REPL loop
     loop {
@@ -515,18 +587,30 @@ async fn start_repl(modelfile: &Modelfile, _run_args: &RunArgs, db_conn: &Dbconn
                 break;
             }
             InputType::Prompt => {
-                handle_input_prompt(pi_stdin, &mut repl_session, &input)?;
+                handle_input_prompt(pi_stdin, &mut repl_session, &input).await?;
             }
             InputType::Command(cmd) => {
-                handle_input_commands(cmd, &mut repl_session, db_conn, &modelname).await?;
-                continue;
+                let res = handle_input_commands(cmd, &mut repl_session, db_conn, pi_stdin).await?;
+
+                if let InputCommandResponse::ProcessNextInput = res {
+                    continue;
+                }
             }
         }
 
         // Reads the output from Pi and process and responds to the repl
-        let reader = BufReader::new(&mut pi_stdout);
-        for line in reader.lines() {
-            let line = line?;
+        let mut reader = BufReader::new(&mut pi_stdout).lines();
+
+        while let Some(line) = reader.next_line().await? {
+            if !running.load(std::sync::atomic::Ordering::SeqCst) {
+                info!("Ctrlc detected, aborting Pi ops");
+                let end_payload = json!({
+                    "type": "abort",
+                });
+                send_to_pi(pi_stdin, end_payload).await?;
+                running.store(true, std::sync::atomic::Ordering::SeqCst);
+                continue;
+            }
             let response: PiResponse =
                 serde_json::from_str(&line).context("Failed to parse Pi response")?;
             match response {
@@ -544,7 +628,8 @@ async fn start_repl(modelfile: &Modelfile, _run_args: &RunArgs, db_conn: &Dbconn
                         pi_stdin,
                         db_conn,
                         &current_user,
-                    )?;
+                    )
+                    .await?;
                     break;
                 }
                 PiResponse::TurnEnd(_turn_event) => {
@@ -556,10 +641,25 @@ async fn start_repl(modelfile: &Modelfile, _run_args: &RunArgs, db_conn: &Dbconn
                             CommandType::Unknown => {
                                 continue;
                             }
-                            cmd => process_command(cmd, response_msg.data)?,
+                            CommandType::Abort => {
+                                info!("Abort command received");
+                                // continuing as we need to process the
+                                // agent_end event from Pi
+                                continue;
+                            }
+                            _ => {
+                                process_command(
+                                    response_msg,
+                                    &mut repl_session,
+                                    pi_stdin,
+                                    &mut pi_stdout,
+                                )
+                                .await?;
+                                break;
+                            }
                         }
                     } else {
-                        println!("Command failed")
+                        println!("Command failed, try again")
                     }
                     break;
                 }
@@ -721,51 +821,51 @@ fn start_pi_rpc(model_name: &str, system_prompt: &str) -> Result<Child> {
 
     let pi_exec_path = tiles_lib_dir.join("pi/pi");
 
-    let pi_process = Command::new(pi_exec_path)
-        .arg("--mode")
-        .arg("rpc")
-        .arg("--append-system-prompt")
-        .arg(system_prompt)
-        .arg("--no-session")
-        .env("PI_CODING_AGENT_DIR", pi_agent_dir)
-        .env("PI_OFFLINE", "true")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .expect("failed to run Pi");
-
+    let pi_process = unsafe {
+        Command::new(pi_exec_path)
+            .arg("--mode")
+            .arg("rpc")
+            .arg("--append-system-prompt")
+            .arg(system_prompt)
+            .arg("--no-session")
+            .env("PI_CODING_AGENT_DIR", pi_agent_dir)
+            .env("PI_OFFLINE", "true")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .pre_exec(|| {
+                if libc::setsid() == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            })
+            .spawn()
+            .expect("failed to run Pi")
+    };
     Ok(pi_process)
 }
 
-fn send_to_pi(pi_child_stdin: &mut ChildStdin, payload_json: Value) -> Result<()> {
+async fn send_to_pi(pi_child_stdin: &mut ChildStdin, payload_json: Value) -> Result<()> {
     let payload_str = format!("{}\n", serde_json::to_string(&payload_json)?);
-
-    pi_child_stdin.write_all(payload_str.as_bytes()).unwrap();
-    pi_child_stdin.flush()?;
+    pi_child_stdin.write_all(payload_str.as_bytes()).await?;
+    pi_child_stdin.flush().await?;
     Ok(())
 }
 
-fn get_command_payload(cmd: CommandType) -> Value {
-    match cmd {
-        CommandType::Unknown => {
-            json!({
-                "type": "none"
-            })
-        }
-        CommandType::Status => {
-            json!({
-                "type": "get_state",
-            })
-        }
-        // catch-all cases are where prolly its not a Pi command
-        _ => json!([]),
+async fn process_command(
+    response_msg: PiResponseMessage,
+    repl_session: &mut ReplSession,
+    pi_stdin: &mut ChildStdin,
+    pi_stdout: &mut ChildStdout,
+) -> Result<()> {
+    if let CommandType::SetThinkingLevel = response_msg.command {
+        let state = get_pi_state(pi_stdin, pi_stdout).await?;
+        repl_session.reasoning = state
+            .thinking_level
+            .parse::<ReasoningEffort>()
+            .context("Failed to parse reasoning effort")?;
+        println!("Reasoning settings updated successfully")
     }
-}
 
-fn process_command(_cmd: CommandType, _data: Option<Value>) -> Result<()> {
-    // if let CommandType::Unknown = cmd {
-    //     ()
-    // }
     Ok(())
 }
 
@@ -910,12 +1010,12 @@ fn load_session(db_conn: &Dbconn, args: &[&str], repl_session: &mut ReplSession)
     Ok(())
 }
 
-fn show_status(session_id: &str, modelname: &str, db_conn: &Dbconn) -> Result<()> {
+fn show_status(repl_session: &ReplSession, db_conn: &Dbconn) -> Result<()> {
     let cwd_pathbuf = std::env::current_dir()?;
     let cwd = cwd_pathbuf.to_string_lossy();
     let logged_in_atproto = fetch_logged_in_data(&db_conn.common)?;
-    let session_data: Option<Session> = fetch_session(&db_conn.chat, session_id).ok();
-    let status_lines = build_status_lines(&cwd, session_data, modelname, logged_in_atproto);
+    let session_data: Option<Session> = fetch_session(&db_conn.chat, &repl_session.session_id).ok();
+    let status_lines = build_status_lines(&cwd, session_data, repl_session, logged_in_atproto);
 
     println!("\n");
     for line in status_lines {
@@ -927,7 +1027,7 @@ fn show_status(session_id: &str, modelname: &str, db_conn: &Dbconn) -> Result<()
 fn build_status_lines(
     cwd: &str,
     session_data: Option<Session>,
-    modelname: &str,
+    repl_session: &ReplSession,
     logged_in_atproto: Option<crate::core::account::atproto::AtprotoAuthData>,
 ) -> Vec<String> {
     let mut status_map: Vec<(&str, String)> = vec![];
@@ -937,7 +1037,8 @@ fn build_status_lines(
         "Session not started yet".to_owned()
     };
     status_map.push(("Session", session_status));
-    status_map.push(("Model", modelname.to_owned()));
+    status_map.push(("Model", repl_session.current_modelname.clone()));
+    status_map.push(("Reasoning", String::from(repl_session.reasoning)));
     status_map.push(("Working Directory", cwd.to_owned()));
     let at_proto_status = if let Some(at_auth_user) = logged_in_atproto {
         format!(
@@ -1022,24 +1123,28 @@ fn handle_pi_message_update(msg_update: PiMessageUpdate) {
     }
 }
 
-fn get_initial_session_id(
+async fn get_pi_state(
     pi_stdin: &mut ChildStdin,
     pi_stdout: &mut ChildStdout,
-) -> Result<String> {
-    let inti_cmd_payload = get_command_payload(CommandType::Status);
-    send_to_pi(pi_stdin, inti_cmd_payload)
+) -> Result<GetStateData> {
+    let init_cmd_payload = json!({
+        "type": "get_state",
+    });
+    send_to_pi(pi_stdin, init_cmd_payload)
+        .await
         .inspect_err(|_e| eprintln!("sending command to  pi failed"))?;
 
-    let mut pi_session_state = String::new();
-    let mut reader = BufReader::new(pi_stdout);
-    let _ = reader
-        .read_line(&mut pi_session_state)
-        .context("Failed reading pi session state")?;
-    let response: PiResponse = serde_json::from_str(&pi_session_state)?;
-    if let PiResponse::Response(msg) = response {
-        let state: GetStateData =
-            serde_json::from_value(msg.data.expect("get state parsing failed"))?;
-        Ok(state.session_id)
+    let reader = BufReader::new(pi_stdout);
+
+    if let Some(line) = reader.lines().next_line().await? {
+        let response: PiResponse = serde_json::from_str(&line)?;
+        if let PiResponse::Response(msg) = response {
+            let state: GetStateData =
+                serde_json::from_value(msg.data.expect("get state parsing failed"))?;
+            Ok(state)
+        } else {
+            Err(anyhow!("Failed to fetch initial state from Pi"))
+        }
     } else {
         Err(anyhow!("Failed to fetch session_id from Pi"))
     }
@@ -1050,8 +1155,8 @@ async fn handle_repl_exit(pi_stdin: &mut ChildStdin) -> Result<()> {
         "type": "abort",
     });
     let payload_str = format!("{}\n", serde_json::to_string(&end_payload)?);
-    pi_stdin.write_all(payload_str.as_bytes())?;
-    pi_stdin.flush()?;
+    pi_stdin.write_all(payload_str.as_bytes()).await?;
+    pi_stdin.flush().await?;
     println!("Exiting interactive mode");
     if !cfg!(debug_assertions) {
         let _res = stop_server_daemon().await;
@@ -1059,7 +1164,7 @@ async fn handle_repl_exit(pi_stdin: &mut ChildStdin) -> Result<()> {
     Ok(())
 }
 
-fn handle_input_prompt(
+async fn handle_input_prompt(
     pi_stdin: &mut ChildStdin,
     repl_session: &mut ReplSession,
     input: &str,
@@ -1079,53 +1184,63 @@ fn handle_input_prompt(
         "type": "prompt",
         "message": final_input
     });
-    send_to_pi(pi_stdin, payload)
+    send_to_pi(pi_stdin, payload).await
 }
 
 async fn handle_input_commands(
     cmd: String,
     repl_session: &mut ReplSession,
     db_conn: &Dbconn,
-    modelname: &str,
-) -> Result<()> {
+    pi_stdin: &mut ChildStdin,
+) -> Result<InputCommandResponse> {
     let args: Vec<&str> = cmd.split(" ").collect();
     let main_cmd = args.first().expect("Main command should be there");
 
     let cmd_json = json!(main_cmd);
 
     let command: CommandType = serde_json::from_value(cmd_json)?;
-    match command {
+    let res = match command {
         CommandType::Unknown => {
             println!(
                 "Unknown command: /{}. Type /help for available commands.",
                 cmd
             );
+            InputCommandResponse::ProcessNextInput
         }
         CommandType::Share => {
             process_share_session(db_conn, &repl_session.session_id, &args).await?;
+            InputCommandResponse::ProcessNextInput
         }
         CommandType::Sessions => {
             show_session_info(db_conn)?;
+            InputCommandResponse::ProcessNextInput
         }
         CommandType::Resume => {
             if let Err(err) = load_session(db_conn, &args, repl_session) {
                 println!("{}", err)
-            }
+            };
+            InputCommandResponse::ProcessNextInput
         }
         CommandType::Status => {
-            if let Err(err) = show_status(&repl_session.session_id, modelname, db_conn) {
+            if let Err(err) = show_status(repl_session, db_conn) {
                 println!("Failed to display status due to {}", err);
+            };
+            InputCommandResponse::ProcessNextInput
+        }
+        CommandType::Reasoning => {
+            if let Err(err) = set_reasoning_effort(pi_stdin, &args).await {
+                println!("Failed to set reasoning effort due to {}", err);
+                InputCommandResponse::ProcessNextInput
+            } else {
+                InputCommandResponse::WaitForNextLine
             }
         }
-    }
-    Ok(())
+        _ => InputCommandResponse::ProcessNextInput,
+    };
+    Ok(res)
 }
 
-// fn process_pi_turn_event() {
-//     info!("Turn end");
-// }
-
-fn process_pi_agent_end_event(
+async fn process_pi_agent_end_event(
     repl_session: &mut ReplSession,
     agent_end_event: PiAgentEndEvent,
     pi_stdin: &mut ChildStdin,
@@ -1142,7 +1257,7 @@ fn process_pi_agent_end_event(
         let payload = json!({
             "type": "abort"
         });
-        send_to_pi(pi_stdin, payload)?;
+        send_to_pi(pi_stdin, payload).await?;
         println!("An issue occurred, please try again!");
     }
 
@@ -1222,6 +1337,31 @@ fn get_pi_msg_content(msgs: Vec<PiMsgContent>) -> String {
     content.join("\n")
 }
 
+async fn set_reasoning_effort(pi_stdin: &mut ChildStdin, args: &[&str]) -> Result<()> {
+    let args = if let Some((_main_command, sub_commands)) = args.split_first() {
+        sub_commands
+    } else {
+        return Err(anyhow!("Not a valid command"));
+    };
+
+    let reasoning_effort: ReasoningEffort = if args.is_empty() {
+        return Err(anyhow!(
+            "Please provide Reasoning effort (low, medium, high)"
+        ));
+    } else {
+        args[0].parse()?
+    };
+
+    let effort_str = String::from(reasoning_effort);
+
+    let pi_cmd = json!({
+        "type": "set_thinking_level",
+        "level": &effort_str
+    });
+
+    send_to_pi(pi_stdin, pi_cmd).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1230,13 +1370,24 @@ mod tests {
     use rusqlite::Connection;
     #[test]
     fn status_lines_show_defaults_without_session_or_atproto_login() {
-        let lines = build_status_lines("/tmp/tiles", None, "test-model", None);
+        let state = GetStateData {
+            model: PiModelInfo {
+                id: String::from("model"),
+                name: String::from("model"),
+            },
+            thinking_level: "low".to_string(),
+            is_streaming: true,
+            session_id: "def".to_string(),
+        };
+        let repl_session_b = ReplSession::new(&state);
+        let lines = build_status_lines("/tmp/tiles", None, &repl_session_b, None);
 
         assert_eq!(
             lines,
             vec![
                 "Session:          \tSession not started yet",
-                "Model:            \ttest-model",
+                "Model:            \tmodel",
+                "Reasoning:        \tlow",
                 "Working Directory:\t/tmp/tiles",
                 "ATProto:          \tNot logged-in",
             ]
@@ -1253,17 +1404,27 @@ mod tests {
         let session = fetch_session(&db_conn.chat, "session-1").ok();
         let atproto_login =
             fetch_logged_in_data(&db_conn.common).expect("login lookup should succeed");
-        let lines = build_status_lines("/work/tiles", session, "llama", atproto_login);
+        let state = GetStateData {
+            model: PiModelInfo {
+                id: String::from("llam"),
+                name: String::from("llama"),
+            },
+            thinking_level: "low".to_string(),
+            is_streaming: true,
+            session_id: "def".to_string(),
+        };
+        let repl_session_b = ReplSession::new(&state);
+        let lines = build_status_lines("/work/tiles", session, &repl_session_b, atproto_login);
 
         assert!(lines[0].starts_with("Session:          \t"));
         assert!(lines[0].contains("First chat"));
         assert!(lines[0].contains("session-1"));
         assert_eq!(lines[1], "Model:            \tllama");
-        assert_eq!(lines[2], "Working Directory:\t/work/tiles");
-        assert!(lines[3].starts_with("ATProto:          \t"));
-        assert!(lines[3].contains("@"));
-        assert!(lines[3].contains("alice.test"));
-        assert!(lines[3].contains("did:plc:alice"));
+        assert_eq!(lines[3], "Working Directory:\t/work/tiles");
+        assert!(lines[4].starts_with("ATProto:          \t"));
+        assert!(lines[4].contains("@"));
+        assert!(lines[4].contains("alice.test"));
+        assert!(lines[4].contains("did:plc:alice"));
     }
 
     fn setup_db_conn() -> Dbconn {
@@ -1282,7 +1443,16 @@ mod tests {
 
     #[test]
     fn test_saving_valid_agent_session() {
-        let mut repl_session = ReplSession::new("abc", "model");
+        let state = GetStateData {
+            model: PiModelInfo {
+                id: String::from("model"),
+                name: String::from("model"),
+            },
+            thinking_level: "low".to_string(),
+            is_streaming: true,
+            session_id: "abc".to_string(),
+        };
+        let mut repl_session = ReplSession::new(&state);
 
         let db_conn = setup_db_conn_v2();
         let current_user = create_user();
@@ -1369,7 +1539,16 @@ mod tests {
     #[test]
     fn test_saving_session_after_resuming() {
         // session 1 - abc
-        let mut repl_session = ReplSession::new("abc", "model");
+        let state = GetStateData {
+            model: PiModelInfo {
+                id: String::from("model"),
+                name: String::from("model"),
+            },
+            thinking_level: "low".to_string(),
+            is_streaming: true,
+            session_id: "abc".to_string(),
+        };
+        let mut repl_session = ReplSession::new(&state);
 
         let db_conn = setup_db_conn_v2();
         let current_user = create_user();
@@ -1454,7 +1633,16 @@ mod tests {
 
         // session 2: def
 
-        let mut repl_session_b = ReplSession::new("def", "model");
+        let state = GetStateData {
+            model: PiModelInfo {
+                id: String::from("model"),
+                name: String::from("model"),
+            },
+            thinking_level: "low".to_string(),
+            is_streaming: true,
+            session_id: "def".to_string(),
+        };
+        let mut repl_session_b = ReplSession::new(&state);
 
         let agent_end_event = PiAgentEndEvent {
             messages: vec![

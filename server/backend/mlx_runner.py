@@ -32,7 +32,7 @@ from openai_harmony import (
 )
 
 from ..reasoning_utils import ReasoningExtractor, StreamingReasoningParser
-from ..schemas import GenerationMetrics
+from ..schemas import GenerationMetrics, ToolCallStart
 
 
 def get_model_context_length(model_path: str) -> int:
@@ -449,7 +449,7 @@ class MLXRunner:
         top_p: float = 0.9,
         repetition_penalty: float = 1.1,
         repetition_context_size: int = 20,
-    ) -> Iterator[str]:
+    ) -> Iterator[str | ToolCallStart]:
         if not self.model or not self.tokenizer:
             raise RuntimeError("Model not loaded. Call load_model() first.")
 
@@ -504,8 +504,11 @@ class MLXRunner:
                 yield "**[Reasoning]**\n\n"
 
             if is_commentary is None and parser.current_channel == "commentary":
+                if not parser.current_recipient:
+                    # No business with an empty tool name
+                    continue
                 is_commentary = True
-                yield "**[ToolCall]**\n\n"
+                yield ToolCallStart(name=parser.current_recipient or "bash")
 
             if is_final is None and parser.current_channel == "final":
                 is_final = True
