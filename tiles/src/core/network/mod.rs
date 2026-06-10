@@ -445,7 +445,6 @@ pub async fn sync(did: Option<String>) -> Result<()> {
     let tx = create_sync_channel();
     if let Some(receiver_did) = did {
         // INITIATOR BLOCK
-
         if let Err(_) = get_user_info(&user_db_conn, &receiver_did)
             && !is_online
         {

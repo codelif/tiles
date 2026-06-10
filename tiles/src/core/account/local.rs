@@ -1268,7 +1268,6 @@ pub mod tests {
                 .is_ok()
         );
     }
-
     pub fn setup_db_conn_v2() -> Dbconn {
         Dbconn {
             chat: crate::core::chats::tests::setup_db_schema(),
