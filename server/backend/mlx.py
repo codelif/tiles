@@ -233,7 +233,7 @@ async def generate_response_chat_stream(
                 )
                 yield resp_str
             elif state == "toolcall":
-                if content_index == 0 and tool_name:
+                if content_index == 0:
                     resp_str, sequence_number = _process_output_item_added(
                         "function_call",
                         tool_id,
@@ -245,19 +245,18 @@ async def generate_response_chat_stream(
                     yield resp_str
                 # To avoid toolcall tag in the final arguments txt
                 if content_index != 0:
-                    tool_call_text += token
-                    if tool_name:
-                        output_item = OutputItemDeltaModel(
-                            item_name="function_call_arguments",
-                            item_id=tool_id,
-                            index=output_index,
-                            delta=token,
-                            content_index=content_index,
-                        )
-                        resp_str, sequence_number = _process_output_item_delta(
-                            output_item, sequence_number
-                        )
-                        yield resp_str
+                    tool_call_text += token      
+                    output_item = OutputItemDeltaModel(
+                        item_name="function_call_arguments",
+                        item_id=tool_id,
+                        index=output_index,
+                        delta=token,
+                        content_index=content_index,
+                    )
+                    resp_str, sequence_number = _process_output_item_delta(
+                        output_item, sequence_number
+                    )
+                    yield resp_str
             elif state == "answer":
                 if content_index == 0:
                     resp_str, sequence_number = _process_output_item_added(
