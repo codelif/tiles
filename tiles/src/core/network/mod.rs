@@ -8,7 +8,7 @@ use std::{
     time::Duration,
 };
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use axum::body::Bytes;
 use futures_util::{StreamExt, TryStreamExt};
 use iroh::{
@@ -26,9 +26,7 @@ use iroh_gossip::{
 
 use log::info;
 use rusqlite::Connection;
-use tilekit::accounts::{
-    get_did_from_public_key, get_public_key_from_did, get_random_bytes, get_random_bytes_32,
-};
+
 use tokio::{
     sync::{
         mpsc::{self},
@@ -41,13 +39,14 @@ use uuid::Uuid;
 
 use crate::core::{
     account::{
-        self,
+        self, get_did_from_public_key, get_public_key_from_did, get_random_bytes,
+        get_random_bytes_32,
         local::{
-            create_dummy_user, get_app_secret_key, get_current_user, get_user_info,
-            save_peer_account_db,
+            create_invocation_token, fetch_token, get_app_secret_key, get_current_user,
+            get_user_info, save_peer_account_db, verify_invocation,
         },
     },
-    chats::{SyncOp, create_sync_channel},
+    chats::{SyncOp, create_db_sync_channel},
     network::ticket::{EndpointUserData, LinkTicket},
     storage::db::{DBTYPE, get_db_conn},
 };
@@ -98,12 +97,16 @@ enum MessageBody {
     },
     SyncStart {
         last_row_counter: Option<i64>,
+        invocation_token: String,
     },
     SyncSendDeltaInfo {
         blob_ticket: String,
         last_row_counter: Option<i64>,
     },
     SyncEnd,
+    SyncRejected {
+        reason: String,
+    },
 }
 
 pub async fn link(ticket: Option<String>) -> Result<()> {
@@ -175,7 +178,7 @@ pub async fn link(ticket: Option<String>) -> Result<()> {
         // Its better to have unique session'ed channels while
         // when the communication is over internet
         let topic_id = if is_online {
-            TopicId::from_bytes(get_random_bytes_32())
+            TopicId::from_bytes(get_random_bytes_32()?)
         } else {
             create_topic_id(DEVICE_LINK_LOCAL_TOPIC)
         };
@@ -309,8 +312,7 @@ async fn subsribe_loop(
                     input.lock().unwrap().clear();
 
                     sender.broadcast(link_res_resp.to_bytes().into()).await?;
-                    // Adding a delay to prevent the risk od closing the endpoint
-                    // before we send the msg
+                    // Adding a delay to prevent the risk of closing the endpoint before we send the msg via the above broadcast
                     sleep(Duration::from_secs(5)).await;
                     link_main_sender.send(0).await?;
                 }
@@ -322,7 +324,7 @@ async fn subsribe_loop(
                     {
                         println!("Failed to add the peer locally due to {:?}", err);
                     }
-                    sleep(Duration::from_secs(5)).await;
+
                     link_main_sender.send(0).await?;
                 }
 
@@ -331,7 +333,6 @@ async fn subsribe_loop(
                         "Oops looks like your link request has been rejected by {}({}),\nreason: {},\n Try again",
                         msg.from_nickname, msg.from_did, reason
                     );
-                    sleep(Duration::from_secs(5)).await;
                     link_main_sender.send(0).await?;
                 }
                 msg_body => {
@@ -343,9 +344,10 @@ async fn subsribe_loop(
     Ok(())
 }
 
+/// Handles the iroh gossip eventd for the sync process
 async fn sync_subscribe_loop(
     mut receiver: GossipReceiver,
-    sender: GossipSender,
+    network_sender: GossipSender,
     user: account::local::User,
     store: MemStore,
     endpoint: Endpoint,
@@ -370,17 +372,15 @@ async fn sync_subscribe_loop(
             match msg.body {
                 MessageBody::SyncStart {
                     last_row_counter: _,
+                    invocation_token: _,
                 } => {
                     info!("Received sync start event...");
-                    on_sync_start_event(
-                        &sender,
-                        &store,
-                        &msg,
-                        pub_key,
-                        &user,
-                        &sync_db_channel_sender,
-                    )
-                    .await?;
+                    let senders: (
+                        &tokio::sync::mpsc::Sender<SyncOp>,
+                        &tokio::sync::mpsc::Sender<u8>,
+                    ) = (&sync_db_channel_sender, &sync_main_sender);
+                    on_sync_start_event(&network_sender, &store, &msg, pub_key, &user, senders)
+                        .await?;
                 }
                 MessageBody::SyncSendDeltaInfo {
                     blob_ticket: _,
@@ -391,13 +391,25 @@ async fn sync_subscribe_loop(
                         &tokio::sync::mpsc::Sender<u8>,
                     ) = (&sync_db_channel_sender, &sync_main_sender);
                     on_sync_send_delta_info(
-                        &sender, &store, &msg, pub_key, &user, &endpoint, senders,
+                        &network_sender,
+                        &store,
+                        &msg,
+                        pub_key,
+                        &user,
+                        &endpoint,
+                        senders,
                     )
                     .await?;
                 }
                 MessageBody::SyncEnd => {
                     println!("Sync completed..., exiting..");
-                    sleep(Duration::from_secs(5)).await;
+                    sync_main_sender.send(0).await?;
+                }
+                MessageBody::SyncRejected { reason } => {
+                    println!(
+                        "Oops looks like your sync request has been rejected by {}({}),\nreason: {},\n Try again",
+                        msg.from_nickname, msg.from_did, reason
+                    );
                     sync_main_sender.send(0).await?;
                 }
                 msg_body => {
@@ -429,72 +441,105 @@ async fn create_endpoint(user: &account::local::User) -> Result<Endpoint> {
     }
 }
 
+/// Entry point for the sync operation
+///
+/// if valid DID is passed, function will be in initiator mode
+/// else will be in listening mode.
 pub async fn sync(did: Option<String>) -> Result<()> {
     let user_db_conn = get_db_conn(&DBTYPE::COMMON)?;
     let user = get_current_user(&user_db_conn)?;
     let endpoint = create_endpoint(&user).await?;
     let is_online = is_online(&endpoint).await;
+
+    // handling the endpoint lookup separately for offline network using
+    // mdns
     if !is_online {
         let mdns = address_lookup::mdns::MdnsAddressLookup::builder().build(endpoint.id())?;
         endpoint.address_lookup()?.add(mdns.clone());
     }
-    let (sendx, mut recvx) = mpsc::channel(1);
-    let tx = create_sync_channel();
+
+    // Channel to communicate from the `sync_subscribe_loop`, which is a concurrent process, mainly to gracefully exit
+    let (sync_main_sender, mut sync_main_receiver) = mpsc::channel(1);
+
+    // Creates a channel to communicate with the Database and pass the
+    // sender across the tokio tasks
+    let db_channel_sender = create_db_sync_channel();
+
     if let Some(receiver_did) = did {
         // INITIATOR BLOCK
-        // The sync gossip topic is basically derived from the receiver's
-        // DID, so that initiator's can directly connect w/o any
-        // initial handshake
-        let receiver_pub_key = get_public_key_from_did(&receiver_did)?;
-        let receiver_user = if let Ok(receiver_user) = get_user_info(&user_db_conn, &receiver_did) {
-            receiver_user
-        } else {
-            if cfg!(debug_assertions) == false {
-                eprintln!("The DID {} is not a linked peer", receiver_did);
+
+        // We only check if peer is already linked only for offline sync
+        if let Err(_) = get_user_info(&user_db_conn, &receiver_did)
+            && !is_online
+        {
+            eprintln!("The DID {} is not a linked peer", receiver_did);
+            return Ok(());
+        }
+
+        let invocation_token = if is_online {
+            let token_delegated = if let Ok(token_resp) = fetch_token(
+                &receiver_did,
+                &user_db_conn,
+                account::local::TokenType::Sync,
+            ) && let Some(token) = token_resp
+            {
+                token
+            } else {
+                eprintln!("No sync authorization token found for {}", receiver_did);
                 return Ok(());
-            }
-            info!("creating a dummy user");
-            create_dummy_user()
+            };
+            create_invocation_token(&token_delegated.token, &user_db_conn).await?
+        } else {
+            // We don't use invocation token in offline, so providing a dummy
+            String::from("offline token")
         };
+
+        let receiver_pub_key = get_public_key_from_did(&receiver_did)?;
 
         let receiver_endpoint_id = PublicKey::from_bytes(&receiver_pub_key)?;
         info!("receiver endpoint id {:?}", receiver_endpoint_id);
+
+        // The sync gossip topic is basically derived from the receiver's
+        // DID, so that initiator's can directly connect w/o any
+        // initial handshake
         let sync_topic = format!("sync:{}", receiver_did);
         let sync_topic_id = create_topic_id(&sync_topic);
 
-        let (sender, mut receiver, recv_router, store) =
+        let (network_sender, mut network_receiver, recv_router, store) =
             create_sync_network(&endpoint, sync_topic_id, vec![receiver_endpoint_id]).await?;
+
         println!("\nConnecting to {}.....", receiver_did);
-        receiver.joined().await?;
+        network_receiver.joined().await?;
         tokio::spawn(sync_subscribe_loop(
-            receiver,
-            sender.clone(),
+            network_receiver,
+            network_sender.clone(),
             user.clone(),
             store,
             endpoint.clone(),
-            tx.clone(),
-            sendx.clone(),
+            db_channel_sender.clone(),
+            sync_main_sender.clone(),
         ));
 
-        let receiver_last_row_counter = fetch_last_row_counter(&receiver_did, &tx).await?;
+        let receiver_last_row_counter =
+            fetch_last_row_counter(&receiver_did, &db_channel_sender).await?;
         let sync_start_msg = NetworkMessage::new(
             &user,
             is_online,
             MessageBody::SyncStart {
                 last_row_counter: Some(receiver_last_row_counter),
+                invocation_token,
             },
         );
-        sender.broadcast(sync_start_msg.to_bytes().into()).await?;
+        network_sender
+            .broadcast(sync_start_msg.to_bytes().into())
+            .await?;
         info!("Sent SyncStart event");
 
-        println!(
-            "\nSyncing in progress with ....{}({})",
-            receiver_user.username, receiver_did
-        );
-        recvx.recv().await;
+        println!("\nSyncing in progress with ....{}", receiver_did);
+        sync_main_receiver.recv().await;
         recv_router.shutdown().await?;
     } else {
-        // RECEIVER BLOCK
+        // LISTENER BLOCK
         // The sync gossip topic is basically derived from the receiver's
         // public-key, so that initiator's can directly connect w/o any
         // initial handshake
@@ -508,17 +553,17 @@ pub async fn sync(did: Option<String>) -> Result<()> {
 
         let sync_topic = format!("sync:{}", did);
         let sync_topic_id = create_topic_id(&sync_topic);
-        let (sender, receiver, recv_router, store) =
+        let (network_sender, network_receiver, recv_router, store) =
             create_sync_network(&endpoint, sync_topic_id, vec![]).await?;
         info!("sync gossip network created");
         tokio::spawn(sync_subscribe_loop(
-            receiver,
-            sender.clone(),
+            network_receiver,
+            network_sender.clone(),
             user.clone(),
             store,
             endpoint.clone(),
-            tx.clone(),
-            sendx.clone(),
+            db_channel_sender.clone(),
+            sync_main_sender.clone(),
         ));
         println!("{}", "Ready to accept sync requests from peers...".blue());
 
@@ -528,14 +573,14 @@ pub async fn sync(did: Option<String>) -> Result<()> {
         if cfg!(debug_assertions) {
             println!("Use this DID {} in dev for testing", did);
         };
-        recvx.recv().await;
+        sync_main_receiver.recv().await;
         recv_router.shutdown().await?;
     }
     endpoint.close().await;
     Ok(())
 }
 
-// Router with gossip and blob protocol
+/// Router with gossip and blob protocol
 async fn create_sync_network(
     endpoint: &Endpoint,
     topic_id: TopicId,
@@ -696,17 +741,41 @@ async fn fetch_encoded_delta_ticket(
     Ok(BlobTicket::new(delivered_from.into(), tag.hash, tag.format))
 }
 async fn on_sync_start_event(
-    sender: &GossipSender,
+    network_sender: &GossipSender,
     store: &MemStore,
     msg: &NetworkMessage,
     delivered_from: PublicKey,
     user: &account::local::User,
-    sync_db_channel_sender: &tokio::sync::mpsc::Sender<SyncOp>,
+    senders: (
+        &tokio::sync::mpsc::Sender<SyncOp>,
+        &tokio::sync::mpsc::Sender<u8>,
+    ),
 ) -> Result<()> {
+    let (sync_db_channel_sender, sync_main_sender) = senders;
     if let MessageBody::SyncStart {
         last_row_counter: lrc,
+        invocation_token: token,
     } = &msg.body
     {
+        if msg.is_online
+            && let Err(err) = verify_invocation(token).await
+        {
+            log::warn!("Invocation verification failed due to {:?}", err);
+            let reject_request = NetworkMessage::new(
+                user,
+                msg.is_online,
+                MessageBody::SyncRejected {
+                    reason: String::from("Sync failed due to invalid authorization"),
+                },
+            );
+            network_sender
+                .broadcast(reject_request.to_bytes().into())
+                .await?;
+            // Adding a delay to prevent the risk of closing the endpoint before we send the msg via the above broadcast
+            sleep(Duration::from_secs(5)).await;
+            sync_main_sender.send(0).await?;
+            return Err(anyhow!("Verification failed for invocation token"));
+        }
         let sender_did = get_did_from_public_key(delivered_from.as_bytes())?;
         let ticket = fetch_encoded_delta_ticket(
             &user.user_id,
@@ -728,14 +797,16 @@ async fn on_sync_start_event(
                 last_row_counter: Some(receiver_last_row_counter),
             },
         );
-        sender.broadcast(delta_info.to_bytes().into()).await?;
+        network_sender
+            .broadcast(delta_info.to_bytes().into())
+            .await?;
         info!("Sent blob ticket {} to {}", ticket, sender_did);
     }
     Ok(())
 }
 
 async fn on_sync_send_delta_info(
-    sender: &GossipSender,
+    network_sender: &GossipSender,
     store: &MemStore,
     msg: &NetworkMessage,
     delivered_from: PublicKey,
@@ -797,13 +868,16 @@ async fn on_sync_send_delta_info(
                     last_row_counter: None,
                 },
             );
-            sender.broadcast(delta_info.to_bytes().into()).await?;
+            network_sender
+                .broadcast(delta_info.to_bytes().into())
+                .await?;
             info!("Sent blob ticket {} to {}", ticket, delivered_from);
         } else {
             let stop_req = NetworkMessage::new(user, msg.is_online, MessageBody::SyncEnd);
-            sender.broadcast(stop_req.to_bytes().into()).await?;
+            network_sender.broadcast(stop_req.to_bytes().into()).await?;
             info!("sync ended");
             println!("\nSync completed..., exiting now..");
+            // Adding a delay to prevent the risk of closing the endpoint before we send the msg via the above broadcast
             sleep(Duration::from_secs(5)).await;
             sync_main_sender.send(0).await?;
         }
@@ -818,7 +892,7 @@ mod tests {
     use tokio::sync::mpsc;
 
     use crate::core::{
-        account::local::create_dummy_user,
+        account::local::{create_dummy_user, tests::setup_db_conn_v2},
         chats::SyncOp,
         network::{
             create_topic_id, fetch_last_row_counter, parse_link_ticket,
@@ -829,7 +903,8 @@ mod tests {
     #[tokio::test]
     async fn test_valid_parse_link_ticket_online() {
         let topic_id = create_topic_id("test");
-        let user = create_dummy_user();
+        let db_conn = setup_db_conn_v2();
+        let user = create_dummy_user(&db_conn.common, None);
         let usr_data = EndpointUserData::new(&user.user_id, &user.username);
         let endpoint = Endpoint::builder(presets::N0)
             .user_data_for_address_lookup(UserData::try_from(usr_data.to_string()).unwrap())
@@ -850,7 +925,8 @@ mod tests {
     #[tokio::test]
     async fn test_invalid_parse_link_ticket_online() {
         let topic_id = create_topic_id("test");
-        let user = create_dummy_user();
+        let db_conn = setup_db_conn_v2();
+        let user = create_dummy_user(&db_conn.common, None);
         let usr_data = EndpointUserData::new(&user.user_id, &user.username);
         let endpoint = Endpoint::builder(presets::N0)
             .user_data_for_address_lookup(UserData::try_from(usr_data.to_string()).unwrap())

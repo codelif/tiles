@@ -5,12 +5,15 @@
 
 use std::{env, path::PathBuf};
 
-use crate::utils::config::{ConfigProvider, DefaultProvider, get_app_name};
 use anyhow::{Result, anyhow};
 use log::info;
 use rusqlite::Connection;
+
+use crate::{
+    core::account::{create_and_save_passkey, get_passkey},
+    utils::config::{ConfigProvider, DefaultProvider, get_app_name},
+};
 use rusqlite_migration::{M, Migrations};
-use tilekit::accounts::{create_and_save_passkey, get_passkey};
 
 #[derive(Debug)]
 pub enum DBTYPE {
@@ -50,6 +53,19 @@ const COMMON_MIGRATION_ARRAY: &[M] = &[
             updated_at INTEGER NOT NULL,
             handle TEXT NOT NULL
         )",
+    ),
+    M::up(
+        "CREATE TABLE IF NOT EXISTS tokens(
+            id TEXT PRIMARY KEY,
+            did TEXT NOT NULL,
+            token TEXT NOT NULL,
+            cid TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            type TEXT NOT NULL
+        );
+        CREATE INDEX idx_tokens_did ON tokens(did);
+        ",
     ),
 ];
 

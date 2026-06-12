@@ -16,7 +16,6 @@ use tiles::utils::config::{
 use tiles::utils::installer::{UpdateInfo, get_update_info, try_update};
 use tiles::{core::health, repl::RunArgs};
 
-pub use tilekit::optimize::optimize;
 use toml::Table;
 
 use crate::{AccountArgs, AccountCommands};
@@ -59,7 +58,7 @@ const FTUE_DATA_DIR_CHANGE_COMMAND: &str = "tiles data set-path <PATH>";
 const FTUE_CUSTOM_DATA_PROMPT: &str = "Use a custom data folder now? [y/N]";
 const FTUE_UPDATE_COMMAND: &str = "tiles update";
 
-pub fn run_setup_for_ftue(_run_args: &RunArgs) -> Result<()> {
+pub async fn run_setup_for_ftue(_run_args: &RunArgs) -> Result<()> {
     // initializes config directory
     let config_provider = DefaultProvider;
     config_provider.get_or_create_config_dir()?;
@@ -77,7 +76,7 @@ pub fn run_setup_for_ftue(_run_args: &RunArgs) -> Result<()> {
         println!("{}", FTUE_REASSURANCE_LOCAL);
         println!();
         // FTUE
-        setup_root_account(root_config.clone())?;
+        setup_root_account(root_config.clone()).await?;
         setup_default_user_data_dir(&config_provider)?
     } else {
         println!("{}", PRODUCT_DESCRIPTION);
@@ -110,10 +109,11 @@ fn print_runtime_context<T: ConfigProvider>(
     Ok(())
 }
 
-fn setup_root_account(root_config: Table) -> Result<()> {
+async fn setup_root_account(root_config: Table) -> Result<()> {
     println!("{}", FTUE_NICKNAME_PROMPT);
     let nickname = read_required_nickname()?;
-    let root_user_config = RootUser::new(&create_root_account(&root_config, Some(nickname))?)?;
+    let root_user_config =
+        RootUser::new(&create_root_account(&root_config, Some(nickname)).await?)?;
 
     save_root_account(root_config, &root_user_config.to_table())?;
     println!();
@@ -258,7 +258,7 @@ pub async fn stop_server() {
 }
 
 /// Runs the account command with the args being passed.
-pub fn run_account_commands(account_args: AccountArgs) -> Result<()> {
+pub async fn run_account_commands(account_args: AccountArgs) -> Result<()> {
     let config = get_or_create_config()?;
     let root_user_details = get_root_user_details(&config)?;
     match account_args.command {
@@ -266,7 +266,8 @@ pub fn run_account_commands(account_args: AccountArgs) -> Result<()> {
             if !root_user_details.id.is_empty() {
                 println!("Local Identity exists with id: {}", root_user_details.id)
             } else {
-                let root_user_config = RootUser::new(&create_root_account(&config, nickname)?)?;
+                let root_user_config =
+                    RootUser::new(&create_root_account(&config, nickname).await?)?;
 
                 save_root_account(config, &root_user_config.to_table())?;
                 println!(

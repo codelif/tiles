@@ -99,4 +99,3 @@ cp -r "${MODELFILE_DIR}" "${PKG_LIBS_PATH}"
 
 # Creating .pkg
 pkgbuild --root pkgroot --scripts pkg/scripts --identifier com.tilesprivacy.tiles --version "$VERSION" pkg/tiles-unsigned.pkg
-

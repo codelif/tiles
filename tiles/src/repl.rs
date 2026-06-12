@@ -568,10 +568,6 @@ async fn start_repl(modelfile: &Modelfile, _run_args: &RunArgs, db_conn: &Dbconn
         let input = match readline {
             Ok(line) => line.trim().to_string().to_lowercase(),
             Err(_) => {
-                // FIXME: Panic when entering another prompt after ctr-l C
-                // called `Result::unwrap()` on an `Err` value: Os { code: 32, kind: BrokenPipe, message: "Broken pipe" }
-                //
-                // User pressed Ctrl+C or Ctrl+D
                 handle_repl_exit(pi_stdin).await?;
                 break;
             }

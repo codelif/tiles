@@ -1,6 +1,6 @@
 [package]
 name = "tiles"
-version = "0.4.11"
+version = "0.4.12-rc.1"
 edition = "2024"
 
 [dependencies]
@@ -10,7 +10,7 @@ reqwest = { version = "0.12", features = ["json", "blocking", "stream"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 anyhow = "1.0"
-tokio = { version = "1" , features = ["macros", "rt-multi-thread", "io-util"]}
+tokio = { version = "1" , features = ["macros", "process", "rt-multi-thread", "io-util"]}
 owo-colors = "4"
 futures-util = "0.3"
 hf-hub = {version = "0.4", features = ["tokio"]}
@@ -36,10 +36,16 @@ atrium-identity = "0.1.9"
 hickory-resolver = "0.26.0"
 atrium-common = "0.1.4"
 atrium-api = "0.25.8"
-chacha20poly1305 = { version = "0.10" }
 libc = "0.2"
 ctrlc = "3.5.2"
+dialog-ucan = { git = "https://github.com/tilesprivacy/dialog-db", rev = "af442cac90d72c9da8be9c71799f497bddc62f0b", package = "dialog-ucan"}
+dialog-credentials = { git = "https://github.com/tilesprivacy/dialog-db", rev = "af442cac90d72c9da8be9c71799f497bddc62f0b", package = "dialog-credentials"}
+chacha20poly1305 = { version = "0.10" }
+dialog-varsig= { git = "https://github.com/tilesprivacy/dialog-db", rev = "af442cac90d72c9da8be9c71799f497bddc62f0b", package = "dialog-varsig"}
 
+serde_ipld_dagcbor = "0.6.4"
+cid = "0.11.3"
+keyring = { version = "3", features = ["apple-native"] }
 [dev-dependencies]
 tempfile = "3"
 keyring = { version = "3", features = ["apple-native"] }

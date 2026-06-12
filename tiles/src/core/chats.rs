@@ -303,13 +303,18 @@ pub fn get_encoded_delta(
     Ok(encode_delta_to_bytes(&delta))
 }
 
-pub fn create_sync_channel() -> Sender<SyncOp> {
-    let (tx, mut rx) = mpsc::channel::<SyncOp>(32);
+/// Spawns a concurrent process that can process DB operations for p2p syncing through channel communication
+///
+/// Returns a sender to the caller.
+///
+/// This is due to the restrictions on sharing around DB references across threads, due to the Connection object being not thread safe
+pub fn create_db_sync_channel() -> Sender<SyncOp> {
+    let (sender, mut receiver) = mpsc::channel::<SyncOp>(32);
 
     tokio::spawn(async move {
         let mut chat_db_conn = get_db_conn(&super::storage::db::DBTYPE::CHAT)?;
         info!("DB sync channel ready..");
-        while let Some(msg) = rx.recv().await {
+        while let Some(msg) = receiver.recv().await {
             match msg {
                 SyncOp::GetLastRowCounter { user_id, resp } => {
                     let counter = get_last_row_counter(&chat_db_conn, &user_id);
@@ -336,7 +341,7 @@ pub fn create_sync_channel() -> Sender<SyncOp> {
         }
         Ok::<(), anyhow::Error>(())
     });
-    tx
+    sender
 }
 
 pub fn create_session(conn: &Connection, id: &str, name: &str, user_id: &str) -> Result<Session> {
