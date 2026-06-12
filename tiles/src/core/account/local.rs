@@ -11,7 +11,7 @@ use dialog_ucan::{
 use dialog_varsig::{Did, Principal, Signature, eddsa::Ed25519Signature};
 // use dialog
 use iroh::SecretKey;
-use log::info;
+use log::{info, warn};
 use rusqlite::{
     Connection, Row, ToSql, params,
     types::{FromSql, FromSqlError},
@@ -148,18 +148,15 @@ impl ToSql for TokenType {
     }
 }
 
-// impl TryFrom<String> for TokenType {
-//     type Error = anyhow::Error;
-//     fn try_from(value: String) -> std::result::Result<Self, Self::Error> {
-//         match value.to_lowercase().as_str() {
-//             "sync" => Ok(Self::Sync),
-//             "connect" => Ok(Self::Connect),
-//             token_type => Err(anyhow!("Invalid token type {}", token_type)),
-//         }
-//     }
-// }
+impl Display for TokenType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TokenType::Sync => write!(f, "sync"),
+            TokenType::Connect => write!(f, "connect"),
+        }
+    }
+}
 
-// impl From<String>
 impl Display for RootUser {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "id: {}\nnickname: {}\n", self.id, self.nickname)
@@ -401,7 +398,6 @@ pub fn save_peer_account_db(db_conn: &Connection, user_id: &str, nickname: &str)
 pub async fn create_token(aud_did: &str, db_conn: &Dbconn) -> Result<String> {
     let user = get_current_user(&db_conn.common)?;
     let app_name = get_app_name();
-    println!("{}", app_name);
     let signing_key = get_signing_key(&app_name, &user.user_id)?;
     let keyexport = KeyExport::from(&signing_key.to_bytes());
     let issuer: Ed25519Signer = Ed25519Signer::import(keyexport).await?;
@@ -434,7 +430,6 @@ async fn generate_delegation_token(
     Ok(delegation_token)
 }
 
-//TODO: think about upserting same DID in tokens table
 pub fn add_token(delegation_token: &str, db_conn: &Dbconn) -> Result<Token> {
     let delegation_token_bytes = data_encoding::BASE64
         .decode(delegation_token.as_bytes())
@@ -443,20 +438,15 @@ pub fn add_token(delegation_token: &str, db_conn: &Dbconn) -> Result<Token> {
         serde_ipld_dagcbor::from_slice(&delegation_token_bytes).context("Invalid DID")?;
 
     let issuer_did = delegation.issuer().did();
-    let token = if let Some(_token) = fetch_token(issuer_did.as_str(), &db_conn.common)? {
-        update_token(db_conn, issuer_did.as_str(), delegation)
-            .context("Updating delegation token failed")?
-    } else {
-        save_token(db_conn, issuer_did.as_str(), delegation)
-            .context("Saving delegation token failed")?
-    };
+    let token = save_token(db_conn, issuer_did.as_str(), delegation)
+        .context("Saving delegation token failed")?;
     Ok(token)
 }
 
-pub fn fetch_token(did: &str, conn: &Connection) -> Result<Option<Token>> {
+pub fn fetch_token(did: &str, conn: &Connection, token_type: TokenType) -> Result<Option<Token>> {
     let fetch_resp = conn.query_row(
-        "SELECT id, did, token, cid, created_at, updated_at, type FROM tokens WHERE did= ?1",
-        [did],
+        "SELECT id, did, token, cid, created_at, updated_at, type FROM tokens WHERE did= ?1 and type=?2 order by created_at desc limit 1",
+        [did, token_type.to_string().as_str()],
         |row| {
             Ok(Token {
                 id: row.get(0)?,
@@ -522,35 +512,14 @@ fn save_token<S: Signature>(conn: &Dbconn, did: &str, delegation: Delegation<S>)
         TokenType::Sync
     ]) {
         Ok(_res) => {
-            let token = fetch_token(did, &conn.common)?;
+            let token = fetch_token(did, &conn.common, TokenType::Sync)?;
             Ok(token.expect("Expected token"))
         }
         Err(err) => Err(anyhow!("Err inserting token due to {}", err)),
     }
 }
 
-fn update_token<S: Signature>(
-    conn: &Dbconn,
-    did: &str,
-    delegation: Delegation<S>,
-) -> Result<Token> {
-    let mut stmt = conn
-        .common
-        .prepare("update tokens set token = ?1 where did = ?2")?;
-
-    let token_serialized = serde_ipld_dagcbor::to_vec(&delegation)?;
-
-    let token = data_encoding::BASE64.encode(&token_serialized);
-
-    match stmt.execute(params![token.to_owned(), did.to_owned(),]) {
-        Ok(_res) => {
-            let token = fetch_token(did, &conn.common)?;
-            Ok(token.expect("Expected token"))
-        }
-        Err(err) => Err(anyhow!("Err inserting token due to {}", err)),
-    }
-}
-
+/// Create an invocation token from the delegation token
 pub async fn create_invocation_token(token_delegated: &str, conn: &Connection) -> Result<String> {
     let user = get_current_user(conn)?;
     let app_name = get_app_name();
@@ -583,15 +552,22 @@ async fn generate_invocation_token(issuer: Ed25519Signer, token_delegated: &str)
 
     Ok(invocation_token)
 }
-pub async fn verify_invocation(invocation: &str) -> Result<()> {
+
+pub async fn verify_invocation(invocation_token: &str) -> Result<()> {
     let db_conn: Connection = get_db_conn(&DBTYPE::COMMON)?;
 
-    process_invocation_verification(invocation, db_conn).await
+    process_invocation_verification(invocation_token, db_conn).await
 }
 
-async fn process_invocation_verification(invocation: &str, db_conn: Connection) -> Result<()> {
-    let inv_bytes = data_encoding::BASE64.decode(invocation.as_bytes())?;
-    let inv: Invocation<Ed25519Signature> = serde_ipld_dagcbor::from_slice(&inv_bytes)?;
+async fn process_invocation_verification(
+    invocation_token: &str,
+    db_conn: Connection,
+) -> Result<()> {
+    let invocation_token_bytes = data_encoding::BASE64.decode(invocation_token.as_bytes())?;
+
+    let invocation: Invocation<Ed25519Signature> =
+        serde_ipld_dagcbor::from_slice(&invocation_token_bytes)?;
+
     let hash_store: HashMap<Cid, Arc<Delegation<Ed25519Signature>>> = HashMap::new();
 
     let delegation_store: Arc<Mutex<HashMap<Cid, Arc<Delegation<Ed25519Signature>>>>> =
@@ -611,19 +587,14 @@ async fn process_invocation_verification(invocation: &str, db_conn: Connection) 
         }
     }
 
-    println!("{:?}", delegation_store);
-
-    match inv
+    match invocation
         .check::<Sendable, _, _, _>(&delegation_store, &Ed25519KeyResolver)
         .await
     {
-        Ok(res) => {
-            println!("{:?}", res);
-            Ok(())
-        }
+        Ok(_res) => Ok(()),
         Err(err) => {
-            println!("{:?}", err);
-            Err(anyhow!("Err"))
+            warn!("Invocation verification failed due to {:?}", err);
+            Err(anyhow!("Invocation verification failed"))
         }
     }
 }
@@ -1201,7 +1172,10 @@ pub mod tests {
         let resp = add_token(tokenb, &db_conn);
         assert_eq!(resp.unwrap().token, tokenb);
         assert_eq!(
-            fetch_token(did, &db_conn.common).unwrap().unwrap().token,
+            fetch_token(did, &db_conn.common, TokenType::Sync)
+                .unwrap()
+                .unwrap()
+                .token,
             tokenb
         );
     }
@@ -1255,10 +1229,11 @@ pub mod tests {
             .await
             .unwrap();
 
-        let inv_bytes = data_encoding::BASE64
+        let invocation_token_bytes = data_encoding::BASE64
             .decode(invocation_token.as_bytes())
             .unwrap();
-        let inv: Invocation<Ed25519Signature> = serde_ipld_dagcbor::from_slice(&inv_bytes).unwrap();
+        let inv: Invocation<Ed25519Signature> =
+            serde_ipld_dagcbor::from_slice(&invocation_token_bytes).unwrap();
 
         println!("Invocation token\n{:?}", inv);
 

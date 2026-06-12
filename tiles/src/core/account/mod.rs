@@ -88,16 +88,16 @@ fn to_hex(bytes: &[u8]) -> String {
 }
 
 pub fn get_public_key_from_did(did: &str) -> Result<[u8; 32]> {
-    let ed_did = Ed25519Verifier::from_str(did)?;
+    let verifier = Ed25519Verifier::from_str(did)?;
 
-    Ok(ed_did.0.to_bytes())
+    Ok(verifier.0.to_bytes())
 }
 
 pub fn get_did_from_public_key(publick_key: &[u8; 32]) -> Result<String> {
     let verifying_key = VerifyingKey::from_bytes(publick_key)?;
 
-    let ed_did = Ed25519Verifier::from(verifying_key);
-    Ok(ed_did.to_string())
+    let verifier = Ed25519Verifier::from(verifying_key);
+    Ok(verifier.to_string())
 }
 
 pub fn get_random_bytes() -> [u8; 16] {
@@ -124,5 +124,21 @@ mod tests {
         let did = create_identity("tiles").await?;
         assert!(did.starts_with("did:key"));
         Ok(())
+    }
+
+    #[test]
+    fn test_roundtrip_public_key_did_conversion() {
+        let did = "did:key:z6MkqkPYU3eUSs7Pg4NsSTNbm9hKZ4MU997wKFbBwt9gD5k5";
+
+        let pub_key = get_public_key_from_did(did).unwrap();
+
+        assert_eq!(get_did_from_public_key(&pub_key).unwrap(), did);
+    }
+
+    #[test]
+    fn test_invalid_plc_roundtrip_public_key_did_conversion() {
+        let did = "did:plc:mbk6wgmxiatotzy5b3q57naw";
+
+        assert!(get_public_key_from_did(did).is_err());
     }
 }
