@@ -445,7 +445,7 @@ pub fn add_token(delegation_token: &str, db_conn: &Dbconn) -> Result<Token> {
 
 pub fn fetch_token(did: &str, conn: &Connection, token_type: TokenType) -> Result<Option<Token>> {
     let fetch_resp = conn.query_row(
-        "SELECT id, did, token, cid, created_at, updated_at, type FROM tokens WHERE did= ?1 and type=?2 order by created_at desc limit 1",
+        "SELECT id, did, token, cid, created_at, updated_at, type FROM tokens WHERE did= ?1 and type=?2 order by id desc limit 1",
         [did, token_type.to_string().as_str()],
         |row| {
             Ok(Token {
