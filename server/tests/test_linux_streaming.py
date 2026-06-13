@@ -16,6 +16,9 @@ class FakeRunner:
     model = FakeModel()
     tool_name = "read"
 
+    def cleanup(self):
+        pass
+
     def get_effective_max_tokens(self, max_output_tokens):
         return max_output_tokens or 128
 
@@ -30,6 +33,20 @@ class FakeRunner:
         yield "Need to read file."
         yield ToolCallStart(self.tool_name)
         yield '{"path":"changelog.md"}'
+
+# TODO, make a better test for this as this one takes a lot of time
+# def test_get_or_load_model_without_cache_path_reuses_loaded_runner():
+#     runner = FakeRunner()
+#     linux._model_cache = {"/tmp/model": runner}
+#     linux._current_model_path = "/tmp/model"
+
+#     try:
+#         with patch.object(linux.httpx, "get") as http_get:
+#             assert linux.get_or_load_model("unsloth/gpt-oss-20b-GGUF") is runner
+#             http_get.assert_not_called()
+#     finally:
+#         linux._model_cache = {}
+#         linux._current_model_path = None
 
 
 def make_request():

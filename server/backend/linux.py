@@ -63,18 +63,30 @@ _responses: Dict[str, ResponsesResponse] = {}
 
 
 
-def get_or_load_model(model_spec: str, verbose: bool = True) -> LlamaRunner:
+def get_or_load_model(
+    model_spec: str, model_cache_path: str | None = None, verbose: bool = True
+) -> LlamaRunner:
     """Get model from cache or load it if not cached."""
     global _model_cache, _current_model_path
     model_name = model_spec
 
+    if model_cache_path is None and _current_model_path in _model_cache:
+        logger.info(f"Model {model_name} already in memory")
+        return _model_cache[_current_model_path]
+
     try:
-        response = httpx.get(f"http://127.0.0.1:1729/model-cache-path?model_name={model_spec}")
-        if response.status_code == 200:
-            model_path_str = response.text
+        if isinstance(model_cache_path, str):
+            model_path_str = model_cache_path
             model_path = Path(model_path_str)
         else:
-            raise Exception("Model not found in cache daemon")
+            response = httpx.get(
+                f"http://127.0.0.1:1729/model-cache-path?model_name={model_spec}"
+            )
+            if response.status_code == 200:
+                model_path_str = response.text
+                model_path = Path(model_path_str)
+            else:
+                raise Exception("Model not found in cache daemon")
 
         if not model_path.exists():
             logger.info(f"Model {model_spec} not found in cache at {model_path_str}")

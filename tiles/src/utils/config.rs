@@ -9,7 +9,7 @@
 ///     - /logs
 ///     - /data (default, user can change this location tho)
 ///         - /memory (memory stored as PKM)
-/// - /usr/local/share/tiles (lib dir) - Some internal App files, libraries etc go here..
+/// - /usr/local/share/tiles or ~/.local/share/tiles (lib dir) - Some internal App files, libraries etc go here..
 ///     - /modelfiles
 ///     - /server
 ///     - /models - Where the pre-downloaded models.
@@ -178,10 +178,42 @@ impl ConfigProvider for DefaultProvider {
             let base_dir = env::current_dir().context("Failed to fetch CURRENT_DIR")?;
             Ok(base_dir.join(".tiles_dev/tiles"))
         } else {
-            let data_dir = PathBuf::from_str("/usr/local/share")?;
-            Ok(data_dir.join("tiles"))
+            // first check is that, let's say I have all the 3 folders (pi, modelfiles, server) in a portable folder somewhere,
+            // and then we run the tiles binary from there like ./tiles
+            // so first it checks if these folders exist right beside the binary (aka some portable folder and not in /usr or /.local)
+            // then it should have no issues running
+            if let Ok(current_exe) = env::current_exe()
+                && let Some(exe_dir) = current_exe.parent()
+                && is_tiles_lib_dir(&exe_dir.to_path_buf())
+            {
+                return Ok(exe_dir.to_path_buf());
+            }
+
+            // If it's not next to the executable, then check if these folders are in /usr/local/share/tiles
+            let system_lib_dir = PathBuf::from_str("/usr/local/share/tiles")?;
+            if is_tiles_lib_dir(&system_lib_dir) {
+                return Ok(system_lib_dir);
+            }
+
+            // If not in the global root share files, then finally, if these files are in ~/.local/share/tiles
+            // then tiles can pick that up
+            let home_dir = env::home_dir().context("Failed to fetch $HOME")?;
+            let data_dir = match env::var("XDG_DATA_HOME") {
+                Ok(val) => PathBuf::from(val),
+                Err(_err) => home_dir.join(".local/share"),
+            };
+            let user_lib_dir = data_dir.join("tiles");
+            if is_tiles_lib_dir(&user_lib_dir) {
+                return Ok(user_lib_dir);
+            }
+
+            Ok(PathBuf::from_str("/usr/local/share/tiles")?)
         }
     }
+}
+
+fn is_tiles_lib_dir(path: &PathBuf) -> bool {
+    path.join("modelfiles").is_dir() && path.join("server").is_dir() && path.join("pi").is_dir()
 }
 pub fn set_user_data_path(path: &str) -> Result<String> {
     set_user_data_path_with_provider(&DefaultProvider, path)
