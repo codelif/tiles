@@ -517,8 +517,7 @@ class MLXRunner:
             if ttft is None:
                 ttft = time.time() - start_time
 
-            if parser.last_content_delta:
-                yield parser.last_content_delta  # pyright: ignore
+            yield parser.last_content_delta  # pyright: ignore
 
             tokens_generated += 1
 

@@ -191,7 +191,6 @@ async def generate_response_chat_stream(
                             output_index,
                             tool_call_text,
                             sequence_number,
-                            request,
                             tool_name,
                         )
                     )
