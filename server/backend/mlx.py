@@ -24,7 +24,6 @@ from .commons import (
     get_reasoning_effort,
     handle_response_input,
     is_harmony_family,
-    normalize_harmony_tool_name,
 )
 
 from ..schemas import (
@@ -98,8 +97,6 @@ async def generate_response_chat_stream(
         convo = build_harmony_conversation(
             reasoning_effort,
             request.input,  # pyright: ignore
-            replay_function_calls=True,
-            tools=request.tools,
         )
 
     input_tokens = len(runner.tokenizer.encode(user_input_content))  # pyright: ignore
@@ -150,7 +147,7 @@ async def generate_response_chat_stream(
                 continue
 
             if isinstance(token, ToolCallStart):
-                tool_name = normalize_harmony_tool_name(token.name, request.tools)
+                tool_name = token.name                
                 token = "**[ToolCall]**\n\n"
 
             if not isinstance(token, str):
@@ -200,7 +197,7 @@ async def generate_response_chat_stream(
                     )
                     output_items.append(item)
                     yield resp_str
-                elif last_state == "answer":
+                elif state == "answer":
                     resp_str, sequence_number, output_index, item = (
                         _process_output_item_done(
                             "message",
@@ -295,7 +292,7 @@ async def generate_response_chat_stream(
         yield resp_str
     elif state == "toolcall":
         resp_str, sequence_number, output_index, item = _process_stop_tool_call_events(
-            tool_id, output_index, tool_call_text, sequence_number, request, tool_name
+            tool_id, output_index, tool_call_text, sequence_number, tool_name
         )
         output_items.append(item)
         yield resp_str

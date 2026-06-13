@@ -524,7 +524,7 @@ class MLXRunner:
 
             # Check for EOS token - don't yield it
 
-            if token_id in stop_tokens or tokens_generated >= effective_max_tokens:
+            if token_id in stop_tokens:
                 break
 
         # Yield metrics at the end
