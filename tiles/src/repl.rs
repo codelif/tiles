@@ -808,13 +808,10 @@ fn start_pi_rpc(model_name: &str, system_prompt: &str) -> Result<Child> {
     std::fs::create_dir_all(&pi_agent_dir).context("Failed to create Pi agent directory")?;
 
     let provider_config_file_path = pi_agent_dir.join("models.json");
-    let settings_file_path = pi_agent_dir.join("settings.json");
     let endpoint_url = format!("http://127.0.0.1:{}/v1", PY_PORT);
     let model_config = create_pi_provider_config(model_name, &endpoint_url)?;
-    let settings_config = create_pi_settings_config()?;
 
     fs::write(provider_config_file_path, model_config)?;
-    fs::write(settings_file_path, settings_config)?;
 
     // For easy debugging Pi, when developing when needed we can directly call the
     // local on-demand build pi binary and point local path
@@ -851,16 +848,6 @@ fn start_pi_rpc(model_name: &str, system_prompt: &str) -> Result<Child> {
             .expect("failed to run Pi")
     };
     Ok(pi_process)
-}
-
-fn create_pi_settings_config() -> Result<String> {
-    let config = json!({
-        "compaction": {
-            "enabled": false
-        }
-    });
-
-    serde_json::to_string(&config).map_err(Into::<anyhow::Error>::into)
 }
 
 async fn send_to_pi(pi_child_stdin: &mut ChildStdin, payload_json: Value) -> Result<()> {
@@ -1396,16 +1383,6 @@ mod tests {
     use crate::core::chats::create_session;
     use crate::core::chats::tests::create_user;
     use rusqlite::Connection;
-    use serde_json::Value;
-
-    #[test]
-    fn pi_settings_disable_auto_compaction() {
-        let settings: Value =
-            serde_json::from_str(&create_pi_settings_config().expect("settings should serialize"))
-                .expect("settings should be valid json");
-
-        assert_eq!(settings["compaction"]["enabled"], false);
-    }
 
     #[test]
     fn default_modelfile_uses_platform_default() {
