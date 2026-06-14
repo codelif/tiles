@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
 use std::fs::File;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::time::SystemTime;
 use std::{env, fs};
@@ -184,7 +184,7 @@ impl ConfigProvider for DefaultProvider {
             // then it should have no issues running
             if let Ok(current_exe) = env::current_exe()
                 && let Some(exe_dir) = current_exe.parent()
-                && is_tiles_lib_dir(&exe_dir.to_path_buf())
+                && is_tiles_lib_dir(exe_dir)
             {
                 return Ok(exe_dir.to_path_buf());
             }
@@ -212,7 +212,7 @@ impl ConfigProvider for DefaultProvider {
     }
 }
 
-fn is_tiles_lib_dir(path: &PathBuf) -> bool {
+fn is_tiles_lib_dir(path: &Path) -> bool {
     path.join("modelfiles").is_dir() && path.join("server").is_dir() && path.join("pi").is_dir()
 }
 pub fn set_user_data_path(path: &str) -> Result<String> {

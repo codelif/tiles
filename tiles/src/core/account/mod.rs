@@ -29,7 +29,7 @@ fn ensure_keyring_store() -> Result<()> {
     #[cfg(target_os = "linux")]
     {
         keyring_core::set_default_store(dbus_secret_service_keyring_store::Store::new()?);
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(target_os = "macos")]
