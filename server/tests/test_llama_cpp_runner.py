@@ -87,7 +87,8 @@ def test_gpt_streaming_rejects_prompt_that_exceeds_context_and_resets_model():
     assert model.was_reset
 
 
-def test_gguf_context_length_caps_at_30000_by_default(tmp_path):
+def test_gguf_context_length_caps_at_30000_by_default(tmp_path, monkeypatch):
+    monkeypatch.delenv("TILES_LLAMA_CPP_MAX_CTX", raising=False)
     (tmp_path / "config.json").write_text('{"context_length": 131072}')
 
     assert get_model_context_length_gguf(str(tmp_path)) == 30000
@@ -98,6 +99,19 @@ def test_gguf_context_length_uses_env_cap(tmp_path, monkeypatch):
     monkeypatch.setenv("TILES_LLAMA_CPP_MAX_CTX", "12000")
 
     assert get_model_context_length_gguf(str(tmp_path)) == 12000
+
+
+def test_gguf_context_length_uses_env_when_config_missing(tmp_path, monkeypatch):
+    monkeypatch.setenv("TILES_LLAMA_CPP_MAX_CTX", "2048")
+
+    assert get_model_context_length_gguf(str(tmp_path)) == 2048
+
+
+def test_gguf_context_length_uses_env_when_config_invalid(tmp_path, monkeypatch):
+    (tmp_path / "config.json").write_text("{")
+    monkeypatch.setenv("TILES_LLAMA_CPP_MAX_CTX", "3072")
+
+    assert get_model_context_length_gguf(str(tmp_path)) == 3072
 
 
 def test_llama_cpp_env_helpers(monkeypatch):

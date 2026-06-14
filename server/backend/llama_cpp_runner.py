@@ -85,8 +85,8 @@ def get_model_context_length_gguf(model_path: str) -> int:
         model_path: Path to the model directory
 
     Returns:
-        Maximum context length for the model (defaults to 4096 if not found),
-        capped by TILES_LLAMA_CPP_MAX_CTX or 30000 by default.
+        Maximum context length for the model, capped by TILES_LLAMA_CPP_MAX_CTX
+        or 30000 by default. If model metadata is unavailable, use that cap.
     """
     max_ctx = int(os.environ.get("TILES_LLAMA_CPP_MAX_CTX", "30000"))
     config_path = os.path.join(model_path, "config.json")
@@ -110,7 +110,7 @@ def get_model_context_length_gguf(model_path: str) -> int:
                 return min(raw, max_ctx)
     except (FileNotFoundError, json.JSONDecodeError, KeyError):
         pass
-    return 4096
+    return max_ctx
 
 
 def _get_env_int(name: str, default: int) -> int:
