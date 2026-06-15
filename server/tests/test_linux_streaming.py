@@ -15,6 +15,7 @@ class FakeModel:
 class FakeRunner:
     model = FakeModel()
     tool_name = "read"
+    arguments = '{"path":"changelog.md"}'
 
     def cleanup(self):
         pass
@@ -32,7 +33,7 @@ class FakeRunner:
         yield "**[Reasoning]**\n\n"
         yield "Need to read file."
         yield ToolCallStart(self.tool_name)
-        yield '{"path":"changelog.md"}'
+        yield self.arguments
 
 # TODO, make a better test for this as this one takes a lot of time
 # def test_get_or_load_model_without_cache_path_reuses_loaded_runner():
@@ -162,3 +163,22 @@ async def test_gpt_streaming_infers_tool_when_commentary_has_no_recipient():
     assert function_call_added["item"]["name"] == "read"
     assert "event: response.function_call_arguments.delta\n" in stream
     assert "event: response.failed\n" not in stream
+
+
+@pytest.mark.asyncio
+async def test_gpt_streaming_fails_when_tool_cannot_be_inferred():
+    request = make_request()
+    runner = FakeRunner()
+    runner.tool_name = ""
+    runner.arguments = "{}"
+
+    with patch.object(linux, "get_or_load_model", return_value=runner):
+        chunks = [
+            chunk async for chunk in linux.generate_response_chat_stream(request)
+        ]
+
+    stream = "".join(chunks)
+
+    assert "event: response.failed\n" in stream
+    assert "tool call is missing a tool name and could not be inferred" in stream
+    assert "event: response.output_item.done\n" not in stream

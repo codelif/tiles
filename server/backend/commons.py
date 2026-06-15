@@ -508,6 +508,8 @@ def _process_stop_tool_call_events(
     event_name = "response.function_call_arguments.done"
     has_recipient = bool(tool_name)
     tool_name = tool_name or _find_tool(request.tools, text)  # pyright: ignore
+    if not tool_name:
+        raise ValueError("tool call is missing a tool name and could not be inferred")
 
     try:
         arguments_map = json.loads(text)
@@ -552,11 +554,14 @@ def _process_stop_tool_call_events(
     )
 
 
-def _find_tool(tools: list, arguments_str: str) -> str:
+def _find_tool(tools: list | None, arguments_str: str) -> str | None:
     try:
         arguments_map = json.loads(arguments_str)
     except json.JSONDecodeError as e:
-        arguments_map = {}
+        return None
+
+    if not tools:
+        return None
 
     # To increase the accuracy of the selected tool, since we
     # check the required params is a subset of model responded
@@ -583,9 +588,8 @@ def _find_tool(tools: list, arguments_str: str) -> str:
             break
 
     if tool_name == "":
-        return "read"
-    else:
-        return tool_name
+        return None
+    return tool_name
 
 
 def _is_correct_tool(required_params: list, model_argument_list: list) -> bool:

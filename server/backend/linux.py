@@ -424,29 +424,37 @@ async def generate_response_chat_stream(
         return
 
     # Emit the stop events current state
-    if state == "reasoning":
-        resp_str, sequence_number, output_index, item = _process_stop_reasoning_events(
-            reasoning_id, output_index, reasoning_text, sequence_number
+    try:
+        if state == "reasoning":
+            resp_str, sequence_number, output_index, item = _process_stop_reasoning_events(
+                reasoning_id, output_index, reasoning_text, sequence_number
+            )
+            output_items.append(item)
+            yield resp_str
+        elif state == "toolcall":
+            resp_str, sequence_number, output_index, item = _process_stop_tool_call_events(
+                tool_id,
+                output_index,
+                tool_call_text,
+                sequence_number,
+                request,
+                tool_name,
+            )
+            output_items.append(item)
+            yield resp_str
+        elif state == "answer":
+            resp_str, sequence_number, output_index, item = _process_output_item_done(
+                "message", message_id, answer_text, output_index, sequence_number
+            )
+            output_items.append(item)
+            yield resp_str
+    except Exception as e:
+        traceback.print_exc()
+        resp_str, sequence_number = _process_error_event(
+            str(e), response_id, request, created, sequence_number
         )
-        output_items.append(item)
         yield resp_str
-    elif state == "toolcall":
-        resp_str, sequence_number, output_index, item = _process_stop_tool_call_events(
-            tool_id,
-            output_index,
-            tool_call_text,
-            sequence_number,
-            request,
-            tool_name,
-        )
-        output_items.append(item)
-        yield resp_str
-    elif state == "answer":
-        resp_str, sequence_number, output_index, item = _process_output_item_done(
-            "message", message_id, answer_text, output_index, sequence_number
-        )
-        output_items.append(item)
-        yield resp_str
+        return
 
     ## Envelope, response.completed
     if generation_metrics is not None:

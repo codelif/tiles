@@ -1,6 +1,10 @@
 from openai_harmony import HarmonyEncodingName, ReasoningEffort, Role, load_harmony_encoding
 
-from server.backend.commons import build_harmony_conversation, normalize_harmony_tool_name
+from server.backend.commons import (
+    _find_tool,
+    build_harmony_conversation,
+    normalize_harmony_tool_name,
+)
 from server.schemas import ResponsesRequest
 
 
@@ -114,3 +118,26 @@ def test_normalize_harmony_tool_name_only_strips_known_function_namespace():
         normalize_harmony_tool_name("functions.unknown", request.tools)
         == "functions.unknown"
     )
+
+
+def test_find_tool_does_not_fabricate_read_when_arguments_do_not_match():
+    request = ResponsesRequest.model_validate(
+        {
+            "model": "unsloth/gpt-oss-20b-GGUF",
+            "input": "hello",
+            "tools": [
+                {
+                    "type": "function",
+                    "name": "read",
+                    "parameters": {
+                        "type": "object",
+                        "required": ["path"],
+                        "properties": {"path": {"type": "string"}},
+                    },
+                }
+            ],
+        }
+    )
+
+    assert _find_tool(request.tools, "{}") is None
+    assert _find_tool(request.tools, "{") is None
