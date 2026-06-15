@@ -191,6 +191,7 @@ async def generate_response_chat_stream(
                             output_index,
                             tool_call_text,
                             sequence_number,
+                            request,
                             tool_name,
                         )
                     )
@@ -291,7 +292,7 @@ async def generate_response_chat_stream(
         yield resp_str
     elif state == "toolcall":
         resp_str, sequence_number, output_index, item = _process_stop_tool_call_events(
-            tool_id, output_index, tool_call_text, sequence_number, tool_name
+            tool_id, output_index, tool_call_text, sequence_number, request, tool_name
         )
         output_items.append(item)
         yield resp_str

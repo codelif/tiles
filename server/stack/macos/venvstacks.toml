@@ -2,6 +2,7 @@
 name = "cpython3.13"
 python_implementation = "cpython@3.13.11"
 requirements = []
+macosx_target = "14"
 platforms = [
     "macosx_arm64",
 ]

@@ -3,7 +3,7 @@ set -euo pipefail
 
 REPO="tilesprivacy/tiles"
 
-VERSION="${TILES_VERSION:-0.4.12-rc.1}"
+VERSION="0.4.11"
 DEV="false"
 
 for arg in "$@"; do
@@ -24,7 +24,6 @@ for arg in "$@"; do
       ;;
   esac
 done
-VERSION="0.4.11"
 
 INSTALL_DIR="/usr/local/bin"           # CLI install location
 
