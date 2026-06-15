@@ -748,6 +748,11 @@ fn get_default_modelfile(memory_mode: bool) -> Result<PathBuf> {
     if memory_mode {
         let path = DefaultProvider.get_lib_dir()?.join("modelfiles/mem-agent");
         Ok(path)
+    } else if cfg!(target_os = "linux") {
+        let path = DefaultProvider
+            .get_lib_dir()?
+            .join("modelfiles/gpt-oss-gguf");
+        Ok(path)
     } else {
         let path = DefaultProvider.get_lib_dir()?.join("modelfiles/gpt-oss");
         Ok(path)
@@ -1378,6 +1383,18 @@ mod tests {
     use crate::core::chats::create_session;
     use crate::core::chats::tests::create_user;
     use rusqlite::Connection;
+
+    #[test]
+    fn default_modelfile_uses_platform_default() {
+        let path = get_default_modelfile(false).expect("default modelfile should resolve");
+
+        if cfg!(target_os = "linux") {
+            assert!(path.ends_with("modelfiles/gpt-oss-gguf"));
+        } else {
+            assert!(path.ends_with("modelfiles/gpt-oss"));
+        }
+    }
+
     #[test]
     fn status_lines_show_defaults_without_session_or_atproto_login() {
         let state = GetStateData {

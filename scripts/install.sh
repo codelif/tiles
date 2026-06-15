@@ -1,10 +1,29 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ENV="prod" # prod is another env, try taking it from github env
 REPO="tilesprivacy/tiles"
 
 VERSION="0.4.11"
+DEV="false"
+
+for arg in "$@"; do
+  case "$arg" in
+    --dev|-dev)
+      DEV="true"
+      ;;
+    -h|--help)
+      echo "Usage: scripts/install.sh [--dev]"
+      echo ""
+      echo "  --dev   Install from a local dist/*.tar.gz instead of GitHub"
+      exit 0
+      ;;
+    *)
+      echo "Unknown argument: $arg" >&2
+      echo "Usage: scripts/install.sh [--dev]" >&2
+      exit 1
+      ;;
+  esac
+done
 
 INSTALL_DIR="/usr/local/bin"           # CLI install location
 
@@ -18,6 +37,19 @@ TMPDIR="$(mktemp -d)"
 OS=$(uname -s | tr '[:upper:]' '[:lower:]')
 ARCH=$(uname -m)
 
+if [[ "${OS}" == "linux" && "$(id -u)" != "0" ]]; then
+  INSTALL_DIR="${HOME}/.local/bin"
+  LIB_DIR="${XDG_DATA_HOME:-${HOME}/.local/share}/tiles"
+else
+  INSTALL_DIR="/usr/local/bin"
+  LIB_DIR="/usr/local/share/tiles"
+fi
+
+SERVER_DIR="${LIB_DIR}/server"         # Python server folder
+MODELFILE_DIR="${LIB_DIR}/modelfiles"  # Modelfile server folder
+PI_DIR="${LIB_DIR}/pi"
+
+TMPDIR="$(mktemp -d)"
 
 log() { echo -e "\033[1;36m$*\033[0m"; }
 err() { echo -e "\033[1;31m$*\033[0m" >&2; exit 1; }
@@ -25,15 +57,36 @@ warn() {
   printf "\033[1;33m%s\033[0m\n" "$*"
 }
 
-log "⬇️  Downloading Tiles (${VERSION}) for ${ARCH}-${OS}..."
+if [[ "${DEV}" == "true" ]]; then
+  log "⬇️  Installing local Tiles build for ${ARCH}-${OS}..."
+else
+  log "⬇️  Downloading Tiles (${VERSION}) for ${ARCH}-${OS}..."
+fi
 
-
-if [[ "$ENV" == "prod" ]]; then
+if [[ "${DEV}" == "false" ]]; then
   TAR_URL="https://github.com/${REPO}/releases/download/${VERSION}/tiles-v${VERSION}-${ARCH}-${OS}.tar.gz"
   curl -fL -o "${TMPDIR}/tiles.tar.gz" "$TAR_URL"
 else
-  # Installer suppose to ran from tiles root folder after running the bundler
-  mv "dist/tiles-v${VERSION}-${ARCH}-${OS}.tar.gz" "${TMPDIR}/tiles.tar.gz"
+  if [[ -n "${TILES_DEV_TARBALL:-}" ]]; then
+    LOCAL_TARBALL="${TILES_DEV_TARBALL}"
+  else
+    LOCAL_TARBALL=""
+    shopt -s nullglob
+    LOCAL_TARBALLS=(dist/tiles-v*-"${ARCH}"-"${OS}".tar.gz)
+    shopt -u nullglob
+    for candidate in "${LOCAL_TARBALLS[@]}"; do
+      if [[ -z "${LOCAL_TARBALL}" || "${candidate}" -nt "${LOCAL_TARBALL}" ]]; then
+        LOCAL_TARBALL="${candidate}"
+      fi
+    done
+  fi
+
+  if [[ -z "${LOCAL_TARBALL}" || ! -f "${LOCAL_TARBALL}" ]]; then
+    err "No local Tiles tarball found. Run just bundle first, or set TILES_DEV_TARBALL=/path/to/tar.gz."
+  fi
+
+  log "📦 Using local Tiles tarball ${LOCAL_TARBALL}"
+  cp "${LOCAL_TARBALL}" "${TMPDIR}/tiles.tar.gz"
 fi
 
 echo "⬇️ Installing tiles..."
@@ -78,7 +131,9 @@ done
 rm -rf *.tar.xz
 
 cpython3.13/bin/python cpython3.13/postinstall.py
-framework-mlx/bin/python framework-mlx/postinstall.py
+if [[ -x framework-mlx/bin/python ]]; then
+  framework-mlx/bin/python framework-mlx/postinstall.py
+fi
 app-server/bin/python app-server/postinstall.py
 
 rm -rf "${TMPDIR}"

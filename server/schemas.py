@@ -239,6 +239,11 @@ class GenerationMetrics:
     total_latency_s: float  # End-to-end latency in seconds
 
 
+@dataclass
+class ToolCallStart:
+    name: str
+
+
 from enum import IntEnum
 
 

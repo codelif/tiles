@@ -1,18 +1,14 @@
 [project]
 name = "server"
 version = "0.1.0"
-description = "Local MLX inference server for the Tiles CLI"
+description = "Local inference server for the Tiles CLI"
 requires-python = "==3.13.*"
 dependencies = [
     "fastapi==0.119.0",
     "uvicorn==0.38.0",
-    "mlx-lm==0.31.0",
-    "black==25.9.0",
-    # "oss-harmony",
     "openai-harmony==0.0.8",
     "httpx==0.28.1",
     "openresponses-types",
-    # "oss-harmony @ git+https://github.com/oss-harmony/harmony.git@main"
 ]
 
 [build-system]
@@ -23,7 +19,7 @@ build-backend = "setuptools.build_meta"
 exclude = ["backend", "backend.*"]
 
 [tool.uv]
-exclude-newer="2026-04-05T09:43:13.300458+00:00"
+exclude-newer="2026-06-02T19:44:30+05:30"
 
 [dependency-groups]
 dev = [

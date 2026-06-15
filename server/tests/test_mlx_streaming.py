@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from server.backend import mlx
-from server.schemas import GenerationMetrics, ResponsesRequest
+from server.schemas import GenerationMetrics, ResponsesRequest, ToolCallStart
 
 
 class FakeTokenizer:
@@ -190,6 +190,58 @@ async def test_stream_emits_created_delta_completed_and_done():
     assert "event: response.output_item.done\n" in stream_text
     assert "event: response.completed\n" in stream_text
     assert stream_text.endswith("data: [DONE]\n\n")
+
+
+@pytest.mark.asyncio
+async def test_stream_strips_harmony_function_namespace():
+    request = ResponsesRequest(
+        model="mlx-community/gpt-oss-20b-MXFP4-Q4",
+        input=[
+            {
+                "role": "user",
+                "content": [{"type": "input_text", "text": "read changelog.md"}],
+            }
+        ],
+        stream=True,
+        tools=[
+            {
+                "type": "function",
+                "name": "read",
+                "description": "Read a file",
+                "parameters": {
+                    "type": "object",
+                    "required": ["path"],
+                    "properties": {"path": {"type": "string"}},
+                },
+                "strict": False,
+            }
+        ],
+    )
+    fake_response = SimpleNamespace(status_code=200, text="/tmp/model-cache")
+    runner = FakeRunner(
+        tokens=[
+            "**[Reasoning]**",
+            "Need to read file.",
+            ToolCallStart("functions.read"),
+            '{"path":"changelog.md"}',
+        ]
+    )
+
+    with (
+        patch.object(mlx.client, "get", AsyncMock(return_value=fake_response)),
+        patch.object(mlx, "get_or_load_model", return_value=runner),
+        patch.object(mlx, "is_harmony_family", return_value=True),
+    ):
+        chunks = await collect_stream(request)
+
+    done_event = next(
+        chunk
+        for chunk in chunks
+        if chunk.startswith("event: response.function_call_arguments.done")
+    )
+    done_payload = json.loads(done_event.splitlines()[1].removeprefix("data: "))
+
+    assert done_payload["name"] == "read"
 
 
 @pytest.mark.asyncio

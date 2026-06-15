@@ -2,6 +2,7 @@
 
 use std::{
     os::unix::process::CommandExt,
+    path::PathBuf,
     process::{Command, Stdio},
     sync::Arc,
     time::Duration,
@@ -95,9 +96,9 @@ async fn start_daemon(port: Option<u32>) -> Result<()> {
         .append(true)
         .open(data_dir.join("logs/daemon.err.log"))?;
     let base_command = if cfg!(debug_assertions) {
-        "target/debug/tiles"
+        PathBuf::from("target/debug/tiles")
     } else {
-        "tiles"
+        std::env::current_exe().unwrap_or_else(|_| PathBuf::from("tiles"))
     };
     let _process = unsafe {
         Command::new(base_command)

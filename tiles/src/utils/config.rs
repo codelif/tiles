@@ -9,7 +9,7 @@
 ///     - /logs
 ///     - /data (default, user can change this location tho)
 ///         - /memory (memory stored as PKM)
-/// - /usr/local/share/tiles (lib dir) - Some internal App files, libraries etc go here..
+/// - /usr/local/share/tiles or ~/.local/share/tiles (lib dir) - Some internal App files, libraries etc go here..
 ///     - /modelfiles
 ///     - /server
 ///     - /models - Where the pre-downloaded models.
@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
 use std::fs::File;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::time::SystemTime;
 use std::{env, fs};
@@ -73,6 +73,12 @@ pub struct PiProviderConfig {
 pub struct PiProviderModelConfig {
     pub id: String,
     pub reasoning: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "contextWindow")]
+    pub context_window: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "maxTokens")]
+    pub max_tokens: Option<u32>,
 }
 const MODEL_SUB_PATH: &str = "models/huggingface/hub";
 pub trait ConfigProvider {
@@ -172,10 +178,42 @@ impl ConfigProvider for DefaultProvider {
             let base_dir = env::current_dir().context("Failed to fetch CURRENT_DIR")?;
             Ok(base_dir.join(".tiles_dev/tiles"))
         } else {
-            let data_dir = PathBuf::from_str("/usr/local/share")?;
-            Ok(data_dir.join("tiles"))
+            // first check is that, let's say I have all the 3 folders (pi, modelfiles, server) in a portable folder somewhere,
+            // and then we run the tiles binary from there like ./tiles
+            // so first it checks if these folders exist right beside the binary (aka some portable folder and not in /usr or /.local)
+            // then it should have no issues running
+            if let Ok(current_exe) = env::current_exe()
+                && let Some(exe_dir) = current_exe.parent()
+                && is_tiles_lib_dir(exe_dir)
+            {
+                return Ok(exe_dir.to_path_buf());
+            }
+
+            // If it's not next to the executable, then check if these folders are in /usr/local/share/tiles
+            let system_lib_dir = PathBuf::from_str("/usr/local/share/tiles")?;
+            if is_tiles_lib_dir(&system_lib_dir) {
+                return Ok(system_lib_dir);
+            }
+
+            // If not in the global root share files, then finally, if these files are in ~/.local/share/tiles
+            // then tiles can pick that up
+            let home_dir = env::home_dir().context("Failed to fetch $HOME")?;
+            let data_dir = match env::var("XDG_DATA_HOME") {
+                Ok(val) => PathBuf::from(val),
+                Err(_err) => home_dir.join(".local/share"),
+            };
+            let user_lib_dir = data_dir.join("tiles");
+            if is_tiles_lib_dir(&user_lib_dir) {
+                return Ok(user_lib_dir);
+            }
+
+            Ok(PathBuf::from_str("/usr/local/share/tiles")?)
         }
     }
+}
+
+fn is_tiles_lib_dir(path: &Path) -> bool {
+    path.join("modelfiles").is_dir() && path.join("server").is_dir() && path.join("pi").is_dir()
 }
 pub fn set_user_data_path(path: &str) -> Result<String> {
     set_user_data_path_with_provider(&DefaultProvider, path)
@@ -329,11 +367,12 @@ fn save_root_config(config: &RootConfig) -> Result<()> {
 }
 /// Get the apt path where the model in the system
 pub fn get_model_cache(model_name: &str) -> Result<PathBuf> {
-    let hf_model_dir = if model_name.starts_with("mlx-community/") {
+    let hf_model_dir = if model_name.contains("/") {
         let model_spec_parts = model_name.split("/").collect::<Vec<&str>>();
         format!("models--{}--{}", model_spec_parts[0], model_spec_parts[1])
     } else {
-        return Err(anyhow!("Not implemented for non-mlx models"));
+        return Err(anyhow!("Modelfile not found"));
+        // TODO: Check for a better Modilefile search instead of relying on checking "/"
     };
 
     let lib_dir = DefaultProvider.get_lib_dir()?;
@@ -428,7 +467,39 @@ fn do_update_current_model(config: &mut RootConfig, model_name: &str) -> Result<
     Ok(())
 }
 
+fn get_env_u32(name: &str) -> Option<u32> {
+    env::var(name).ok().and_then(|value| value.parse().ok())
+}
+
+fn get_pi_context_window_with_env<F>(get_env: &F) -> Option<u32>
+where
+    F: Fn(&str) -> Option<String>,
+{
+    get_env("TILES_LLAMA_CPP_MAX_CTX").and_then(|value| value.parse().ok())
+}
+
+fn get_pi_context_window() -> Option<u32> {
+    get_env_u32("TILES_LLAMA_CPP_MAX_CTX")
+}
+
+fn get_pi_max_tokens(context_window: Option<u32>) -> Option<u32> {
+    context_window.map(|context_window| context_window.clamp(4_096, 16_384))
+}
+
 pub fn create_pi_provider_config(model_name: &str, enpoint_base_url: &str) -> Result<String> {
+    create_pi_provider_config_with_env(model_name, enpoint_base_url, &|name| env::var(name).ok())
+}
+
+fn create_pi_provider_config_with_env<F>(
+    model_name: &str,
+    enpoint_base_url: &str,
+    get_env: &F,
+) -> Result<String>
+where
+    F: Fn(&str) -> Option<String>,
+{
+    let context_window = get_pi_context_window_with_env(get_env);
+    let max_tokens = get_pi_max_tokens(context_window);
     let provider_config = PiProviderConfig {
         api: String::from("openai-responses"),
         api_key: String::from("tiles"),
@@ -436,6 +507,8 @@ pub fn create_pi_provider_config(model_name: &str, enpoint_base_url: &str) -> Re
         models: vec![PiProviderModelConfig {
             id: model_name.to_string(),
             reasoning: true,
+            context_window,
+            max_tokens,
         }],
     };
 
@@ -460,9 +533,13 @@ fn try_update_pi_provider_model(config: &str, model_name: &str) -> Result<String
         .clone();
 
     if tiles_provider_config.models[0].id != model_name {
+        let context_window = get_pi_context_window();
+        let max_tokens = get_pi_max_tokens(context_window);
         tiles_provider_config.models = vec![PiProviderModelConfig {
             id: model_name.to_owned(),
             reasoning: true,
+            context_window,
+            max_tokens,
         }];
         let mut provider: HashMap<String, PiProviderConfig> = HashMap::new();
         provider.insert("tiles".to_owned(), tiles_provider_config);
@@ -488,6 +565,37 @@ pub fn update_inference_config(config: InferenceConfig) -> Result<()> {
 mod tests {
 
     use super::*;
+    use serde_json::Value;
+
+    fn expected_pi_provider_json(model_name: &str, endpoint_base_url: &str) -> Value {
+        let mut model = json!({
+            "id": model_name,
+            "reasoning": true
+        });
+
+        if let Some(context_window) = get_pi_context_window()
+            && let Value::Object(model_object) = &mut model
+        {
+            model_object.insert("contextWindow".to_owned(), json!(context_window));
+        }
+
+        if let Some(max_tokens) = get_pi_max_tokens(get_pi_context_window())
+            && let Value::Object(model_object) = &mut model
+        {
+            model_object.insert("maxTokens".to_owned(), json!(max_tokens));
+        }
+
+        json!({
+          "providers": {
+            "tiles": {
+              "api": "openai-responses",
+              "apiKey": "tiles",
+              "baseUrl": endpoint_base_url,
+              "models": [model]
+            }
+          }
+        })
+    }
 
     #[test]
     fn test_updating_current_model_first_time() {
@@ -534,23 +642,30 @@ mod tests {
 
         let config: PiModelConfig = serde_json::from_str(&config_str).unwrap();
 
-        let expected_json = json!({
-          "providers": {
-            "tiles": {
-              "api": "openai-responses",
-              "apiKey": "tiles",
-              "baseUrl": "http://127.0.0.1:0000/v1",
-              "models": [
-                {
-                  "id": "mlx-community/Qwen3.5-4B-MLX-4bit",
-                  "reasoning": true
-                }
-              ]
-            }
-          }
-        });
+        let expected_json = expected_pi_provider_json(
+            "mlx-community/Qwen3.5-4B-MLX-4bit",
+            "http://127.0.0.1:0000/v1",
+        );
 
         assert_eq!(expected_json, serde_json::to_value(&config).unwrap())
+    }
+
+    #[test]
+    fn test_pi_provider_uses_llama_cpp_context_env() {
+        let config_str = create_pi_provider_config_with_env(
+            "unsloth/gpt-oss-20b-GGUF",
+            "http://127.0.0.1:6969/v1",
+            &|name| match name {
+                "TILES_LLAMA_CPP_MAX_CTX" => Some("12000".to_owned()),
+                _ => None,
+            },
+        )
+        .unwrap();
+        let config: Value = serde_json::from_str(&config_str).unwrap();
+        let model = &config["providers"]["tiles"]["models"][0];
+
+        assert_eq!(model["contextWindow"], 12_000);
+        assert_eq!(model["maxTokens"], 12_000);
     }
 
     #[test]
@@ -563,21 +678,10 @@ mod tests {
 
         let config: PiModelConfig = serde_json::from_str(&config_str).unwrap();
 
-        let expected_json = json!({
-          "providers": {
-            "tiles": {
-              "api": "openai-responses",
-              "apiKey": "tiles",
-              "baseUrl": "http://127.0.0.1:0000/v1",
-              "models": [
-                {
-                  "id": "mlx-community/Qwen3.5-4B-MLX-4bit",
-                  "reasoning": true
-                }
-              ]
-            }
-          }
-        });
+        let expected_json = expected_pi_provider_json(
+            "mlx-community/Qwen3.5-4B-MLX-4bit",
+            "http://127.0.0.1:0000/v1",
+        );
 
         assert_eq!(expected_json, serde_json::to_value(&config).unwrap());
 
@@ -585,22 +689,7 @@ mod tests {
 
         let new_config: PiModelConfig = serde_json::from_str(&new_config_str).unwrap();
 
-        let expected_json = json!({
-          "providers": {
-            "tiles": {
-              "api": "openai-responses",
-              "apiKey": "tiles",
-              "baseUrl": "http://127.0.0.1:0000/v1",
-              "models": [
-                {
-                  "id": "new_model",
-                  "reasoning": true
-                }
-
-              ]
-            }
-          }
-        });
+        let expected_json = expected_pi_provider_json("new_model", "http://127.0.0.1:0000/v1");
 
         assert_eq!(expected_json, serde_json::to_value(&new_config).unwrap());
         assert_ne!(config_str, new_config_str);
@@ -616,21 +705,10 @@ mod tests {
 
         let config: PiModelConfig = serde_json::from_str(&config_str).unwrap();
 
-        let expected_json = json!({
-          "providers": {
-            "tiles": {
-              "api": "openai-responses",
-              "apiKey": "tiles",
-              "baseUrl": "http://127.0.0.1:0000/v1",
-              "models": [
-                {
-                  "id": "mlx-community/Qwen3.5-4B-MLX-4bit",
-                  "reasoning": true
-                }
-              ]
-            }
-          }
-        });
+        let expected_json = expected_pi_provider_json(
+            "mlx-community/Qwen3.5-4B-MLX-4bit",
+            "http://127.0.0.1:0000/v1",
+        );
 
         assert_eq!(expected_json, serde_json::to_value(&config).unwrap());
 

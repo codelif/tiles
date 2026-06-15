@@ -1,22 +1,14 @@
 import logging
-import sys
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse, JSONResponse
-from fastapi.exceptions import RequestValidationError
-from openai_harmony import Role
-from openresponses_types import InputTextContentParam
-from pydantic import BaseModel, Field, ValidationError
 
 from . import runtime
 from .schemas import (
-    CUserMessageItemParam,
-    ChatCompletionRequest,
     ChatMessage,
     ResponsesRequest,
     StartRequest,
-    downloadRequest,
 )
 
 logger = logging.getLogger("app")

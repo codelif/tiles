@@ -8,10 +8,7 @@ SERVER_DIR="server"
 TARGET="release"
 
 VERSION=$(grep '^version' tiles/Cargo.toml | head -1 | awk -F'"' '{print $2}')
-OS=$(uname -s | tr '[:upper:]' '[:lower:]')
-ARCH=$(uname -m)
-
-OUT_NAME="${BINARY_NAME}-v${VERSION}-${ARCH}-${OS}"
+STACK_SPEC="server/stack/macos/venvstacks.toml"
 
 echo "🚀 Building ${BINARY_NAME} (${TARGET} mode)..."
 
@@ -76,15 +73,15 @@ rm -rf "${SERVER_DIR}/stack_export_prod"
 
 echo "🔒 Locking the venvstack...."
 
-venvstacks lock server/stack/venvstacks.toml
+venvstacks lock "${STACK_SPEC}"
 
 echo "🛠️ Building the venvstack...."
 
-venvstacks build server/stack/venvstacks.toml
+venvstacks build "${STACK_SPEC}"
 
 echo "📦 Publishing the venvstack...."
 
-venvstacks publish --tag-outputs --output-dir ../stack_export_prod server/stack/venvstacks.toml
+venvstacks publish --tag-outputs --output-dir ../../stack_export_prod "${STACK_SPEC}"
 
 cp -r "${SERVER_DIR}" "${PKG_LIBS_PATH}"
 

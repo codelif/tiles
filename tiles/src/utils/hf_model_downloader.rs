@@ -20,6 +20,8 @@ pub async fn snapshot_download(modelname: &str) -> Result<()> {
         ".md",
         ".gitattributes",
         "LICENSE",
+        "Q4_K_M.gguf",
+        "q4_k_m.gguf",
     ];
     let api_build_result = ApiBuilder::new()
         .with_progress(true)

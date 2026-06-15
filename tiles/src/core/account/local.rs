@@ -731,9 +731,13 @@ pub mod tests {
         RootUser, create_root_account, get_current_user, get_root_user_details, set_nickname,
     };
     use anyhow::Result;
-    use keyring::{mock, set_default_credential_builder};
     use rusqlite::Connection;
     use toml::Table;
+
+    fn use_sample_keyring_store() -> Result<()> {
+        keyring_core::set_default_store(keyring_core::sample::Store::new()?);
+        Ok(())
+    }
 
     #[test]
     fn test_get_root_user_details_empty_id() -> Result<()> {
@@ -784,8 +788,8 @@ pub mod tests {
     }
 
     #[tokio::test]
-    async fn test_create_root_account_new() {
-        set_default_credential_builder(mock::default_credential_builder());
+    async fn test_create_root_account_new() -> Result<()> {
+        use_sample_keyring_store()?;
         let config: Table = toml::from_str(
             r#"
                 [root-user]
@@ -809,11 +813,12 @@ pub mod tests {
                 .unwrap()
                 .starts_with("did:key")
         );
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_create_root_account_new_w_nickname() {
-        set_default_credential_builder(mock::default_credential_builder());
+    async fn test_create_root_account_new_w_nickname() -> Result<()> {
+        use_sample_keyring_store()?;
         let config: Table = toml::from_str(
             r#"
                 [root-user]
@@ -844,6 +849,7 @@ pub mod tests {
             root_user.get("nickname").unwrap().as_str().unwrap(),
             "madclaws"
         );
+        Ok(())
     }
 
     #[test]

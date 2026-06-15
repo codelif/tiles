@@ -43,13 +43,29 @@ This guide will help you set up a reproducible development environment for Tiles
      pip install uv
      ```
 
-   - Sync Python dependencies:
+   - Sync common Python dependencies:
 
      ```sh
      cd server
      uv sync
+     ```
+
+   - Install the platform inference dependencies:
+
+     ```sh
+     # macOS Apple Silicon
+     uv pip install -r requirements-macos.txt
+     ```
+
+     ```sh
+     # Linux x86_64 with CUDA
+     uv pip install -r requirements-linux.txt
+     ```
+
+     ```sh
      cd ..
      ```
+
 ### Embedding Pi
 
 [Pi](https://github.com/badlogic/pi-mono) is a minimal coding agent for agentic harness. We embed Pi in Tiles so that it can sit in between the CLI and inference layer to provide more powerful features for the regular knowledge work, agent harness and whatever that comes in future is just an extension away thus making Tiles flexible and can ride the wave of standards.

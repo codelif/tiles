@@ -10,11 +10,37 @@ use dialog_credentials::{
     native::{SigningKey, VerifyingKey},
 };
 use dialog_varsig::Principal;
-use keyring::Entry;
+use keyring_core::Entry;
 use log::info;
 
 type Did = String;
 type Identity = Did;
+
+fn keyring_entry(app: &str, key: &str) -> Result<Entry> {
+    ensure_keyring_store()?;
+    Ok(Entry::new(app, key)?)
+}
+
+fn ensure_keyring_store() -> Result<()> {
+    if keyring_core::get_default_store().is_some() {
+        return Ok(());
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        keyring_core::set_default_store(dbus_secret_service_keyring_store::Store::new()?);
+        Ok(())
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        keyring_core::set_default_store(apple_native_keyring_store::keychain::Store::new()?);
+        return Ok(());
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    anyhow::bail!("secure storage is not supported on this platform");
+}
 
 /// Creates an `Identity` for given application
 /// The keypair generated will be stored in OS secure storage
@@ -29,7 +55,7 @@ pub async fn create_identity(app: &str) -> Result<Identity> {
 
     let signer = Ed25519Signer::import(key_material).await?;
     let did = signer.ed25519_did().did().to_string();
-    let entry = Entry::new(app, &did)?;
+    let entry = keyring_entry(app, &did)?;
     info!("secure did {}", &did);
     entry.set_secret(&signing_key.to_keypair_bytes())?;
     Ok(did)
@@ -42,7 +68,7 @@ pub async fn create_identity(app: &str) -> Result<Identity> {
 /// - `app`- The service for which Identity is made (for ex: tiles)
 /// - `did` - The `Identity` of the service
 pub fn get_secret_key(app: &str, did: &str) -> Result<[u8; 32]> {
-    let entry = Entry::new(app, did)?;
+    let entry = keyring_entry(app, did)?;
     let mut bytes: [u8; 64] = [0u8; 64];
     let secret_pair = entry.get_secret()?;
 
@@ -60,7 +86,7 @@ pub fn get_secret_key(app: &str, did: &str) -> Result<[u8; 32]> {
 /// - `did` - The `Identity` of the service
 pub fn get_signing_key(app: &str, did: &str) -> Result<SigningKey> {
     info!("secure did {}", &did);
-    let entry = Entry::new(app, did)?;
+    let entry = keyring_entry(app, did)?;
     let mut bytes: [u8; 64] = [0u8; 64];
     let secret_pair = entry.get_secret()?;
 
@@ -72,13 +98,13 @@ pub fn get_signing_key(app: &str, did: &str) -> Result<SigningKey> {
 pub fn create_and_save_passkey(app: &str, key: &str) -> Result<String> {
     let rand_bytes = get_random_bytes_32()?;
     let rand_hex: String = rand_bytes.iter().map(|b| format!("{:02x}", b)).collect();
-    let entry = Entry::new(app, key)?;
+    let entry = keyring_entry(app, key)?;
     entry.set_secret(rand_bytes.as_slice())?;
     Ok(rand_hex)
 }
 
 pub fn get_passkey(app: &str, key: &str) -> Result<String> {
-    let entry = Entry::new(app, key)?;
+    let entry = keyring_entry(app, key)?;
     let secret = entry.get_secret()?;
     Ok(to_hex(secret.as_slice()))
 }
@@ -114,13 +140,16 @@ pub fn get_random_bytes_32() -> Result<[u8; 32]> {
 
 #[cfg(test)]
 mod tests {
-    use keyring::{mock, set_default_credential_builder};
-
     use super::*;
+
+    fn use_sample_keyring_store() -> Result<()> {
+        keyring_core::set_default_store(keyring_core::sample::Store::new()?);
+        Ok(())
+    }
 
     #[tokio::test]
     async fn test_create_success() -> Result<()> {
-        set_default_credential_builder(mock::default_credential_builder());
+        use_sample_keyring_store()?;
         let did = create_identity("tiles").await?;
         assert!(did.starts_with("did:key"));
         Ok(())

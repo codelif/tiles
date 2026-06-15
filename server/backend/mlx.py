@@ -1,9 +1,6 @@
-import json
 import logging
 import time
 import uuid
-import random
-import string
 from collections.abc import AsyncGenerator
 from fastapi import HTTPException
 from openresponses_types.types import (
@@ -13,12 +10,21 @@ from openresponses_types.types import (
 )
 
 from .commons import (
-    get_reasoning_effort,
+    _get_response_on_completed,
+    _get_response_on_create,
+    _process_error_event,
+    _process_init_reasoning_events,
+    _process_output_item_added,
+    _process_output_item_delta,
+    _process_output_item_done,
+    _process_stop_reasoning_events,
+    _process_stop_tool_call_events,
+    _sse,
     build_harmony_conversation,
-    is_harmony_family,
+    get_reasoning_effort,
     handle_response_input,
+    is_harmony_family,
 )
-from .commons import get_tool_call_id
 
 from ..schemas import (
     GenerationMetrics,
@@ -89,7 +95,8 @@ async def generate_response_chat_stream(
     if is_harmony_family(request.model):
         reasoning_effort = get_reasoning_effort(request.reasoning.effort)
         convo = build_harmony_conversation(
-            reasoning_effort, request.input  # pyright: ignore
+            reasoning_effort,
+            request.input,  # pyright: ignore
         )
 
     input_tokens = len(runner.tokenizer.encode(user_input_content))  # pyright: ignore
@@ -140,7 +147,7 @@ async def generate_response_chat_stream(
                 continue
 
             if isinstance(token, ToolCallStart):
-                tool_name = token.name
+                tool_name = token.name                
                 token = "**[ToolCall]**\n\n"
 
             if not isinstance(token, str):
@@ -154,10 +161,10 @@ async def generate_response_chat_stream(
                 state = "reasoning"
 
             if "**[ToolCall]**" in token:
-                print("start tool call")
                 last_state = state
                 state = "toolcall"
                 tool_id = f"toolcall_{uuid.uuid4()}"
+                # Start fresh so arguments from the last tool call are not reused. I did the same in Linux.
                 tool_call_text = ""
                 content_index = 0
 
@@ -184,6 +191,7 @@ async def generate_response_chat_stream(
                             output_index,
                             tool_call_text,
                             sequence_number,
+                            request,
                             tool_name,
                         )
                     )
@@ -234,7 +242,7 @@ async def generate_response_chat_stream(
                     yield resp_str
                 # To avoid toolcall tag in the final arguments txt
                 if content_index != 0:
-                    tool_call_text += token
+                    tool_call_text += token      
                     output_item = OutputItemDeltaModel(
                         item_name="function_call_arguments",
                         item_id=tool_id,
@@ -284,7 +292,7 @@ async def generate_response_chat_stream(
         yield resp_str
     elif state == "toolcall":
         resp_str, sequence_number, output_index, item = _process_stop_tool_call_events(
-            tool_id, output_index, tool_call_text, sequence_number, tool_name
+            tool_id, output_index, tool_call_text, sequence_number, request, tool_name
         )
         output_items.append(item)
         yield resp_str
@@ -317,130 +325,6 @@ async def generate_response_chat_stream(
     return
 
 
-def _sse(event_name: str, payload: dict, current_seq_no: int) -> tuple[str, int]:
-    seq_no = current_seq_no + 1
-    event = {
-        "type": event_name,
-        "sequence_number": seq_no,
-    }
-    event.update(payload)
-    event_str = f"event: {event_name}\ndata: {json.dumps(event)}\n\n"
-
-    return event_str, seq_no
-
-
-def _get_response_on_create(
-    response_id: str,
-    request: ResponsesRequest,
-    created_at: int,
-) -> dict:
-    created_response = {
-        "id": response_id,
-        "object": "response",
-        "created_at": created_at,
-        "completed_at": None,
-        "status": "in_progress",
-        "output": [],
-        "incomplete_details": None,
-        "text": {"format": {"type": "text"}, "verbosity": "low"},
-        "paralell_tool_calls": 0,
-        "truncation": "disabled",
-        "tool_choice": "auto",
-        "error": {"code": "", "message": ""},
-    }
-    created_response.update(_get_commons_responses(request))
-    return created_response
-
-
-def _get_response_on_completed(
-    response_id: str,
-    request: ResponsesRequest,
-    created_at: int,
-    output: list,
-    usage: Usage,
-) -> dict:
-    completed_at = int(time.time())
-    completed_response = {
-        "id": response_id,
-        "object": "response",
-        "created_at": created_at,
-        "completed_at": completed_at,
-        "status": "completed",
-        "output": output,
-        "incomplete_details": None,
-        "text": {"format": {"type": "text"}, "verbosity": "low"},
-        "paralell_tool_calls": 0,
-        "truncation": "disabled",
-        "tool_choice": "auto",
-        "error": {"code": "", "message": ""},
-        "usage": {
-            "input_tokens": usage.input_tokens,
-            "output_tokens": usage.output_tokens,
-            "total_tokens": usage.total_tokens,
-            "input_token_details": {
-                "cached_tokens": usage.input_tokens_details.cached_tokens
-            },
-            "output_token_details": {
-                "reasoning_tokens": usage.output_tokens_details.reasoning_tokens
-            },
-        },
-    }
-    completed_response.update(_get_commons_responses(request))
-    return completed_response
-
-
-def _get_response_on_error(
-    response_id: str,
-    request: ResponsesRequest,
-    created_at: int,
-    incomplete_details: dict,
-    error: dict,
-) -> dict:
-    created_response = {
-        "id": response_id,
-        "object": "response",
-        "created_at": created_at,
-        "completed_at": None,
-        "status": "failed",
-        "output": [],
-        "incomplete_details": incomplete_details,
-        "text": {"format": {"type": "text"}, "verbosity": "low"},
-        "paralell_tool_calls": 0,
-        "truncation": "disabled",
-        "tool_choice": "auto",
-        "error": error,
-    }
-    created_response.update(_get_commons_responses(request))
-    return created_response
-
-
-def _get_commons_responses(request: ResponsesRequest):
-    if request.tools != None:
-        tools_as_dicts = [t.model_dump() for t in request.tools]  # pyright: ignore
-    else:
-        tools_as_dicts = None
-
-    return {
-        "model": request.model,
-        "previous_response_id": request.previous_response_id,
-        "instructions": request.instructions,
-        "temperature": request.temperature,
-        "prompt_cache_key": request.prompt_cache,
-        "safety_identifier": request.safety_identifier,
-        "service_tier": request.service_tier,
-        "background": request.background,
-        "store": request.store,
-        "max_tool_calls": request.max_tool_calls,
-        "max_output_tokens": request.max_output_tokens,
-        "reasoning": {"effort": request.reasoning.effort, "summary": "disabled"},
-        "top_logprobs": request.top_logprobs,
-        "frequency_penalty": 0,
-        "presence_penalty": 0,
-        "top_p": request.top_p,
-        "tools": tools_as_dicts,
-    }
-
-
 async def _get_runner(model: str):
     # comms w tiles daemon to get correct model local path
     response = await client.get(
@@ -455,207 +339,3 @@ async def _get_runner(model: str):
 
     runner = get_or_load_model(model, model_cache_path)
     return runner
-
-
-def _process_output_item_delta(
-    output_item: OutputItemDeltaModel, sequence_number: int
-) -> tuple[str, int]:
-    event_name = ".".join(["response", output_item.item_name, "delta"])
-
-    event = {
-        "output_index": output_item.index,
-        "item_id": output_item.item_id,
-        "delta": output_item.delta,
-        "content_index": output_item.content_index,
-    }
-
-    return _sse(event_name, event, sequence_number)
-
-
-def _process_output_item_added(
-    type: str,
-    id: str,
-    token: str,
-    output_index,
-    sequence_number: int,
-    tool_name: str | None = None,
-) -> tuple[str, int]:
-    event_name = "response.output_item.added"
-    if type == "function_call":
-        if not tool_name:
-            print("Tool name is empty")
-        item_chunk = {
-            "type": type,
-            "id": id,
-            "name": tool_name,
-            "call_id": get_tool_call_id(id),
-            "status": "in_progress",
-        }
-    else:
-        item_chunk = {
-            "type": type,
-            "id": id,
-            "status": "in_progress",
-            "role": "assistant",
-            "content": [
-                {
-                    "type": "output_text",
-                    "text": token,
-                }
-            ],
-        }
-    event = {
-        "output_index": output_index,
-        "item": item_chunk,
-    }
-    return _sse(event_name, event, sequence_number)
-
-
-def _process_init_reasoning_events(
-    id: str, token: str, output_index, sequence_number: int
-) -> tuple[str, int]:
-    resp_str_a, sequence_number = _process_output_item_added(
-        "reasoning", id, token, output_index, sequence_number
-    )
-
-    event_name = "response.reasoning_summary_part.added"
-    event = {
-        "output_index": output_index,
-        "item_id": id,
-        "part": {"text": token, "type": "summary_text"},
-        "summary_index": 0,
-    }
-    resp_str, sequence_number = _sse(event_name, event, sequence_number)
-    return resp_str_a + resp_str, sequence_number
-
-
-def _process_stop_reasoning_events(
-    id: str, output_index: int, text: str, sequence_number: int
-) -> tuple[str, int, int, dict]:
-    payload = {
-        "item_id": id,
-        "output_index": output_index,
-        "text": text,
-    }
-    resp_str_a, sequence_number = _sse(
-        "response.reasoning_summary_text.done", payload, sequence_number
-    )
-    event_name = "response.reasoning_summary_part.done"
-    event = {
-        "output_index": output_index,
-        "item_id": id,
-        "part": {"text": text, "type": "summary_text"},
-        "summary_index": 0,
-    }
-    resp_str_b, sequence_number = _sse(event_name, event, sequence_number)
-    resp_str_c, sequence_number, output_index, item_chunk = _process_output_item_done(
-        "reasoning", id, text, output_index, sequence_number
-    )
-    return (
-        resp_str_a + resp_str_b + resp_str_c,
-        sequence_number,
-        output_index,
-        item_chunk,
-    )
-
-
-def _process_output_item_done(
-    type: str,
-    id: str,
-    final_text: str,
-    output_index,
-    sequence_number: int,
-    tool_name: str | None = None,
-) -> tuple[str, int, int, dict]:
-    event_name = "response.output_item.done"
-    item_chunk: dict
-    if type == "function_call":
-        try:
-            arguments_map = json.loads(final_text)
-        except json.JSONDecodeError as e:
-            arguments_map = {}
-
-        new_args = {
-            ("command" if k == "cmd" else k): v for k, v in arguments_map.items()
-        }
-
-        item_chunk = {
-            "type": type,
-            "id": id,
-            "name": tool_name,
-            "call_id": get_tool_call_id(id),
-            "status": "completed",
-            "arguments": json.dumps(new_args),
-        }
-    else:
-        item_chunk = {
-            "type": type,
-            "id": id,
-            "status": "completed",
-            "role": "assistant",
-            "content": [
-                {
-                    "type": "output_text",
-                    "text": final_text,
-                }
-            ],
-        }
-    if type == "reasoning":
-        item_chunk.update({"summary": [{"type": "summary_text", "text": final_text}]})
-    event = {
-        "output_index": output_index,
-        "item": item_chunk,
-    }
-    resp_str, sequence_number = _sse(event_name, event, sequence_number)
-    output_index = output_index + 1
-    return resp_str, sequence_number, output_index, item_chunk
-
-
-def _process_error_event(
-    err: str,
-    response_id: str,
-    request: ResponsesRequest,
-    created_at: int,
-    sequence_number: int,
-) -> tuple[str, int]:
-    error = {"message": err, "code": "500"}
-    incomplete_details = {"reason": "internal server error"}
-
-    err_response = _get_response_on_error(
-        response_id, request, created_at, incomplete_details, error
-    )
-    return _sse("response.failed", {"response": err_response}, sequence_number)
-
-
-def _process_stop_tool_call_events(
-    id: str,
-    output_index: int,
-    text: str,
-    sequence_number: int,
-    tool_name: str | None = None,
-) -> tuple[str, int, int, dict]:
-    event_name = "response.function_call_arguments.done"
-
-    try:
-        arguments_map = json.loads(text)
-    except json.JSONDecodeError as e:
-        arguments_map = {}
-
-    new_args = {("command" if k == "cmd" else k): v for k, v in arguments_map.items()}
-
-    event = {
-        "output_index": output_index,
-        "item_id": id,
-        "name": tool_name,
-        "arguments": json.dumps(new_args),
-    }
-    resp_str_a, sequence_number = _sse(event_name, event, sequence_number)
-    resp_str_b, sequence_number, output_index, item_chunk = _process_output_item_done(
-        "function_call", id, text, output_index, sequence_number, tool_name
-    )
-    return (
-        resp_str_a + resp_str_b,
-        sequence_number,
-        output_index,
-        item_chunk,
-    )
