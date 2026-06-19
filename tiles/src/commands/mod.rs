@@ -5,9 +5,10 @@ use std::io;
 use anyhow::{Result, anyhow};
 use owo_colors::OwoColorize;
 use tiles::core::account::local::{
-    RootUser, create_root_account, get_peer_list, get_root_user_details, save_root_account,
-    set_nickname, unlink,
+    RootUser, add_token, create_root_account, create_token, get_peer_list, get_root_user_details,
+    is_valid_delegation, save_root_account, set_nickname, unlink,
 };
+use tiles::core::network::link;
 use tiles::core::storage::db::Dbconn;
 use tiles::repl::{start_server_daemon, stop_server_daemon};
 use tiles::utils::config::{
@@ -259,7 +260,7 @@ pub async fn stop_server() {
 }
 
 #[allow(clippy::field_reassign_with_default)]
-pub fn set_inference_config_to_run_bg(is_background: bool) -> Result<()> {
+pub fn set_inference_config_to_daemon(is_background: bool) -> Result<()> {
     let new_inference = if let Some(mut inference_config) = get_inference_config()? {
         inference_config.daemon = is_background;
         inference_config
@@ -348,6 +349,33 @@ pub fn unlink_peer(db_conn: &Dbconn, user_id: &str) -> Result<()> {
     Ok(())
 }
 
+pub async fn create_link(aud_did: Option<String>, db_conn: &Dbconn) -> Result<()> {
+    if let Some(audience_did) = aud_did {
+        // aud_did is there, so definitely trying online syncing
+        let token = create_token(&audience_did, db_conn).await?;
+        println!(
+            "\nHere's the UCAN token:\n{}\nPlease share this with {} out-of-band",
+            token, audience_did
+        );
+    } else {
+        // will do a syncronized linking over offline network
+        link(None).await?;
+    }
+    Ok(())
+}
+
+pub async fn add_link(token: String, db_conn: &Dbconn) -> Result<()> {
+    // 8 letter hex-code is used for offline link
+    if token.len() == 8 {
+        link(Some(token)).await?;
+    } else if is_valid_delegation(&token).is_ok() {
+        let token = add_token(&token, db_conn)?;
+        println!("Added the token from DID={}", token.did);
+    } else {
+        eprintln!("Invalid token")
+    }
+    Ok(())
+}
 #[cfg(test)]
 mod tests {
     use super::*;

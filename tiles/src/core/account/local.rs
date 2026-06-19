@@ -529,6 +529,19 @@ pub async fn create_invocation_token(token_delegated: &str, conn: &Connection) -
     generate_invocation_token(issuer, token_delegated).await
 }
 
+// TODO: Later add more validations as in  expiry, signature or are theses
+// done while parsingto a Delegation struct
+pub fn is_valid_delegation(token: &str) -> Result<()> {
+    if let Ok(token_bytes) = data_encoding::BASE64.decode(token.as_bytes())
+        && let Ok(_delegation) =
+            serde_ipld_dagcbor::from_slice::<Delegation<Ed25519Signature>>(&token_bytes)
+    {
+        Ok(())
+    } else {
+        Err(anyhow!("Invalid UCAN token"))
+    }
+}
+
 async fn generate_invocation_token(issuer: Ed25519Signer, token_delegated: &str) -> Result<String> {
     let token_delegated_in_bytes = data_encoding::BASE64.decode(token_delegated.as_bytes())?;
     let delegation: Delegation<Ed25519Signature> =
@@ -661,6 +674,7 @@ pub fn get_peer_list(db_conn: &Connection) -> Result<Vec<User>> {
     Ok(peer_list)
 }
 
+//TODO: Revoke the peers connected to online too
 pub fn unlink(db_conn: &Connection, user_id: &str) -> Result<()> {
     let user = get_current_user(db_conn)?;
     if user.user_id == user_id {
