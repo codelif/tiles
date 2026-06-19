@@ -40,14 +40,13 @@ use uuid::Uuid;
 use crate::core::{
     account::{
         self, get_did_from_public_key, get_public_key_from_did, get_random_bytes,
-        get_random_bytes_32,
         local::{
             create_invocation_token, fetch_token, get_app_secret_key, get_current_user,
             get_user_info, save_peer_account_db, verify_invocation,
         },
     },
     chats::{SyncOp, create_db_sync_channel},
-    network::ticket::{EndpointUserData, LinkTicket},
+    network::ticket::EndpointUserData,
     storage::db::{DBTYPE, get_db_conn},
 };
 use owo_colors::OwoColorize;
@@ -118,26 +117,21 @@ pub async fn link(ticket: Option<String>) -> Result<()> {
     let (sendx, mut recvx) = mpsc::channel(1);
     // if ticket's there, then this is link enable sender's  command, else receiver end
     if let Some(ticket) = ticket {
-        let (endpoint_id, mut did, mut nickname, topic_value) = parse_link_ticket(&ticket)?;
-
-        let topic_id = if is_online {
-            topic_value.expect("Expected topicId")
-        } else {
-            create_topic_id(DEVICE_LINK_LOCAL_TOPIC)
-        };
-
         if is_online {
-            bootstrap_ids.push(endpoint_id.expect("Expected an EndpointId as bootstrapId "))
-        } else {
-            println!("Searching for peers in the local network..");
-            let mdns = address_lookup::mdns::MdnsAddressLookup::builder().build(endpoint.id())?;
-            let (new_bootstrap_ids, user_data) =
-                find_offline_bootstrap_peers(&endpoint, mdns).await?;
-            bootstrap_ids = new_bootstrap_ids;
-            let endpoint_user_data = EndpointUserData::try_from(user_data.to_string())?;
-            did = endpoint_user_data.did;
-            nickname = endpoint_user_data.nickname;
-        };
+            println!(
+                "You are online, but the given code is for offline. Please check your connection and retry the link process"
+            );
+            return Ok(());
+        }
+        let topic_id = create_topic_id(DEVICE_LINK_LOCAL_TOPIC);
+
+        println!("Searching for peers in the local network..");
+        let mdns = address_lookup::mdns::MdnsAddressLookup::builder().build(endpoint.id())?;
+        let (new_bootstrap_ids, user_data) = find_offline_bootstrap_peers(&endpoint, mdns).await?;
+        bootstrap_ids = new_bootstrap_ids;
+        let endpoint_user_data = EndpointUserData::try_from(user_data.to_string())?;
+        let did = endpoint_user_data.did;
+        let nickname = endpoint_user_data.nickname;
         if get_user_info(&user_db_conn, &did).is_ok() {
             println!("Device {}({}) already linked", nickname, did);
             return Ok(());
@@ -169,37 +163,24 @@ pub async fn link(ticket: Option<String>) -> Result<()> {
         recvx.recv().await;
         recv_router.shutdown().await?;
     } else {
-        // RECEIVER BLOCK
-        if !is_online {
-            let mdns = address_lookup::mdns::MdnsAddressLookup::builder().build(endpoint.id())?;
-            endpoint.address_lookup()?.add(mdns.clone());
+        if is_online {
+            println!(
+                "You are online, so please provide peer DID with `tiles link create <PEER_DID>`"
+            );
+            return Ok(());
         }
+        // RECEIVER BLOCK
+        let mdns = address_lookup::mdns::MdnsAddressLookup::builder().build(endpoint.id())?;
+        endpoint.address_lookup()?.add(mdns.clone());
 
         // Its better to have unique session'ed channels while
         // when the communication is over internet
-        let topic_id = if is_online {
-            TopicId::from_bytes(get_random_bytes_32()?)
-        } else {
-            create_topic_id(DEVICE_LINK_LOCAL_TOPIC)
-        };
+        let topic_id = create_topic_id(DEVICE_LINK_LOCAL_TOPIC);
 
         let (sender, receiver, recv_router) =
             create_gossip_network(&endpoint, topic_id, bootstrap_ids).await?;
 
-        let generated_ticket = if is_online {
-            let ticket = LinkTicket::new(
-                topic_id,
-                endpoint.addr(),
-                user.user_id.clone(),
-                user.username.clone(),
-            );
-            println!("Generated link ticket: \n{:?}\n", ticket.to_string());
-
-            println!(
-                "Use this ticket with `tiles link enable <ticket>` on the system you want to connect to\n"
-            );
-            ticket.to_string()
-        } else {
+        let generated_ticket = {
             // generate a code
             let uuid = Uuid::new_v4().to_string();
 
@@ -670,27 +651,6 @@ async fn create_gossip_network(
     Ok((goss_sender, goss_receiver, recv_router))
 }
 
-// We handle the parsing in this way since ticket can be an encoded `LinkTicket`
-// or just a 4 byte hex if linking over mDNS
-fn parse_link_ticket(
-    ticket: &str,
-) -> Result<(Option<EndpointId>, String, String, Option<TopicId>)> {
-    if let Ok(parsed_ticket) = LinkTicket::from_str(ticket) {
-        Ok((
-            Some(parsed_ticket.addr.id),
-            parsed_ticket.did,
-            parsed_ticket.nickname,
-            Some(parsed_ticket.topic_id),
-        ))
-    } else if ticket.len() == 8 {
-        // NOTE: We only have len check as a "parser" for the offline code
-        // but this will surely change once we fix the code format
-        Ok((None, String::from(""), String::from(""), None))
-    } else {
-        Err(anyhow::anyhow!("Invalid Ticket"))
-    }
-}
-
 fn is_did_valid(did: &str, pub_key: PublicKey) -> Result<bool> {
     // on debug mode, we skip the auth check, since we will be testing
     // with random endpoitns but w DID from config atp
@@ -888,76 +848,68 @@ async fn on_sync_send_delta_info(
 #[cfg(test)]
 mod tests {
 
-    use iroh::{Endpoint, endpoint::presets, endpoint_info::UserData};
     use tokio::sync::mpsc;
 
-    use crate::core::{
-        account::local::{create_dummy_user, tests::setup_db_conn_v2},
-        chats::SyncOp,
-        network::{
-            create_topic_id, fetch_last_row_counter, parse_link_ticket,
-            ticket::{EndpointUserData, LinkTicket},
-        },
-    };
+    use crate::core::{chats::SyncOp, network::fetch_last_row_counter};
 
-    #[tokio::test]
-    async fn test_valid_parse_link_ticket_online() {
-        let topic_id = create_topic_id("test");
-        let db_conn = setup_db_conn_v2();
-        let user = create_dummy_user(&db_conn.common, None);
-        let usr_data = EndpointUserData::new(&user.user_id, &user.username);
-        let endpoint = Endpoint::builder(presets::N0)
-            .user_data_for_address_lookup(UserData::try_from(usr_data.to_string()).unwrap())
-            .bind()
-            .await
-            .unwrap();
+    // #[tokio::test]
+    // async fn test_valid_parse_link_ticket_online() {
+    //     let topic_id = create_topic_id("test");
+    //     let db_conn = setup_db_conn_v2();
+    //     let user = create_dummy_user(&db_conn.common, None);
+    //     let usr_data = EndpointUserData::new(&user.user_id, &user.username);
+    //     let endpoint = Endpoint::builder(presets::N0)
+    //         .user_data_for_address_lookup(UserData::try_from(usr_data.to_string()).unwrap())
+    //         .bind()
+    //         .await
+    //         .unwrap();
 
-        let ticket = LinkTicket::new(
-            topic_id,
-            endpoint.addr(),
-            user.user_id.clone(),
-            user.username.clone(),
-        );
+    //     let ticket = LinkTicket::new(
+    //         topic_id,
+    //         endpoint.addr(),
+    //         user.user_id.clone(),
+    //         user.username.clone(),
+    //     );
 
-        assert!(parse_link_ticket(&ticket.to_string()).is_ok())
-    }
+    //     assert!(parse_link_ticket(&ticket.to_string()).is_ok())
+    // }
 
-    #[tokio::test]
-    async fn test_invalid_parse_link_ticket_online() {
-        let topic_id = create_topic_id("test");
-        let db_conn = setup_db_conn_v2();
-        let user = create_dummy_user(&db_conn.common, None);
-        let usr_data = EndpointUserData::new(&user.user_id, &user.username);
-        let endpoint = Endpoint::builder(presets::N0)
-            .user_data_for_address_lookup(UserData::try_from(usr_data.to_string()).unwrap())
-            .bind()
-            .await
-            .unwrap();
+    // #[tokio::test]
+    // async fn test_invalid_parse_link_ticket_online() {
+    //     let topic_id = create_topic_id("test");
+    //     let db_conn = setup_db_conn_v2();
+    //     let user = create_dummy_user(&db_conn.common, None);
+    //     let usr_data = EndpointUserData::new(&user.user_id, &user.username);
+    //     let endpoint = Endpoint::builder(presets::N0)
+    //         .user_data_for_address_lookup(UserData::try_from(usr_data.to_string()).unwrap())
+    //         .bind()
+    //         .await
+    //         .unwrap();
 
-        let ticket = LinkTicket::new(
-            topic_id,
-            endpoint.addr(),
-            user.user_id.clone(),
-            user.username.clone(),
-        );
+    //     let ticket = LinkTicket::new(
+    //         topic_id,
+    //         endpoint.addr(),
+    //         user.user_id.clone(),
+    //         user.username.clone(),
+    //     );
 
-        let invalid_ticket = format!("{}xx", ticket);
-        assert!(parse_link_ticket(&invalid_ticket).is_err())
-    }
+    //     let invalid_ticket = format!("{}xx", ticket);
+    //     assert!(parse_link_ticket(&invalid_ticket).is_err())
+    // }
 
-    #[test]
-    fn test_invalid_parse_link_ticket_offline() {
-        let ticket = "kjadkjada";
+    // #[test]
+    // fn test_invalid_parse_link_ticket_offline() {
+    //     let ticket = "kjadkjada";
 
-        assert!(parse_link_ticket(ticket).is_err())
-    }
+    //     assert!(parse_link_ticket(ticket).is_err())
+    // }
 
-    #[test]
-    fn test_valid_parse_link_ticket_offline() {
-        let ticket = "kjadkja2";
+    // #[test]
+    // fn test_valid_parse_link_ticket_offline() {
+    //     let ticket = "kjadkja2";
 
-        assert!(parse_link_ticket(ticket).is_ok())
-    }
+    //     assert!(parse_link_ticket(ticket).is_ok())
+    // }
 
     #[tokio::test]
     async fn test_fetch_last_row_counter() {

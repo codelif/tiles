@@ -6,18 +6,17 @@ use clap::{Args, CommandFactory, Parser, Subcommand};
 use tiles::{
     core::{
         self,
-        account::{
-            atproto::{login, logout},
-            local::{add_token, create_token},
-        },
-        network::{link, sync},
+        account::atproto::{login, logout},
+        network::sync,
     },
     daemon::{start_cmd, start_server, stop_cmd},
     repl::{self, RunArgs},
     utils::{config::LlamaConfig, installer},
 };
 
-use crate::commands::{set_inference_config_to_run_bg, show_peers, unlink_peer};
+use crate::commands::{
+    add_link, create_link, set_inference_config_to_daemon, show_peers, unlink_peer,
+};
 
 mod commands;
 
@@ -60,7 +59,7 @@ const CLI_HELP_TEMPLATE: &str = concat!(
     "  System\n",
     "    update    Update Tiles to the latest version\n",
     "    health    Check the status of dependencies\n",
-    "    inference Start or stop the inference\n",
+    "    server    Configure the inference server\n",
     "    daemon    Configure daemon behavior\n\n",
     "Options:\n",
     "  -h, --help       Show help\n",
@@ -153,8 +152,8 @@ enum SystemCommands {
     /// Check the status of dependencies
     Health,
 
-    /// Start or stop the inference
-    Inference(InferenceArgs),
+    /// Configure the inference server
+    Server(ServerArgs),
 
     /// Configure daemon behavior
     Daemon(DaemonArgs),
@@ -194,10 +193,6 @@ struct RunFlags {
     #[arg(short = 'x', long, hide = true)]
     no_repl: bool,
 
-    // Use PI repl instead of Tiles
-    #[arg(short = 'p', long, hide = true)]
-    pi: bool,
-
     /// Context window for local llama.cpp inference
     #[arg(long)]
     context_length: Option<u32>,
@@ -233,13 +228,13 @@ fn llama_config_from_flags(flags: &RunFlags) -> Option<LlamaConfig> {
 #[derive(Debug, Args)]
 #[command(args_conflicts_with_subcommands = true)]
 #[command(flatten_help = true)]
-struct InferenceArgs {
+struct ServerArgs {
     #[command(subcommand)]
-    command: InferenceCommands,
+    command: ServerCommands,
 }
 
 #[derive(Debug, Subcommand)]
-enum InferenceCommands {
+enum ServerCommands {
     /// Start the inference
     Start,
 
@@ -247,7 +242,7 @@ enum InferenceCommands {
     Stop,
 
     /// configure the inference to run in background
-    RunBackground { flag: Option<bool> },
+    Daemon { flag: Option<bool> },
 }
 
 #[derive(Debug, Args)]
@@ -307,26 +302,21 @@ struct LinkArgs {
 
 #[derive(Debug, Subcommand)]
 enum LinkCommands {
-    #[command(about = "Produce a link ticket and wait, or send a link request with a ticket.")]
-    Enable {
-        ticket: Option<String>,
+    /// Creates an authorization token for linking
+    Create {
+        peer_did: Option<String>,
     },
 
-    // Unlink give device
-    Disable {
-        did: String,
+    /// Adds the sync authorization token from peer
+    Add {
+        token: String,
     },
-    /// List the peers connected locally
+    /// List the linked peers
     ListPeers,
 
-    /// Creates a authorization token for syncing
-    CreateToken {
+    // Revokes the given peer
+    Revoke {
         peer_did: String,
-    },
-
-    /// Save the sync authorization token from peer
-    SaveToken {
-        token: String,
     },
 }
 
@@ -358,7 +348,6 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
                 modelfile_path: None,
                 relay_count: cli.flags.relay_count,
                 memory: cli.flags.memory,
-                pi: cli.flags.pi,
                 llama_config: llama_config_from_flags(&cli.flags),
             };
 
@@ -390,7 +379,6 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
                 modelfile_path,
                 relay_count: flags.relay_count,
                 memory: flags.memory,
-                pi: flags.pi,
                 llama_config: llama_config_from_flags(&flags),
             };
             commands::run_setup_for_ftue(&run_args)
@@ -413,11 +401,11 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
         Some(Commands::System(SystemCommands::Health)) => {
             commands::check_health().await?;
         }
-        Some(Commands::System(SystemCommands::Inference(inference))) => match inference.command {
-            InferenceCommands::Start => commands::start_server().await,
-            InferenceCommands::Stop => commands::stop_server().await,
-            InferenceCommands::RunBackground { flag } => {
-                set_inference_config_to_run_bg(flag.unwrap_or(false))?
+        Some(Commands::System(SystemCommands::Server(server))) => match server.command {
+            ServerCommands::Start => commands::start_server().await,
+            ServerCommands::Stop => commands::stop_server().await,
+            ServerCommands::Daemon { flag } => {
+                set_inference_config_to_daemon(flag.unwrap_or(false))?
             }
         },
         Some(Commands::Accounts(AccountCommandsGroup::Data(data))) => match data.command {
@@ -444,17 +432,16 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
             _ => start_server(None).await?,
         },
         Some(Commands::Sync(SyncCommands::Link(link_args))) => match link_args.command {
-            LinkCommands::Enable { ticket } => link(ticket).await?,
-            LinkCommands::Disable { did } => unlink_peer(&db_conn, &did)?,
+            LinkCommands::Revoke { peer_did } => unlink_peer(&db_conn, &peer_did)?,
+
             LinkCommands::ListPeers => {
                 show_peers(&db_conn)?;
             }
-            LinkCommands::CreateToken { peer_did } => {
-                println!("{}", create_token(&peer_did, &db_conn).await?);
+            LinkCommands::Create { peer_did } => {
+                create_link(peer_did, &db_conn).await?;
             }
-            LinkCommands::SaveToken { token } => {
-                let token = add_token(&token, &db_conn)?;
-                println!("Added the token from DID={}", token.did);
+            LinkCommands::Add { token } => {
+                add_link(token, &db_conn).await?;
             }
         },
         Some(Commands::Sync(SyncCommands::Sync { did })) => sync(did).await?,

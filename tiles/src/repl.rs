@@ -64,7 +64,6 @@ pub struct RunArgs {
     pub modelfile_path: Option<String>,
     pub relay_count: u32,
     pub memory: bool,
-    pub pi: bool,
     pub llama_config: Option<LlamaConfig>,
 }
 #[derive(Clone, Debug)]
