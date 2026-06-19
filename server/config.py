@@ -25,4 +25,4 @@ def get_llama_config() -> dict:
     except httpx.HTTPError:
         return {}
 
-    return LlamaConfig(**config.get("llama", {})).model_dump(exclude_none=True)
+    return LlamaConfig(**(config.get("llama") or {})).model_dump(exclude_none=True)
