@@ -354,7 +354,7 @@ pub async fn create_link(aud_did: Option<String>, db_conn: &Dbconn) -> Result<()
         // aud_did is there, so definitely trying online syncing
         let token = create_token(&audience_did, db_conn).await?;
         println!(
-            "\nHere's the UCAN token:\n{}\nPlease share this with {} out-of-band",
+            "\nHere's the UCAN token:\n\n{}\n\nPlease share this with {} out-of-band",
             token, audience_did
         );
     } else {

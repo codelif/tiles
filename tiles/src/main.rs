@@ -302,14 +302,7 @@ struct LinkArgs {
 
 #[derive(Debug, Subcommand)]
 enum LinkCommands {
-    // Revoke the given peer
-    Revoke {
-        peer_did: String,
-    },
-    /// List the peers connected locally
-    ListPeers,
-
-    /// Creates an authorization token for syncing or link code in case of offline network
+    /// Creates an authorization token for linking
     Create {
         peer_did: Option<String>,
     },
@@ -317,6 +310,13 @@ enum LinkCommands {
     /// Adds the sync authorization token from peer
     Add {
         token: String,
+    },
+    /// List the linked peers
+    ListPeers,
+
+    // Revokes the given peer
+    Revoke {
+        peer_did: String,
     },
 }
 
