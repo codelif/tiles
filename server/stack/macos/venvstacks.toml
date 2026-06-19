@@ -24,8 +24,8 @@ requirements = [
     "fastapi==0.119.0",
     "uvicorn==0.38.0",
     "mlx-lm==0.31.0",
-    "openai-harmony==0.0.8",
     "openresponses-types",
+    "tiles-harmony==0.0.8rc4",
     "httpx==0.28.1",
     ]
 
