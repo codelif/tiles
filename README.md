@@ -13,7 +13,7 @@
 <h1 align="center">Tiles</h1>
 
 <p align="center">
-  Local-first private AI for everyday use.<br />
+  Local-first private AI assistant for everyday use.<br />
   <a href="#getting-started">Getting Started</a> ·
   <a href="https://tiles.run/book">Documentation</a> ·
   <a href="#about">About</a> ·
@@ -29,11 +29,9 @@
 
 ## Getting Started
 
-Tiles is a local-first private AI assistant for everyday use.
+Tiles is a local-first private AI assistant for everyday use. Learn more on our [overview](https://www.tiles.run/book/overview) page.
 
-Install the signed macOS package:
-
-https://tiles.run/download
+Download Tiles for macOS or Linux: https://tiles.run/download
 
 Then run the following command to start Tiles:
 
@@ -43,14 +41,13 @@ tiles
 
 ## Documentation
 
-Full documentation is available in the Tiles Book:  
-https://tiles.run/book
+Full documentation is available in the Tiles Book: https://tiles.run/book
 
 ## About
 
-Tiles is built by a small team working on private, local-first software, with a clear mission: to bring privacy technology to everyone. 
+Tiles is part of [User & Agents](https://www.userandagents.org) network. The shared goal is to empower people by designing and building software that provides agency, control, and choice in our digital lives. We believe that privacy adoption at scale must work *backwards* from preserving utility. This means negligible impact on user experience, model intelligence, throughput, latency, tool use & agentic capabilities, and web access. With Tiles, we aim to deliver “just works” experiences through best-in-class privacy-focused engineering while offering unmatched convenience in our consumer products.
 
-Tiles is part of [User & Agents](https://userandagents.org) network. The shared goal is to empower people by designing and building software that provides agency, control, and choice in our digital lives. We believe that privacy adoption at scale must work backwards from preserving utility. This means negligible impact on user experience, model intelligence, throughput, latency, tool use & agentic capabilities, and web access. With Tiles, we aim to deliver “just works” experiences through best-in-class privacy-focused engineering while offering unmatched convenience in our consumer products.
+Tiles Privacy is also a signatory to the [European Social Stack](https://european.social/#signatories) initiative, supporting an open, interoperable, and publicly accountable digital ecosystem for Europe.
 
 ## Contributing
 
