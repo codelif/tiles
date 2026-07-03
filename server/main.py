@@ -4,6 +4,7 @@ import uvicorn
 from .api import app
 from .config import PORT
 import logging
+import os
 import sys
 from fastapi import Request
 from . import runtime
@@ -37,18 +38,25 @@ async def log_requests(request: Request, call_next):
 
 def get_backend():
     """
-    Dynamically choose which backend should be used depending on the OS 
+    Dynamically choose which backend should be used depending on the OS
     """
+    backend_mode = os.environ.get("TILES_INFERENCE_BACKEND", "llama_server")
+    if backend_mode == "llama_server":
+        from .backend import llama_server
+
+        logger.info("Using llama-server backend (experiment)")
+        return llama_server
     if sys.platform == "darwin":
         from .backend import mlx
+
         logger.info("Using MLX backend (MacOs)")
         return mlx
-    elif sys.platform.startswith("linux"):
+    if sys.platform.startswith("linux"):
         from .backend import linux
-        logger.info(f"Using linux backend {sys.platform}")
+
+        logger.info("Using linux backend %s", sys.platform)
         return linux
-    else:
-        raise RuntimeError(f"Unsupported OS: {sys.platform}")
+    raise RuntimeError(f"Unsupported OS: {sys.platform}")
 
 runtime.backend = get_backend()
 

@@ -863,13 +863,10 @@ fn get_default_modelfile(memory_mode: bool) -> Result<PathBuf> {
     if memory_mode {
         let path = DefaultProvider.get_lib_dir()?.join("modelfiles/mem-agent");
         Ok(path)
-    } else if cfg!(target_os = "linux") {
+    } else {
         let path = DefaultProvider
             .get_lib_dir()?
-            .join("modelfiles/gpt-oss-gguf");
-        Ok(path)
-    } else {
-        let path = DefaultProvider.get_lib_dir()?.join("modelfiles/gpt-oss");
+            .join("modelfiles/gemma-4-12b-gguf");
         Ok(path)
     }
 }
@@ -1557,12 +1554,7 @@ mod tests {
     #[test]
     fn default_modelfile_uses_platform_default() {
         let path = get_default_modelfile(false).expect("default modelfile should resolve");
-
-        if cfg!(target_os = "linux") {
-            assert!(path.ends_with("modelfiles/gpt-oss-gguf"));
-        } else {
-            assert!(path.ends_with("modelfiles/gpt-oss"));
-        }
+        assert!(path.ends_with("modelfiles/gemma-4-12b-gguf"));
     }
 
     #[test]

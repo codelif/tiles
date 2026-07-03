@@ -53,6 +53,7 @@ pub struct LlamaConfig {
     pub gpu_layers: Option<i32>,
     pub offload_kqv: Option<bool>,
     pub batch_size: Option<u32>,
+    pub mtp: Option<bool>,
 }
 
 impl LlamaConfig {
@@ -61,6 +62,7 @@ impl LlamaConfig {
             && self.gpu_layers.is_none()
             && self.offload_kqv.is_none()
             && self.batch_size.is_none()
+            && self.mtp.is_none()
     }
 }
 
@@ -532,7 +534,7 @@ fn create_pi_provider_config_with_context(
         base_url: enpoint_base_url.to_string(),
         models: vec![PiProviderModelConfig {
             id: model_name.to_string(),
-            reasoning: true,
+            reasoning: false,
             context_window,
             max_tokens: Some(max_tokens),
         }],
@@ -563,7 +565,7 @@ fn try_update_pi_provider_model(config: &str, model_name: &str) -> Result<String
         let max_tokens = get_pi_max_tokens(context_window).unwrap_or(MAX_TOKENS);
         tiles_provider_config.models = vec![PiProviderModelConfig {
             id: model_name.to_owned(),
-            reasoning: true,
+            reasoning: false,
             context_window,
             max_tokens: Some(max_tokens),
         }];
@@ -613,6 +615,9 @@ pub fn update_llama_config(config: &LlamaConfig) -> Result<()> {
     if config.batch_size.is_some() {
         llama_config.batch_size = config.batch_size;
     }
+    if config.mtp.is_some() {
+        llama_config.mtp = config.mtp;
+    }
 
     root_config.llama = Some(llama_config);
     save_root_config(&root_config)
@@ -651,7 +656,7 @@ mod tests {
     fn expected_pi_provider_json(model_name: &str, endpoint_base_url: &str) -> Value {
         let mut model = json!({
             "id": model_name,
-            "reasoning": true,
+            "reasoning": false,
             "maxTokens": MAX_TOKENS
         });
 
