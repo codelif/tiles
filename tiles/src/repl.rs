@@ -7,7 +7,8 @@ use crate::core::chats::{
 use crate::core::storage::db::Dbconn;
 use crate::utils::config::{
     ConfigProvider, DefaultProvider, LlamaConfig, create_pi_provider_config, get_inference_config,
-    get_memory_path, get_model_cache, update_current_model, update_llama_config,
+    get_memory_path, get_model_cache, handle_pi_settings_config, update_current_model,
+    update_llama_config,
 };
 use crate::utils::hf_model_downloader::*;
 use anyhow::{Context, Result, anyhow};
@@ -112,6 +113,26 @@ struct PiModelInfo {
     id: String,
     name: String,
 }
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct PiSettings {
+    pub compaction: Option<CompactionSettings>,
+    #[serde(rename = "defaultThinkingLevel")]
+    pub default_thinking_level: Option<ReasoningEffort>,
+}
+
+impl Default for PiSettings {
+    fn default() -> Self {
+        PiSettings {
+            compaction: Some(CompactionSettings { enabled: false }),
+            default_thinking_level: Some(ReasoningEffort::Medium),
+        }
+    }
+}
+#[derive(Serialize, Deserialize, Debug, PartialEq, PartialOrd)]
+pub struct CompactionSettings {
+    pub enabled: bool,
+}
 #[derive(Serialize, Deserialize, Debug)]
 struct PiMessageUpdate {
     #[serde(rename = "assistantMessageEvent")]
@@ -200,10 +221,13 @@ enum AsstMsgEventType {
     Error,
 }
 
-#[derive(Clone, Copy)]
-enum ReasoningEffort {
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, PartialOrd)]
+pub enum ReasoningEffort {
+    #[serde(rename = "high")]
     High,
+    #[serde(rename = "medium")]
     Medium,
+    #[serde(rename = "low")]
     Low,
 }
 
@@ -843,7 +867,6 @@ async fn download_model(model_name: &str) -> Result<()> {
     }
 }
 
-// Need to create models.json for the provider
 fn start_pi_rpc(model_name: &str, system_prompt: &str) -> Result<Child> {
     let tiles_lib_dir = DefaultProvider.get_lib_dir()?;
     let user_data_dir = DefaultProvider.get_user_data_dir()?;
@@ -856,6 +879,8 @@ fn start_pi_rpc(model_name: &str, system_prompt: &str) -> Result<Child> {
 
     fs::write(provider_config_file_path, model_config)?;
 
+    let settings_file_path = pi_agent_dir.join("settings.json");
+    handle_pi_settings_config(&settings_file_path)?;
     // For easy debugging Pi, when developing when needed we can directly call the
     // local on-demand build pi binary and point local path
     // assuming `tiles-pi` is cloned as a sibling in the same dir
@@ -1018,7 +1043,7 @@ async fn process_share_session(
 
     match share_session(&conn.common, shared_sessions.clone(), is_private).await {
         Err(err) if &err.to_string() == "NOT_LOGGED_IN" => {
-            let login_prompt = format!("{}", "Sharing a chat session requires logging in, as the data is stored on your Bluesky-based ATProto PDS.\nDo you want to proceed with the login flow? (Y/n)".yellow());
+            let login_prompt = format!("{}", "Sharing a chat session requires logging in, as the data is stored on your ATmosphere PDS.\nDo you want to proceed with the login flow? (Y/n)".yellow());
 
             println!("{}", login_prompt);
 
@@ -1028,7 +1053,7 @@ async fn process_share_session(
             let clean_input = input.trim();
             if clean_input.to_lowercase() == "y" {
                 input.clear();
-                println!("Please enter your Bluesky handle (ex: john.bsky.team)");
+                println!("Please enter your ATmosphere handle (ex: john.bsky.team)");
                 stdin.read_line(&mut input)?;
                 login(conn, input.trim()).await?;
                 share_session(&conn.common, shared_sessions, is_private).await?;
