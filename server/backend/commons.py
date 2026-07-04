@@ -465,7 +465,7 @@ def _process_output_item_done(
         new_args = {
             ("command" if k == "cmd" else k): v for k, v in arguments_map.items()
         }
-
+        new_args = optimize_arguments(str(tool_name), arguments_map)
         item_chunk = {
             "type": type,
             "id": id,
@@ -537,7 +537,7 @@ def _process_stop_tool_call_events(
     except json.JSONDecodeError as e:
         arguments_map = {}
 
-    new_args = {("command" if k == "cmd" else k): v for k, v in arguments_map.items()}
+    new_args = optimize_arguments(str(tool_name), arguments_map)
 
     event = {
         "output_index": output_index,
@@ -615,3 +615,22 @@ def _find_tool(tools: list | None, arguments_str: str) -> str | None:
 
 def _is_correct_tool(required_params: list, model_argument_list: list) -> bool:
     return set(required_params).issubset(model_argument_list)
+
+
+# some code level determinism for tool call arguments
+# - if models gives `cmd` as the key, then convert to `command`, for a bash call, as Pi expects it
+# - remove `-R` from `ls` calls, to avoid sending large amt of unwanted filenames to model
+# - Add a default timeout of 60s incase model doesnt run with a timeout of large timeouts
+def optimize_arguments(tool_name: str, model_args: dict) -> dict:
+    new_args = {("command" if k == "cmd" else k): v for k, v in model_args.items()}
+
+    if tool_name == "bash" and new_args.get("command") is not None:
+        command = str(new_args.get("command", ""))
+        main_cmd = command.split(" ")[0].lower()
+        if main_cmd == "ls":
+            command = " ".join([word for word in command.split() if word != "-R"])
+            new_args["command"] = command
+        if tool_name == "bash":
+            timeout = new_args.get("timeout")
+            new_args["timeout"] = 60 if timeout is None else min(timeout, 60)
+    return new_args
