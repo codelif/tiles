@@ -24,6 +24,8 @@ use std::time::SystemTime;
 use std::{env, fs};
 use toml::Table;
 
+use crate::repl::{CompactionSettings, PiSettings};
+
 #[derive(Serialize, Deserialize, Debug)]
 struct ModelConfig {
     pub current: String,
@@ -616,11 +618,35 @@ pub fn update_llama_config(config: &LlamaConfig) -> Result<()> {
     save_root_config(&root_config)
 }
 
+pub fn handle_pi_settings_config(settings_path: &PathBuf) -> Result<()> {
+    let mut settings_config: PiSettings = if !settings_path.exists() {
+        PiSettings::default()
+    } else {
+        let settings_str =
+            fs::read_to_string(settings_path).context("Failed to read Pi settings path")?;
+        serde_json::from_str(&settings_str).context("Failed to parse to settings")?
+    };
+
+    if settings_config.compaction.is_none() {
+        settings_config.compaction = Some(CompactionSettings { enabled: false })
+    }
+
+    fs::write(
+        settings_path,
+        serde_json::to_string_pretty(&settings_config)?,
+    )
+    .map_err(Into::<anyhow::Error>::into)
+    .context("Failed to write to Pi settings.json")
+}
+
 #[cfg(test)]
 mod tests {
 
+    use crate::repl::ReasoningEffort;
+
     use super::*;
     use serde_json::Value;
+    use tempfile::tempdir;
 
     fn expected_pi_provider_json(model_name: &str, endpoint_base_url: &str) -> Value {
         let mut model = json!({
@@ -769,5 +795,84 @@ mod tests {
             try_update_pi_provider_model(&config_str, "mlx-community/Qwen3.5-4B-MLX-4bit").unwrap();
 
         assert_eq!(config_str, new_config_str);
+    }
+
+    #[test]
+    fn test_no_settings_file_exits() {
+        let tmp = tempdir().expect("created tmp dir");
+        let src = tmp.path().join("settings.json");
+
+        handle_pi_settings_config(&src).unwrap();
+
+        let settings_str = fs::read_to_string(&src)
+            .context("Failed to read Pi settings path")
+            .unwrap();
+
+        let settings_config: PiSettings = serde_json::from_str(&settings_str).unwrap();
+
+        assert_eq!(
+            settings_config.compaction.unwrap(),
+            CompactionSettings { enabled: false }
+        );
+        assert_eq!(
+            settings_config.default_thinking_level.unwrap(),
+            ReasoningEffort::Medium
+        );
+    }
+
+    #[test]
+    fn test_settings_file_exits_but_no_compaction_settings() {
+        let tmp = tempdir().expect("created tmp dir");
+        let src = tmp.path().join("settings.json");
+        let pi_settings = PiSettings {
+            default_thinking_level: Some(ReasoningEffort::Low),
+            compaction: None,
+        };
+        fs::write(&src, serde_json::to_string_pretty(&pi_settings).unwrap()).unwrap();
+
+        handle_pi_settings_config(&src).unwrap();
+
+        let settings_str = fs::read_to_string(&src)
+            .context("Failed to read Pi settings path")
+            .unwrap();
+
+        let settings_config: PiSettings = serde_json::from_str(&settings_str).unwrap();
+
+        assert_eq!(
+            settings_config.compaction.unwrap(),
+            CompactionSettings { enabled: false }
+        );
+        assert_eq!(
+            settings_config.default_thinking_level.unwrap(),
+            ReasoningEffort::Low
+        );
+    }
+
+    #[test]
+    fn test_settings_file_exits_but_all_settings_exist() {
+        let tmp = tempdir().expect("created tmp dir");
+        let src = tmp.path().join("settings.json");
+        let pi_settings = PiSettings {
+            default_thinking_level: Some(ReasoningEffort::Low),
+            compaction: Some(CompactionSettings { enabled: true }),
+        };
+        fs::write(&src, serde_json::to_string_pretty(&pi_settings).unwrap()).unwrap();
+
+        handle_pi_settings_config(&src).unwrap();
+
+        let settings_str = fs::read_to_string(&src)
+            .context("Failed to read Pi settings path")
+            .unwrap();
+
+        let settings_config: PiSettings = serde_json::from_str(&settings_str).unwrap();
+
+        assert_eq!(
+            settings_config.compaction.unwrap(),
+            CompactionSettings { enabled: true }
+        );
+        assert_eq!(
+            settings_config.default_thinking_level.unwrap(),
+            ReasoningEffort::Low
+        );
     }
 }

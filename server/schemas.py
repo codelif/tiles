@@ -122,7 +122,7 @@ class CReasoningItemParam(BaseModel):
 
 
 class CFunctionTool(BaseModel):
-    name: Annotated[str, Field(max_length=64, min_length=1, pattern="^[a-zA-Z0-9_-]+$")]
+    name: Annotated[str, Field(max_length=64, min_length=1)]
     description: str | None = None
     parameters: dict | None = None
     strict: bool | None = None
