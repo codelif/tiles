@@ -257,6 +257,9 @@ pub enum ReasoningEffort {
     Medium,
     #[serde(rename = "low")]
     Low,
+    Medium,
+    High,
+    XHigh,
 }
 
 enum InputCommandResponse {
@@ -267,9 +270,11 @@ impl FromStr for ReasoningEffort {
     type Err = anyhow::Error;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "high" => Ok(ReasoningEffort::High),
-            "medium" => Ok(ReasoningEffort::Medium),
+            "none" | "off" => Ok(ReasoningEffort::None),
             "low" => Ok(ReasoningEffort::Low),
+            "medium" => Ok(ReasoningEffort::Medium),
+            "high" => Ok(ReasoningEffort::High),
+            "xhigh" => Ok(ReasoningEffort::XHigh),
             _ => Err(anyhow!("Invalid Reasoning value, use /help".to_owned())),
         }
     }
@@ -278,9 +283,11 @@ impl FromStr for ReasoningEffort {
 impl From<ReasoningEffort> for String {
     fn from(value: ReasoningEffort) -> Self {
         match value {
-            ReasoningEffort::High => "high".to_owned(),
-            ReasoningEffort::Medium => "medium".to_owned(),
+            ReasoningEffort::None => "none".to_owned(),
             ReasoningEffort::Low => "low".to_owned(),
+            ReasoningEffort::Medium => "medium".to_owned(),
+            ReasoningEffort::High => "high".to_owned(),
+            ReasoningEffort::XHigh => "xhigh".to_owned(),
         }
     }
 }
@@ -542,7 +549,7 @@ fn show_help() {
             vec![
                 (
                     "/reasoning <effort>",
-                    "Sets the reasoning effort of current model (high, medium, low)",
+                    "Sets the reasoning effort of current model (none, low, medium, high, xhigh)",
                 ),
                 ("/status", "Show the current session state"),
                 ("/sessions", "List all available sessions"),
@@ -987,11 +994,18 @@ async fn process_command(
     match response_msg.command {
         CommandType::SetThinkingLevel => {
             let state = get_pi_state(pi_stdin, pi_stdout).await?;
-            repl_session.reasoning = state
-                .thinking_level
-                .parse::<ReasoningEffort>()
-                .context("Failed to parse reasoning effort")?;
-            println!("Reasoning settings updated successfully")
+            match state.thinking_level.parse::<ReasoningEffort>() {
+                Ok(effort) => {
+                    repl_session.reasoning = effort;
+                    println!("Reasoning settings updated successfully")
+                }
+                Err(_) => {
+                    println!(
+                        "Pi reported reasoning level '{}', which Tiles does not recognize; leaving it unchanged",
+                        state.thinking_level
+                    )
+                }
+            }
         }
         CommandType::GetCommands => {
             if let Some(commands) = response_msg.data {
@@ -1528,7 +1542,7 @@ async fn set_reasoning_effort(pi_stdin: &mut ChildStdin, args: &[&str]) -> Resul
 
     let reasoning_effort: ReasoningEffort = if args.is_empty() {
         return Err(anyhow!(
-            "Please provide Reasoning effort (low, medium, high)"
+            "Please provide Reasoning effort (none, low, medium, high, xhigh)"
         ));
     } else {
         args[0].parse()?

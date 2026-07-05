@@ -1,10 +1,8 @@
 import uvicorn
 
-# from backend import linux
 from .api import app
 from .config import PORT
 import logging
-import os
 import sys
 from fastapi import Request
 from . import runtime
@@ -38,25 +36,12 @@ async def log_requests(request: Request, call_next):
 
 def get_backend():
     """
-    Dynamically choose which backend should be used depending on the OS
+    Return the inference backend. Tiles uses llama-server on all platforms.
     """
-    backend_mode = os.environ.get("TILES_INFERENCE_BACKEND", "llama_server")
-    if backend_mode == "llama_server":
-        from .backend import llama_server
+    from .backend import llama_server
 
-        logger.info("Using llama-server backend (experiment)")
-        return llama_server
-    if sys.platform == "darwin":
-        from .backend import mlx
-
-        logger.info("Using MLX backend (MacOs)")
-        return mlx
-    if sys.platform.startswith("linux"):
-        from .backend import linux
-
-        logger.info("Using linux backend %s", sys.platform)
-        return linux
-    raise RuntimeError(f"Unsupported OS: {sys.platform}")
+    logger.info("Using llama-server backend")
+    return llama_server
 
 runtime.backend = get_backend()
 

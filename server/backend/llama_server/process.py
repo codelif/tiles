@@ -7,6 +7,7 @@ import os
 import shutil
 import signal
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -203,8 +204,13 @@ def ensure_running(gguf_path: Path, llama_config: dict[str, Any]) -> None:
     logger.info("Starting llama-server: %s", " ".join(cmd))
     env = os.environ.copy()
     lib_dir = str(Path(binary).resolve().parent)
-    prev = env.get("LD_LIBRARY_PATH", "")
-    env["LD_LIBRARY_PATH"] = f"{lib_dir}:{prev}" if prev else lib_dir
+    if sys.platform == "darwin":
+        for var in ("DYLD_LIBRARY_PATH", "DYLD_FALLBACK_LIBRARY_PATH"):
+            prev = env.get(var, "")
+            env[var] = f"{lib_dir}:{prev}" if prev else lib_dir
+    else:
+        prev = env.get("LD_LIBRARY_PATH", "")
+        env["LD_LIBRARY_PATH"] = f"{lib_dir}:{prev}" if prev else lib_dir
     log_dir = Path.cwd() / ".tiles_dev" / "tiles" / "data" / "logs"
     if not log_dir.is_dir():
         log_dir = Path.home() / ".local" / "share" / "tiles" / "data" / "logs"

@@ -1,4 +1,4 @@
-"""Unified llama-server backend (Linux + macOS experiment)."""
+"""Unified llama-server backend (Linux + macOS)."""
 
 from __future__ import annotations
 

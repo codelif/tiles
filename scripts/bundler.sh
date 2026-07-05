@@ -88,6 +88,23 @@ if [[ "${OS}" == "darwin" ]]; then
 fi
 
 
+echo "🧩 Provisioning llama-server binary into ${SERVER_DIR}/bin..."
+./scripts/fetch_llama_server.sh
+
+if [[ "${OS}" == "darwin" ]]; then
+  echo "Signing llama-server binaries..."
+  for f in "${SERVER_DIR}/bin/llama-server" "${SERVER_DIR}/bin/"*.dylib; do
+    [[ -e "$f" ]] || continue
+    codesign --force \
+      --sign "$DEVELOPER_ID_APPLICATION" \
+      --options runtime \
+      --timestamp \
+      --entitlements entitleme.plist \
+      --strict \
+      "$f"
+  done
+fi
+
 # flushing this folder, else the final zip will have previous app-server zips too (#84)
 rm -rf "${SERVER_DIR}/stack_export_prod"
 

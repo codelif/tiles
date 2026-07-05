@@ -83,6 +83,21 @@ echo "📦 Publishing the venvstack...."
 
 venvstacks publish --tag-outputs --output-dir ../../stack_export_prod "${STACK_SPEC}"
 
+echo "🧩 Provisioning llama-server binary into ${SERVER_DIR}/bin..."
+./scripts/fetch_llama_server.sh
+
+echo "Signing llama-server binaries..."
+for f in "${SERVER_DIR}/bin/llama-server" "${SERVER_DIR}/bin/"*.dylib; do
+  [[ -e "$f" ]] || continue
+  codesign --force \
+    --sign "$DEVELOPER_ID_APPLICATION" \
+    --options runtime \
+    --timestamp \
+    --entitlements entitleme.plist \
+    --strict \
+    "$f"
+done
+
 cp -r "${SERVER_DIR}" "${PKG_LIBS_PATH}"
 
 rm -rf "${PKG_LIBS_PATH}/server/__pycache__"

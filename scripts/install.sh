@@ -121,6 +121,8 @@ mkdir -p "${SERVER_DIR}"
 
 cp -r "${TMPDIR}/server"/* "${SERVER_DIR}/"
 
+chmod +x "${SERVER_DIR}/bin/llama-server" 2>/dev/null || true
+
 log "🔧 Setting up Python environment..."
 cd "${SERVER_DIR}/stack_export_prod"
 
@@ -131,9 +133,6 @@ done
 rm -rf *.tar.xz
 
 cpython3.13/bin/python cpython3.13/postinstall.py
-if [[ -x framework-mlx/bin/python ]]; then
-  framework-mlx/bin/python framework-mlx/postinstall.py
-fi
 app-server/bin/python app-server/postinstall.py
 
 rm -rf "${TMPDIR}"

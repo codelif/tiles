@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
-# End-to-end smoke test for the llama-server experiment (Gemma 4 12B).
+# End-to-end smoke test for the llama-server backend (Gemma 4 12B).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-export TILES_INFERENCE_BACKEND=llama_server
 export TILES_LLAMA_SERVER_BIN="${TILES_LLAMA_SERVER_BIN:-${ROOT}/server/bin/llama-server}"
 export LD_LIBRARY_PATH="${ROOT}/server/bin:${LD_LIBRARY_PATH:-}"
 
