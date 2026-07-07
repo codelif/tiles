@@ -174,9 +174,11 @@ struct PiTurnEndEventMsg {
 pub struct PiMsgEvent {
     role: Role,
     content: Vec<PiMsgContent>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "stopReason")]
     stop_reason: Option<String>,
     timestamp: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "toolName")]
     tool_name: Option<String>,
 }
@@ -184,11 +186,15 @@ pub struct PiMsgEvent {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct PiMsgContent {
     r#type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     thinking: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(default, deserialize_with = "map_to_option_string")]
     pub arguments: Option<String>,
     // Tool name
+    #[serde(skip_serializing_if = "Option::is_none")]
     name: Option<String>,
 }
 
@@ -1127,6 +1133,7 @@ fn load_session(db_conn: &Dbconn, args: &[&str], repl_session: &mut ReplSession)
     repl_session.set_pending_resume_session(true);
     repl_session.set_resumed_session(chat_history);
     repl_session.last_chat_id = last_chat_id;
+    repl_session.session_started = true;
     repl_session.session_snapshot = if let Some(snapshot_record) = saved_session.snapshot {
         serde_json::from_str(&snapshot_record)?
     } else {

@@ -64,8 +64,7 @@
         "timestamp": { "type": "integer" },
         "toolName": { "type": "string" },
         "stopReason": {"type": "string"}
-      },
-      "nullable": ["toolName", "stopReason"]
+      }
     },
 
     "contentItem": {
@@ -77,8 +76,7 @@
         "thinking": { "type": "string" },
         "name": { "type": "string" },
         "arguments": { "type": "string" }
-      },
-      "nullable": ["arguments", "name", "thinking", "text"]
+      }
     }
   }
 }
