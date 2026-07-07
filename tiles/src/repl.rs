@@ -694,6 +694,12 @@ async fn start_repl(modelfile: &Modelfile, _run_args: &RunArgs, db_conn: &Dbconn
             }
         }
 
+        // This is to prevent the session name being messeup if user starts
+        // with skills. Pi unfurls skills command to entire skill doc.So we
+        // cant put that as session name.
+        if !repl_session.session_started {
+            repl_session.session_snapshot.name = input.clone();
+        };
         // Reads the output from Pi and process and responds to the repl
         let mut reader = BufReader::new(&mut pi_stdout).lines();
 
@@ -1426,6 +1432,7 @@ fn save_agent_session(
         model: repl_session.current_modelname.clone(),
         messages: vec![],
     };
+    //TODO: We need to these at the `message_end` event maybe, need to check
     for msg in agent_end_event.messages {
         //TODO: could avoid this cloning here
         let msg_copy = msg.clone();
@@ -1436,11 +1443,10 @@ fn save_agent_session(
                     create_session(
                         &db_conn.chat,
                         &repl_session.session_id,
-                        &input,
+                        &repl_session.session_snapshot.name,
                         &current_user.user_id,
                     )?;
                     repl_session.session_started = true;
-                    repl_session.session_snapshot.name = input.clone();
                     None
                 } else {
                     repl_session.last_chat_id.clone()
