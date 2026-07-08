@@ -33,3 +33,7 @@ requirements = [
 environments = [
     "sys_platform == 'darwin' and platform_machine == 'arm64'",
 ]
+exclude-newer = "2026-06-02T19:44:30+05:30"
+
+[tool.uv.exclude-newer-package]
+ tiles-harmony="2026-06-20T03:01:00Z"
