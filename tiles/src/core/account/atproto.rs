@@ -394,7 +394,7 @@ pub async fn share_session(
 
         let base_encoded_at_url = data_encoding::BASE64.encode(url.as_bytes());
 
-        let shareable_base_url = format!("https://chat.tiles.run/share/{}", base_encoded_at_url);
+        let shareable_base_url = format!("https://chat.tiles.run/{}", base_encoded_at_url);
 
         let shareable_url = if is_private {
             format!(
