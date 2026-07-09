@@ -59,9 +59,9 @@ def _read_llama_config_from_toml() -> dict:
                 root = tomllib.load(handle)
         except OSError:
             continue
+        # First existing config file wins, even when [llama] is absent/empty.
+        # Otherwise a empty .tiles_dev config would leak into ~/.config/tiles.
         llama = root.get("llama") or {}
-        if not llama:
-            continue
         logger.info("Loaded llama config from %s", path)
         return LlamaConfig(**llama).model_dump(exclude_none=True)
     return {}
@@ -72,13 +72,11 @@ def get_llama_config() -> dict:
         response = httpx.get(f"http://127.0.0.1:{DAEMON_PORT}/config", timeout=2)
         response.raise_for_status()
         config = response.json()
+        # Daemon answered: trust it. Empty/null [llama] means "no overrides",
+        # not "keep looking in ~/.config".
         llama = config.get("llama") or {}
-        if llama:
-            logger.info(
-                "Loaded llama config from Tiles daemon (see ~/.config/tiles/config.toml "
-                "or .tiles_dev/tiles/config.toml when running from source)"
-            )
-            return LlamaConfig(**llama).model_dump(exclude_none=True)
+        logger.info("Loaded llama config from Tiles daemon")
+        return LlamaConfig(**llama).model_dump(exclude_none=True)
     except httpx.HTTPError:
         pass
 
