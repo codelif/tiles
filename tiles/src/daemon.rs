@@ -123,6 +123,7 @@ async fn start_daemon(port: Option<u32>) -> Result<()> {
     };
     let _process = unsafe {
         Command::new(base_command)
+            .env("RUST_LOG", "info,iroh=error,tracing=off")
             .arg("daemon")
             .stdin(Stdio::null())
             .stdout(Stdio::from(stdout_log))

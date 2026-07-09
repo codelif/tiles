@@ -604,13 +604,7 @@ async fn run_model_with_server(
     run_args: &RunArgs,
     db_conn: &Dbconn,
 ) -> Result<()> {
-    if !cfg!(debug_assertions) {
-        let _ = start_server_daemon().await.inspect_err(|e| {
-            eprintln!("Failed to start inference server due to {:?}", e);
-        });
-        let _ = wait_until_server_is_up().await;
-    }
-    // loading the model from mem-agent via daemon server
+    //TODO: deprecated remove..
     let memory_path = get_memory_path().context("Setting/Retrieving memory_path failed")?;
     if let Some(llama_config) = &run_args.llama_config {
         update_llama_config(llama_config).context("Failed to update llama config")?;
@@ -626,6 +620,12 @@ async fn run_model_with_server(
             .await
             .map_err(|e| anyhow!(e))
     } else {
+        if !cfg!(debug_assertions) {
+            let _ = start_server_daemon().await.inspect_err(|e| {
+                eprintln!("Failed to start inference server due to {:?}", e);
+            });
+            let _ = wait_until_server_is_up().await;
+        }
         match load_model(&modelfile, &default_modelfile, &memory_path, 0).await {
             Ok(_) => start_repl(&modelfile, run_args, db_conn)
                 .await

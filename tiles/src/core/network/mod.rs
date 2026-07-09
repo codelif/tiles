@@ -28,7 +28,7 @@ use log::info;
 use rusqlite::Connection;
 
 use tokio::{
-    io::copy,
+    io::{AsyncWriteExt, copy},
     net::{TcpListener, TcpStream},
     sync::{
         mpsc::{self},
@@ -855,7 +855,7 @@ pub async fn share(endpoint: Endpoint, mut recvx: Receiver<bool>) -> Result<()> 
     loop {
         tokio::select! {
                         _ = &mut recvx => {
-                                println!("stopping the proxy, exiting");
+                                info!("stopping the proxy, exiting");
                                 endpoint.close().await;
                                 break;
                         }
@@ -863,34 +863,87 @@ pub async fn share(endpoint: Endpoint, mut recvx: Receiver<bool>) -> Result<()> 
                             let Some(incoming) = incoming else {
                                 break;
                             };
-                            let connection = incoming.await?;
-                            println!("🔗 Peer connected!");
-
-                            let (mut iroh_send, mut iroh_recv) = connection.accept_bi().await?;
+                            let connection = incoming.await.or_else(|e| {
+                                log::error!(
+                                    "<remote_infy::host>::Error on connection incoming due to {:?}",e);
+                                    Err(e)
+                                })?;
 
                             tokio::spawn(async move {
-                                let mut local_tcp = TcpStream::connect(format!("127.0.0.1:6969"))
-                                    .await
-                                    .expect("Failed to connect to local service");
+                                loop {
+                                    let (mut iroh_send, mut iroh_recv) = match connection.accept_bi().await {
+                                        Ok(streams) => streams,
+                                        Err(e) => {
+                                            log::error!("<remote_infy::host> connection closed due to {:?}", e);
+                                            break;
+                                        }
+                                    };
 
-                                let (mut local_read, mut local_write) = local_tcp.split();
-                                let local_to_remote = async {
-                                    copy(&mut local_read, &mut iroh_send).await?;
-                                    iroh_send.finish()?;
-                                    Result::<()>::Ok(())
-                                };
-                                let remote_to_local = async {
-                                    copy(&mut iroh_recv, &mut local_write).await?;
-                                    Result::<()>::Ok(())
-                                };
+                                    tokio::spawn(async move {
+                                        let mut local_tcp = TcpStream::connect(format!("127.0.0.1:6969"))
+                                            .await
+                                            .expect("Failed to connect to local service");
 
-                                let _ = tokio::try_join!(local_to_remote, remote_to_local);
+                                        let (mut local_read, mut local_write) = local_tcp.split();
+                                        let local_to_remote = async {
+                                            copy(&mut local_read, &mut iroh_send).await.or_else(|e| {
+                                                log::error!(
+                                                    "<remote_infy::host> failed forwarding local response to peer: {:?}",
+                                                    e
+                                                );
+                                                Err(e)
+                                            })?;
+                                            iroh_send.finish().or_else(|e| {
+                                                log::error!(
+                                                    "<remote_infy::host> failed finishing response stream: {:?}",
+                                                    e
+                                                );
+                                                Err(e)
+                                            })?;
+                                            Result::<()>::Ok(())
+                                        };
+                                        let remote_to_local = async {
+                                            copy(&mut iroh_recv, &mut local_write).await.or_else(|e| {
+                                                log::error!("<remote_infy::host> failed forwarding peer request to local server: {:?}", e);
+                                                Err(e)
+                                            })?;
+                                            local_write.shutdown().await.or_else(|e| {
+                                                log::error!("<remote_infy::host> failed shutting down local server write half: {:?}", e);
+                                                Err(e)
+                                            })?;
+                                            Result::<()>::Ok(())
+                                        };
+
+                                        tokio::pin!(local_to_remote);
+                                        tokio::pin!(remote_to_local);
+
+                                        tokio::select! {
+                                            result = &mut local_to_remote => {
+                                                match result {
+                                                    Ok(_) => (),
+                                                    Err(e) => log::error!("<remote_infy::host> proxy failed: {:?}", e),
+                                                }
+                                            }
+                                            result = &mut remote_to_local => {
+                                                match result {
+                                                    Ok(_) => {
+                                                        match local_to_remote.await {
+                                                            Ok(_) => (),
+                                                            Err(e) => log::error!("<remote_infy::host> proxy failed: {:?}", e),
+                                                        }
+                                                    }
+                                                    Err(e) => log::error!("<remote_infy::host> proxy failed: {:?}", e),
+                                                }
+                                            }
+                                        }
+                                    });
+                                }
                             });
 
                         }
         }
     }
-    println!("Endpoint closed, exiting");
+    info!("Endpoint closed, exiting");
     Ok(())
 }
 
@@ -904,8 +957,13 @@ pub async fn connect(ticket: &str) -> Result<()> {
     println!("Connected to remote inference");
 
     loop {
-        let (mut local_tcp, _) = local_listener.accept().await?;
-
+        let (mut local_tcp, _) = local_listener.accept().await.or_else(|e| {
+            log::error!(
+                "<reminf::peer>::Error on local listener accept due to {:?}",
+                e
+            );
+            Err(e)
+        })?;
         let endpoint = endpoint.clone();
         let host_addr = host_addr.clone();
 
@@ -914,16 +972,59 @@ pub async fn connect(ticket: &str) -> Result<()> {
             let (mut iroh_send, mut iroh_recv) = connection.open_bi().await.unwrap();
             let (mut local_read, mut local_write) = local_tcp.split();
             let local_to_remote = async {
-                copy(&mut local_read, &mut iroh_send).await?;
-                iroh_send.finish()?;
+                copy(&mut local_read, &mut iroh_send).await.or_else(|e| {
+                    log::error!(
+                        "<reminf::peer> failed forwarding local request to peer: {:?}",
+                        e
+                    );
+                    Err(e)
+                })?;
+                iroh_send.finish().or_else(|e| {
+                    log::error!("<reminf::peer> failed finishing request stream: {:?}", e);
+                    Err(e)
+                })?;
                 Result::<()>::Ok(())
             };
             let remote_to_local = async {
-                copy(&mut iroh_recv, &mut local_write).await?;
+                copy(&mut iroh_recv, &mut local_write).await.or_else(|e| {
+                    log::error!(
+                        "<reminf::peer> failed forwarding peer response to local client: {:?}",
+                        e
+                    );
+                    Err(e)
+                })?;
+                local_write.shutdown().await.or_else(|e| {
+                    log::error!(
+                        "<reminf::peer> failed shutting down local client write half: {:?}",
+                        e
+                    );
+                    Err(e)
+                })?;
                 Result::<()>::Ok(())
             };
 
-            let _ = tokio::try_join!(local_to_remote, remote_to_local);
+            tokio::pin!(local_to_remote);
+            tokio::pin!(remote_to_local);
+
+            tokio::select! {
+                result = &mut remote_to_local => {
+                    match result {
+                        Ok(_) => (),
+                        Err(e) => log::error!("<reminf::peer> proxy failed: {:?}", e),
+                    }
+                }
+                result = &mut local_to_remote => {
+                    match result {
+                        Ok(_) => {
+                            match remote_to_local.await {
+                                Ok(_) => (),
+                                Err(e) => log::error!("<reminf::peer> proxy failed: {:?}", e),
+                            }
+                        }
+                        Err(e) => log::error!("<reminf::peer> proxy failed: {:?}", e),
+                    }
+                }
+            }
         });
     }
 }
