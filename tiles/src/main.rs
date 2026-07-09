@@ -239,6 +239,9 @@ fn llama_config_from_flags(flags: &RunFlags) -> Option<LlamaConfig> {
         offload_kqv: flags.offload_kqv,
         batch_size: flags.batch_size,
         mtp: None,
+        n_cpu_moe: None,
+        flash_attn: None,
+        no_mmap: None,
     };
 
     if config.is_empty() {

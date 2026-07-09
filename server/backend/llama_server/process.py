@@ -52,40 +52,167 @@ def _config_key(llama_config: dict[str, Any]) -> tuple[Any, ...]:
     return tuple(sorted(llama_config.items()))
 
 
+def build_llama_server_command(gguf_path: Path, llama_config: dict[str, Any]) -> list[str]:
+    """Build the llama-server argv from Tiles config."""
+    context_length = int(llama_config.get("context_length") or 8192)
+    gpu_layers = llama_config.get("gpu_layers")
+    if gpu_layers is None:
+        env_ngl = os.environ.get("TILES_GPU_LAYERS")
+        gpu_layers = int(env_ngl) if env_ngl else 99
+    gpu_layers = int(gpu_layers)
+    batch_size = int(llama_config.get("batch_size") or 512)
+    offload_kqv = llama_config.get("offload_kqv")
+    if offload_kqv is None:
+        offload_kqv = True
+
+    binary = resolve_llama_server_binary()
+    cmd = [
+        binary,
+        "--host",
+        LLAMA_SERVER_HOST,
+        "--port",
+        str(LLAMA_SERVER_PORT),
+        "-m",
+        str(gguf_path),
+        "-c",
+        str(context_length),
+        "-b",
+        str(batch_size),
+        "-ngl",
+        str(gpu_layers),
+        "--jinja",
+    ]
+    if offload_kqv:
+        cmd.append("--kv-offload")
+    else:
+        cmd.append("--no-kv-offload")
+
+    n_cpu_moe = llama_config.get("n_cpu_moe")
+    if n_cpu_moe is not None:
+        cmd.extend(["--n-cpu-moe", str(int(n_cpu_moe))])
+
+    flash_attn = llama_config.get("flash_attn")
+    if flash_attn:
+        cmd.extend(["--flash-attn", "on"])
+
+    no_mmap = llama_config.get("no_mmap")
+    if no_mmap:
+        cmd.append("--no-mmap")
+
+    mtp_enabled = llama_config.get("mtp")
+    if mtp_enabled is None:
+        mtp_enabled = os.environ.get("TILES_MTP", "").lower() in ("1", "true", "yes")
+    else:
+        mtp_enabled = bool(mtp_enabled)
+
+    if mtp_enabled:
+        mtp_path = find_mtp_gguf_file(gguf_path)
+        if mtp_path is None:
+            logger.warning(
+                "MTP enabled but no MTP GGUF found next to %s. "
+                "Re-run model download or set mtp = false in config.",
+                gguf_path,
+            )
+        else:
+            cmd.extend(
+                [
+                    "--spec-type",
+                    "draft-mtp",
+                    "--spec-draft-model",
+                    str(mtp_path),
+                ]
+            )
+            logger.info("MTP speculative decoding enabled with %s", mtp_path)
+
+    return cmd
+
+
 def _health_url() -> str:
     return f"http://{LLAMA_SERVER_HOST}:{LLAMA_SERVER_PORT}/health"
 
 
-def _models_url() -> str:
-    return f"http://{LLAMA_SERVER_HOST}:{LLAMA_SERVER_PORT}/v1/models"
+def _llama_server_log_hint() -> str:
+    log_dir = Path.cwd() / ".tiles_dev" / "tiles" / "data" / "logs"
+    if not log_dir.is_dir():
+        log_dir = Path.home() / ".local" / "share" / "tiles" / "data" / "logs"
+    return str(log_dir / "llama-server.err.log")
 
 
-def wait_until_ready(proc: subprocess.Popen[bytes], timeout_s: float = 120.0) -> None:
+def is_server_ready() -> bool:
+    """True when llama-server /health reports the model is loaded."""
+    try:
+        response = httpx.get(_health_url(), timeout=2.0)
+    except httpx.HTTPError:
+        return False
+    if response.status_code != 200:
+        return False
+    try:
+        payload = response.json()
+    except ValueError:
+        return True
+    status = payload.get("status")
+    if status is None:
+        return True
+    return status == "ok"
+
+
+def _tail_llama_server_log(max_lines: int = 8) -> str:
+    log_path = Path(_llama_server_log_hint())
+    if not log_path.is_file():
+        return ""
+    try:
+        lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return ""
+    if not lines:
+        return ""
+    return "\n".join(lines[-max_lines:])
+
+
+def wait_until_ready(proc: subprocess.Popen[bytes], timeout_s: float = 600.0) -> None:
+    """Poll /health until the model finishes loading. 503 while loading is normal."""
     deadline = time.time() + timeout_s
-    last_error: Exception | None = None
-    while time.time() < deadline:
-        if proc.poll() is not None:
-            raise RuntimeError(
-                f"llama-server exited during startup (code {proc.returncode}). "
-                "Check logs — on 8GB GPUs, gpu_layers=99 with a ~7GB model often OOMs."
-            )
-        try:
-            response = httpx.get(_health_url(), timeout=2.0)
-            if response.status_code == 200:
+    started = time.time()
+    last_progress_log = 0.0
+    httpx_logger = logging.getLogger("httpx")
+    previous_httpx_level = httpx_logger.level
+
+    logger.info("Waiting for llama-server to finish loading the model...")
+    httpx_logger.setLevel(logging.WARNING)
+    try:
+        while time.time() < deadline:
+            if proc.poll() is not None:
+                detail = _tail_llama_server_log()
+                hint = _llama_server_log_hint()
+                message = (
+                    f"llama-server exited during startup (code {proc.returncode}). "
+                    f"Check {hint}."
+                )
+                if detail:
+                    message = f"{message}\n{detail}"
+                raise RuntimeError(message)
+            if is_server_ready():
+                elapsed = time.time() - started
+                logger.info("llama-server ready (%.0fs)", elapsed)
                 return
-            response = httpx.get(_models_url(), timeout=2.0)
-            if response.status_code == 200:
-                return
-        except Exception as exc:  # noqa: BLE001 - poll until ready
-            last_error = exc
-        time.sleep(0.25)
+
+            now = time.time()
+            elapsed = now - started
+            if elapsed >= 5 and now - last_progress_log >= 30:
+                logger.info("Still loading model (%.0fs elapsed)...", elapsed)
+                last_progress_log = now
+            time.sleep(1.0)
+    finally:
+        httpx_logger.setLevel(previous_httpx_level)
 
     if proc.poll() is not None:
         raise RuntimeError(
-            f"llama-server exited before becoming ready (code {proc.returncode})"
+            f"llama-server exited before becoming ready (code {proc.returncode}). "
+            f"Check {_llama_server_log_hint()}."
         )
     raise TimeoutError(
-        f"llama-server did not become ready at {_health_url()}: {last_error}"
+        f"llama-server did not finish loading within {timeout_s:.0f}s. "
+        f"Check {_llama_server_log_hint()}."
     )
 
 
@@ -124,16 +251,19 @@ def ensure_running(gguf_path: Path, llama_config: dict[str, Any]) -> None:
         and _loaded_gguf == gguf_path
         and _loaded_config_key == key
     ):
+        if is_server_ready():
+            return
+        wait_until_ready(_process)
         return
 
     stop()
 
-    context_length = int(llama_config.get("context_length") or 8192)
     gpu_layers = llama_config.get("gpu_layers")
     if gpu_layers is None:
         env_ngl = os.environ.get("TILES_GPU_LAYERS")
         gpu_layers = int(env_ngl) if env_ngl else 99
     gpu_layers = int(gpu_layers)
+    context_length = int(llama_config.get("context_length") or 8192)
     batch_size = int(llama_config.get("batch_size") or 512)
     offload_kqv = llama_config.get("offload_kqv")
     if offload_kqv is None:
@@ -154,55 +284,11 @@ def ensure_running(gguf_path: Path, llama_config: dict[str, Any]) -> None:
             offload_kqv,
         )
 
-    binary = resolve_llama_server_binary()
-    cmd = [
-        binary,
-        "--host",
-        LLAMA_SERVER_HOST,
-        "--port",
-        str(LLAMA_SERVER_PORT),
-        "-m",
-        str(gguf_path),
-        "-c",
-        str(context_length),
-        "-b",
-        str(batch_size),
-        "-ngl",
-        str(gpu_layers),
-        "--jinja",
-    ]
-    if offload_kqv:
-        cmd.append("--kv-offload")
-    else:
-        cmd.append("--no-kv-offload")
-
-    mtp_enabled = llama_config.get("mtp")
-    if mtp_enabled is None:
-        mtp_enabled = os.environ.get("TILES_MTP", "").lower() in ("1", "true", "yes")
-    else:
-        mtp_enabled = bool(mtp_enabled)
-
-    if mtp_enabled:
-        mtp_path = find_mtp_gguf_file(gguf_path)
-        if mtp_path is None:
-            logger.warning(
-                "MTP enabled but no MTP GGUF found next to %s. "
-                "Re-run model download or set mtp = false in config.",
-                gguf_path,
-            )
-        else:
-            cmd.extend(
-                [
-                    "--spec-type",
-                    "draft-mtp",
-                    "--spec-draft-model",
-                    str(mtp_path),
-                ]
-            )
-            logger.info("MTP speculative decoding enabled with %s", mtp_path)
+    cmd = build_llama_server_command(gguf_path, llama_config)
 
     logger.info("Starting llama-server: %s", " ".join(cmd))
     env = os.environ.copy()
+    binary = cmd[0]
     lib_dir = str(Path(binary).resolve().parent)
     if sys.platform == "darwin":
         for var in ("DYLD_LIBRARY_PATH", "DYLD_FALLBACK_LIBRARY_PATH"):

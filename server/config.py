@@ -22,6 +22,9 @@ class LlamaConfig(BaseModel):
     offload_kqv: bool | None = None
     batch_size: int | None = None
     mtp: bool | None = None
+    n_cpu_moe: int | None = None
+    flash_attn: bool | None = None
+    no_mmap: bool | None = None
 
 
 def _config_toml_candidates() -> list[Path]:
@@ -71,6 +74,10 @@ def get_llama_config() -> dict:
         config = response.json()
         llama = config.get("llama") or {}
         if llama:
+            logger.info(
+                "Loaded llama config from Tiles daemon (see ~/.config/tiles/config.toml "
+                "or .tiles_dev/tiles/config.toml when running from source)"
+            )
             return LlamaConfig(**llama).model_dump(exclude_none=True)
     except httpx.HTTPError:
         pass
