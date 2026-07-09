@@ -12,7 +12,7 @@ use anyhow::{Result, anyhow};
 use axum::body::Bytes;
 use futures_util::{StreamExt, TryStreamExt};
 use iroh::{
-    Endpoint, EndpointId, NET_REPORT_TIMEOUT, PublicKey,
+    Endpoint, EndpointAddr, EndpointId, NET_REPORT_TIMEOUT, PublicKey,
     endpoint::{BindError, presets},
     endpoint_info::UserData,
     protocol::Router,
@@ -23,17 +23,21 @@ use iroh_gossip::{
     api::{Event, GossipReceiver, GossipSender},
 };
 use iroh_mdns_address_lookup::{DiscoveryEvent, MdnsAddressLookup};
+use iroh_tickets::endpoint::EndpointTicket;
 use log::info;
 use rusqlite::Connection;
 
 use tokio::{
+    io::copy,
+    net::{TcpListener, TcpStream},
     sync::{
         mpsc::{self},
-        oneshot::{self},
+        oneshot::{self, Receiver},
     },
     task::spawn_blocking,
     time::sleep,
 };
+
 use uuid::Uuid;
 
 use crate::core::{
@@ -53,6 +57,8 @@ use sha2::{Digest, Sha256};
 
 // 50 mb
 const MAX_DOWNLOADED_BYTES: usize = 50 * 1024 * 1024;
+
+const ALPN: &[u8] = b"remote-link/v1";
 
 const DEVICE_LINK_LOCAL_TOPIC: &str = "com.tilesprivacy.tiles.link";
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
@@ -400,7 +406,7 @@ async fn sync_subscribe_loop(
     }
     Ok(())
 }
-async fn create_endpoint(user: &account::local::User) -> Result<Endpoint> {
+pub async fn create_endpoint(user: &account::local::User) -> Result<Endpoint> {
     // In release mode, we will build the endpoint using
     // tiles keypair in keychain
     let usr_data = EndpointUserData::new(&user.user_id, &user.username);
@@ -845,6 +851,82 @@ async fn on_sync_send_delta_info(
     Ok(())
 }
 
+pub async fn share(endpoint: Endpoint, mut recvx: Receiver<bool>) -> Result<()> {
+    loop {
+        tokio::select! {
+                        _ = &mut recvx => {
+                                println!("stopping the proxy, exiting");
+                                endpoint.close().await;
+                                break;
+                        }
+                        incoming = endpoint.accept() => {
+                            let Some(incoming) = incoming else {
+                                break;
+                            };
+                            let connection = incoming.await?;
+                            println!("🔗 Peer connected!");
+
+                            let (mut iroh_send, mut iroh_recv) = connection.accept_bi().await?;
+
+                            tokio::spawn(async move {
+                                let mut local_tcp = TcpStream::connect(format!("127.0.0.1:6969"))
+                                    .await
+                                    .expect("Failed to connect to local service");
+
+                                let (mut local_read, mut local_write) = local_tcp.split();
+                                let local_to_remote = async {
+                                    copy(&mut local_read, &mut iroh_send).await?;
+                                    iroh_send.finish()?;
+                                    Result::<()>::Ok(())
+                                };
+                                let remote_to_local = async {
+                                    copy(&mut iroh_recv, &mut local_write).await?;
+                                    Result::<()>::Ok(())
+                                };
+
+                                let _ = tokio::try_join!(local_to_remote, remote_to_local);
+                            });
+
+                        }
+        }
+    }
+    println!("Endpoint closed, exiting");
+    Ok(())
+}
+
+pub async fn connect(ticket: &str) -> Result<()> {
+    let ticket: EndpointTicket = ticket.parse()?;
+    let host_addr: EndpointAddr = ticket.into();
+
+    let endpoint = Endpoint::bind(presets::N0).await?;
+
+    let local_listener = TcpListener::bind("127.0.0.1:9271").await?;
+    println!("Connected to remote inference");
+
+    loop {
+        let (mut local_tcp, _) = local_listener.accept().await?;
+
+        let endpoint = endpoint.clone();
+        let host_addr = host_addr.clone();
+
+        tokio::spawn(async move {
+            let connection = endpoint.connect(host_addr, ALPN).await.unwrap();
+            let (mut iroh_send, mut iroh_recv) = connection.open_bi().await.unwrap();
+            let (mut local_read, mut local_write) = local_tcp.split();
+            let local_to_remote = async {
+                copy(&mut local_read, &mut iroh_send).await?;
+                iroh_send.finish()?;
+                Result::<()>::Ok(())
+            };
+            let remote_to_local = async {
+                copy(&mut iroh_recv, &mut local_write).await?;
+                Result::<()>::Ok(())
+            };
+
+            let _ = tokio::try_join!(local_to_remote, remote_to_local);
+        });
+    }
+}
 #[cfg(test)]
 mod tests {
 
