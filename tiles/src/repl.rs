@@ -267,11 +267,9 @@ impl FromStr for ReasoningEffort {
     type Err = anyhow::Error;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "none" | "off" => Ok(ReasoningEffort::None),
-            "low" => Ok(ReasoningEffort::Low),
-            "medium" => Ok(ReasoningEffort::Medium),
             "high" => Ok(ReasoningEffort::High),
-            "xhigh" => Ok(ReasoningEffort::XHigh),
+            "medium" => Ok(ReasoningEffort::Medium),
+            "low" => Ok(ReasoningEffort::Low),
             _ => Err(anyhow!("Invalid Reasoning value, use /help".to_owned())),
         }
     }
@@ -280,11 +278,9 @@ impl FromStr for ReasoningEffort {
 impl From<ReasoningEffort> for String {
     fn from(value: ReasoningEffort) -> Self {
         match value {
-            ReasoningEffort::None => "none".to_owned(),
-            ReasoningEffort::Low => "low".to_owned(),
-            ReasoningEffort::Medium => "medium".to_owned(),
             ReasoningEffort::High => "high".to_owned(),
-            ReasoningEffort::XHigh => "xhigh".to_owned(),
+            ReasoningEffort::Medium => "medium".to_owned(),
+            ReasoningEffort::Low => "low".to_owned(),
         }
     }
 }
@@ -678,7 +674,6 @@ async fn start_repl(modelfile: &Modelfile, run_args: &RunArgs, db_conn: &Dbconn)
         // Reads the user input
         let readline = editor.readline(">>> ");
         let input = match readline {
-            Ok(line) => line.trim().to_string(),
             Ok(line) => line.trim().to_string(),
             Err(_) => {
                 handle_repl_exit(pi_stdin).await?;
@@ -1457,7 +1452,7 @@ fn save_agent_session(
     db_conn: &Dbconn,
     current_user: &crate::core::account::local::User,
 ) -> Result<()> {
-    let mut full_response: String = String::from("");
+    let mut assistant_parts: Vec<PiMsgContent> = vec![];
     let mut turn = Turn {
         api: Some(String::from("open-responses")),
         provider: Some(String::from("tiles")),
