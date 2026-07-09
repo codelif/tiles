@@ -257,9 +257,6 @@ pub enum ReasoningEffort {
     Medium,
     #[serde(rename = "low")]
     Low,
-    Medium,
-    High,
-    XHigh,
 }
 
 enum InputCommandResponse {
