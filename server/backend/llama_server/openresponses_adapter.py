@@ -172,12 +172,18 @@ def openresponses_tools_to_chat_tools(
     return chat_tools
 
 
-def _effective_max_tokens(request: ResponsesRequest, llama_config: dict[str, Any]) -> int:
-    context_length = int(llama_config.get("context_length") or 8192)
-    default_cap = max(context_length // 2, 256)
-    if request.max_output_tokens is None:
-        return default_cap
-    return min(request.max_output_tokens, default_cap)
+def _effective_max_tokens(
+    request: ResponsesRequest, llama_config: dict[str, Any]
+) -> int | None:
+    """Return max_tokens for the upstream request, or None to defer to llama-server."""
+    context_length = llama_config.get("context_length")
+    if request.max_output_tokens is not None:
+        if context_length is None:
+            return request.max_output_tokens
+        return min(request.max_output_tokens, max(int(context_length) // 2, 256))
+    if context_length is None:
+        return None
+    return max(int(context_length) // 2, 256)
 
 
 async def generate_response_chat_stream(
@@ -205,8 +211,10 @@ async def generate_response_chat_stream(
         "stream": True,
         "temperature": request.temperature if request.temperature is not None else 0.7,
         "top_p": request.top_p if request.top_p is not None else 1.0,
-        "max_tokens": _effective_max_tokens(request, llama_config),
     }
+    max_tokens = _effective_max_tokens(request, llama_config)
+    if max_tokens is not None:
+        body["max_tokens"] = max_tokens
     if tools:
         body["tools"] = tools
         body["tool_choice"] = "auto"

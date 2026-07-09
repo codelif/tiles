@@ -20,6 +20,23 @@ def test_is_server_ready_requires_health_ok():
         assert is_server_ready() is True
 
 
+def test_build_llama_server_command_omits_unset_flags():
+    gguf = Path("/tmp/model.gguf")
+
+    with patch(
+        "server.backend.llama_server.process.resolve_llama_server_binary",
+        return_value="/usr/bin/llama-server",
+    ):
+        cmd = build_llama_server_command(gguf, {})
+
+    assert cmd == [
+        "/usr/bin/llama-server",
+        "-m",
+        str(gguf),
+        "--jinja",
+    ]
+
+
 def test_build_llama_server_command_includes_optional_flags():
     gguf = Path("/tmp/model.gguf")
     config = {

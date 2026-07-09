@@ -53,38 +53,37 @@ def _config_key(llama_config: dict[str, Any]) -> tuple[Any, ...]:
 
 
 def build_llama_server_command(gguf_path: Path, llama_config: dict[str, Any]) -> list[str]:
-    """Build the llama-server argv from Tiles config."""
-    context_length = int(llama_config.get("context_length") or 8192)
-    gpu_layers = llama_config.get("gpu_layers")
-    if gpu_layers is None:
-        env_ngl = os.environ.get("TILES_GPU_LAYERS")
-        gpu_layers = int(env_ngl) if env_ngl else 99
-    gpu_layers = int(gpu_layers)
-    batch_size = int(llama_config.get("batch_size") or 512)
-    offload_kqv = llama_config.get("offload_kqv")
-    if offload_kqv is None:
-        offload_kqv = True
+    """Build the llama-server argv from Tiles config.
 
+    Only flags explicitly set in ``llama_config`` are forwarded; unset values
+    are left to llama-server's own defaults.
+    """
     binary = resolve_llama_server_binary()
+    # Host/port are not passed here so llama-server keeps its defaults
+    # (127.0.0.1:8080). The HTTP client still targets LLAMA_SERVER_*.
     cmd = [
         binary,
-        "--host",
-        LLAMA_SERVER_HOST,
-        "--port",
-        str(LLAMA_SERVER_PORT),
         "-m",
         str(gguf_path),
-        "-c",
-        str(context_length),
-        "-b",
-        str(batch_size),
-        "-ngl",
-        str(gpu_layers),
         "--jinja",
     ]
-    if offload_kqv:
+
+    context_length = llama_config.get("context_length")
+    if context_length is not None:
+        cmd.extend(["-c", str(int(context_length))])
+
+    batch_size = llama_config.get("batch_size")
+    if batch_size is not None:
+        cmd.extend(["-b", str(int(batch_size))])
+
+    gpu_layers = llama_config.get("gpu_layers")
+    if gpu_layers is not None:
+        cmd.extend(["-ngl", str(int(gpu_layers))])
+
+    offload_kqv = llama_config.get("offload_kqv")
+    if offload_kqv is True:
         cmd.append("--kv-offload")
-    else:
+    elif offload_kqv is False:
         cmd.append("--no-kv-offload")
 
     n_cpu_moe = llama_config.get("n_cpu_moe")
@@ -92,20 +91,16 @@ def build_llama_server_command(gguf_path: Path, llama_config: dict[str, Any]) ->
         cmd.extend(["--n-cpu-moe", str(int(n_cpu_moe))])
 
     flash_attn = llama_config.get("flash_attn")
-    if flash_attn:
+    if flash_attn is True:
         cmd.extend(["--flash-attn", "on"])
+    elif flash_attn is False:
+        cmd.extend(["--flash-attn", "off"])
 
     no_mmap = llama_config.get("no_mmap")
-    if no_mmap:
+    if no_mmap is True:
         cmd.append("--no-mmap")
 
-    mtp_enabled = llama_config.get("mtp")
-    if mtp_enabled is None:
-        mtp_enabled = os.environ.get("TILES_MTP", "").lower() in ("1", "true", "yes")
-    else:
-        mtp_enabled = bool(mtp_enabled)
-
-    if mtp_enabled:
+    if llama_config.get("mtp") is True:
         mtp_path = find_mtp_gguf_file(gguf_path)
         if mtp_path is None:
             logger.warning(
@@ -259,29 +254,11 @@ def ensure_running(gguf_path: Path, llama_config: dict[str, Any]) -> None:
     stop()
 
     gpu_layers = llama_config.get("gpu_layers")
-    if gpu_layers is None:
-        env_ngl = os.environ.get("TILES_GPU_LAYERS")
-        gpu_layers = int(env_ngl) if env_ngl else 99
-    gpu_layers = int(gpu_layers)
-    context_length = int(llama_config.get("context_length") or 8192)
-    batch_size = int(llama_config.get("batch_size") or 512)
-    offload_kqv = llama_config.get("offload_kqv")
-    if offload_kqv is None:
-        offload_kqv = True
-
-    if gpu_layers <= 0:
+    if gpu_layers is not None and int(gpu_layers) <= 0:
         logger.warning(
             "gpu_layers=%s — running on CPU. Set [llama].gpu_layers in config.toml "
-            "or TILES_GPU_LAYERS for GPU offload.",
+            "for GPU offload.",
             gpu_layers,
-        )
-    else:
-        logger.info(
-            "llama-server GPU offload: -ngl %s, context %s, batch %s, kv_offload %s",
-            gpu_layers,
-            context_length,
-            batch_size,
-            offload_kqv,
         )
 
     cmd = build_llama_server_command(gguf_path, llama_config)
