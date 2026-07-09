@@ -11,21 +11,9 @@ platforms = [
 name = "server"
 launch_module = "../../main.py"
 runtime = "cpython3.13"
-dynlib_exclude = [
-    "lib/libggml-base.so",
-    "lib/libggml-cpu.so",
-    "lib/libggml-cuda.so",
-    "lib/libggml.so",
-    "lib/libllama.so",
-    "lib/libmtmd.so",
-]
 requirements = [
     "fastapi==0.130.0",
     "uvicorn==0.38.0",
-    "tiles-harmony==0.0.8rc4",
-    "llama-cpp-python @ https://github.com/abetlen/llama-cpp-python/releases/download/v0.3.25-cu124/llama_cpp_python-0.3.25-py3-none-linux_x86_64.whl#sha256=d4651fe74e66275aa1f6f16027bc9113c91cc828c421c156151c3d392a27020d",
-    "nvidia-cuda-runtime-cu12",
-    "nvidia-cublas-cu12",
     "openresponses-types",
     "httpx==0.28.1",
     ]

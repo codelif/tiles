@@ -53,6 +53,7 @@ pub struct LlamaConfig {
     pub gpu_layers: Option<i32>,
     pub offload_kqv: Option<bool>,
     pub batch_size: Option<u32>,
+    pub mtp: Option<bool>,
 }
 
 impl LlamaConfig {
@@ -61,6 +62,7 @@ impl LlamaConfig {
             && self.gpu_layers.is_none()
             && self.offload_kqv.is_none()
             && self.batch_size.is_none()
+            && self.mtp.is_none()
     }
 }
 
@@ -612,6 +614,9 @@ pub fn update_llama_config(config: &LlamaConfig) -> Result<()> {
     }
     if config.batch_size.is_some() {
         llama_config.batch_size = config.batch_size;
+    }
+    if config.mtp.is_some() {
+        llama_config.mtp = config.mtp;
     }
 
     root_config.llama = Some(llama_config);

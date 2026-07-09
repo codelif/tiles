@@ -238,6 +238,7 @@ fn llama_config_from_flags(flags: &RunFlags) -> Option<LlamaConfig> {
         gpu_layers: flags.gpu_layers,
         offload_kqv: flags.offload_kqv,
         batch_size: flags.batch_size,
+        mtp: None,
     };
 
     if config.is_empty() {

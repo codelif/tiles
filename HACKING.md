@@ -43,28 +43,32 @@ This guide will help you set up a reproducible development environment for Tiles
      pip install uv
      ```
 
-   - Sync common Python dependencies:
+   - Sync Python dependencies:
 
      ```sh
      cd server
      uv sync
-     ```
-
-   - Install the platform inference dependencies:
-
-     ```sh
-     # macOS Apple Silicon
-     uv pip install -r requirements-macos.txt
-     ```
-
-     ```sh
-     # Linux x86_64 with CUDA
-     uv pip install -r requirements-linux.txt
-     ```
-
-     ```sh
      cd ..
      ```
+
+5. **Provision the inference engine:**
+
+   Tiles runs inference through a `llama-server` binary. Fetch it for your platform:
+
+   ```sh
+   ./scripts/fetch_llama_server.sh
+   ```
+
+   - macOS: downloads the official prebuilt Metal release into `server/bin/`.
+   - Linux: builds `llama-server` from source, with CUDA when `nvcc` is available (CPU otherwise).
+
+   Then symlink the dev assets into `.tiles_dev/tiles/`:
+
+   ```sh
+   ./scripts/setup_dev_layout.sh
+   ```
+
+   The default model (`unsloth/gpt-oss-20b-GGUF`) is downloaded automatically on the first `cargo run`.
 
 ### Embedding Pi
 

@@ -1,3 +1,3 @@
-mlx==0.31.1
-mlx-lm==0.31.0
-
+# macOS inference now runs through the standalone llama-server binary
+# (Metal build, see scripts/fetch_llama_server.sh), not an in-process Python package.
+# Base server deps come from pyproject.toml via `uv sync`.

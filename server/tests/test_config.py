@@ -7,7 +7,12 @@ def test_get_llama_config_handles_null_llama_config():
     response = Mock()
     response.json.return_value = {"llama": None}
 
-    with patch("server.config.httpx.get", return_value=response):
+    # When the daemon has no llama config, get_llama_config falls back to
+    # config.toml. Isolate the test from any on-disk config so it stays hermetic.
+    with (
+        patch("server.config.httpx.get", return_value=response),
+        patch("server.config._read_llama_config_from_toml", return_value={}),
+    ):
         assert get_llama_config() == {}
 
 
