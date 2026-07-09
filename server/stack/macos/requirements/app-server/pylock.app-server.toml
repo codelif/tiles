@@ -84,32 +84,6 @@ size = 103579
 sha256 = "e953151592638d18270d435c5ac9e90735531db2e3abf4b42e95a1c3624df511"
 
 [[packages]]
-name = "filelock"
-version = "3.29.0"
-index = "https://pypi.org/simple"
-
-[[packages.wheels]]
-url = "https://files.pythonhosted.org/packages/81/47/dd9a212ef6e343a6857485ffe25bba537304f1913bdbed446a23f7f592e1/filelock-3.29.0-py3-none-any.whl"
-upload-time = 2026-04-19T15:39:08Z
-size = 39812
-
-[packages.wheels.hashes]
-sha256 = "96f5f6344709aa1572bbf631c640e4ebeeb519e08da902c39a001882f30ac258"
-
-[[packages]]
-name = "fsspec"
-version = "2026.4.0"
-index = "https://pypi.org/simple"
-
-[[packages.wheels]]
-url = "https://files.pythonhosted.org/packages/d5/0c/043d5e551459da400957a1395e0febbf771446ff34291afcbe3d8be2a279/fsspec-2026.4.0-py3-none-any.whl"
-upload-time = 2026-04-29T20:42:36Z
-size = 203402
-
-[packages.wheels.hashes]
-sha256 = "11ef7bb35dab8a394fde6e608221d5cf3e8499401c249bebaeaad760a1a8dec2"
-
-[[packages]]
 name = "h11"
 version = "0.16.0"
 index = "https://pypi.org/simple"
@@ -121,27 +95,6 @@ size = 37515
 
 [packages.wheels.hashes]
 sha256 = "63cf8bbe7522de3bf65932fda1d9c2772064ffb3dae62d55932da54b31cb6c86"
-
-[[packages]]
-name = "hf-xet"
-version = "1.5.0"
-index = "https://pypi.org/simple"
-
-[[packages.wheels]]
-url = "https://files.pythonhosted.org/packages/0f/6d/9563cfde59b5d8128a9c7ec972a087f4c782e4f7bac5a85234edfd5d5e49/hf_xet-1.5.0-cp313-cp313t-macosx_11_0_arm64.whl"
-upload-time = 2026-05-06T06:17:51Z
-size = 3792751
-
-[packages.wheels.hashes]
-sha256 = "73a0dae8c71de3b0633a45c73f4a4a5ed09e94b43441d82981a781d4f12baa42"
-
-[[packages.wheels]]
-url = "https://files.pythonhosted.org/packages/9b/ff/edcc2b40162bef3ff78e14ab637e5f3b89243d6aee72f5949d3bb6a5af83/hf_xet-1.5.0-cp37-abi3-macosx_11_0_arm64.whl"
-upload-time = 2026-05-06T06:17:55Z
-size = 3798444
-
-[packages.wheels.hashes]
-sha256 = "fd6e5a9b0fdac4ed03ed45ef79254a655b1aaab514a02202617fbf643f5fdf7a"
 
 [[packages]]
 name = "httpcore"
@@ -170,19 +123,6 @@ size = 73517
 sha256 = "d909fcccc110f8c7faf814ca82a9a4d816bc5a6dbfea25d6591d6985b8ba59ad"
 
 [[packages]]
-name = "huggingface-hub"
-version = "1.17.0"
-index = "https://pypi.org/simple"
-
-[[packages.wheels]]
-url = "https://files.pythonhosted.org/packages/02/28/d7cef5e477b855c25d415b8f57e5bc7347c7a90cad3acf1725d0c92ca294/huggingface_hub-1.17.0-py3-none-any.whl"
-upload-time = 2026-05-28T15:12:11Z
-size = 671546
-
-[packages.wheels.hashes]
-sha256 = "3b8156d23118e87f6a587648bfbc04f04a12a757ccb4ed298b35c4ae638bf24c"
-
-[[packages]]
 name = "idna"
 version = "3.17"
 index = "https://pypi.org/simple"
@@ -196,126 +136,6 @@ size = 65316
 sha256 = "466e48829084efe2548012b855df21540b96f2e20e51bd124c851536556a592c"
 
 [[packages]]
-name = "jinja2"
-version = "3.1.6"
-index = "https://pypi.org/simple"
-
-[[packages.wheels]]
-url = "https://files.pythonhosted.org/packages/62/a1/3d680cbfd5f4b8f15abc1d571870c5fc3e594bb582bc3b64ea099db13e56/jinja2-3.1.6-py3-none-any.whl"
-upload-time = 2025-03-05T20:05:00Z
-size = 134899
-
-[packages.wheels.hashes]
-sha256 = "85ece4451f492d0c13c5dd7c13a64681a86afae63a5f347908daf103ce6d2f67"
-
-[[packages]]
-name = "markdown-it-py"
-version = "4.2.0"
-index = "https://pypi.org/simple"
-
-[[packages.wheels]]
-url = "https://files.pythonhosted.org/packages/b3/81/4da04ced5a082363ecfa159c010d200ecbd959ae410c10c0264a38cac0f5/markdown_it_py-4.2.0-py3-none-any.whl"
-upload-time = 2026-05-07T12:08:27Z
-size = 91687
-
-[packages.wheels.hashes]
-sha256 = "9f7ebbcd14fe59494226453aed97c1070d83f8d24b6fc3a3bcf9a38092641c4a"
-
-[[packages]]
-name = "markupsafe"
-version = "3.0.3"
-index = "https://pypi.org/simple"
-
-[[packages.wheels]]
-url = "https://files.pythonhosted.org/packages/9c/d9/5f7756922cdd676869eca1c4e3c0cd0df60ed30199ffd775e319089cb3ed/markupsafe-3.0.3-cp313-cp313-macosx_11_0_arm64.whl"
-upload-time = 2025-09-27T18:36:43Z
-size = 12029
-
-[packages.wheels.hashes]
-sha256 = "116bb52f642a37c115f517494ea5feb03889e04df47eeff5b130b1808ce7c219"
-
-[[packages.wheels]]
-url = "https://files.pythonhosted.org/packages/99/9e/e412117548182ce2148bdeacdda3bb494260c0b0184360fe0d56389b523b/markupsafe-3.0.3-cp313-cp313t-macosx_11_0_arm64.whl"
-upload-time = 2025-09-27T18:36:55Z
-size = 12066
-
-[packages.wheels.hashes]
-sha256 = "3524b778fe5cfb3452a09d31e7b5adefeea8c5be1d43c4f810ba09f2ceb29d37"
-
-[[packages]]
-name = "mdurl"
-version = "0.1.2"
-index = "https://pypi.org/simple"
-
-[[packages.wheels]]
-url = "https://files.pythonhosted.org/packages/b3/38/89ba8ad64ae25be8de66a6d463314cf1eb366222074cfda9ee839c56a4b4/mdurl-0.1.2-py3-none-any.whl"
-upload-time = 2022-08-14T12:40:09Z
-size = 9979
-
-[packages.wheels.hashes]
-sha256 = "84008a41e51615a49fc9966191ff91509e3c40b939176e643fd50a5c2196b8f8"
-
-[[packages]]
-name = "mlx"
-version = "0.31.1"
-marker = "sys_platform == 'from_lower_layer'"
-
-[[packages]]
-name = "mlx-lm"
-version = "0.31.0"
-index = "https://pypi.org/simple"
-
-[[packages.wheels]]
-url = "https://files.pythonhosted.org/packages/20/a3/7ec46abe6a0ee519d28bb676aede49a68c70bd1db6c05a7a480d018079cb/mlx_lm-0.31.0-py3-none-any.whl"
-upload-time = 2026-03-07T03:49:27Z
-size = 393259
-
-[packages.wheels.hashes]
-sha256 = "112a2f18bfc95bd8bb0517f9f7cee00262f54fe0f18ed36d9b0fc2059c4a91bc"
-
-[[packages]]
-name = "mlx-metal"
-version = "0.31.1"
-marker = "sys_platform == 'from_lower_layer'"
-
-[[packages]]
-name = "numpy"
-version = "2.4.6"
-index = "https://pypi.org/simple"
-
-[[packages.wheels]]
-url = "https://files.pythonhosted.org/packages/1b/30/a80189bcc7f5e4258b3fbc3968d909d1756f54d023299ecc39ad6fdb9ef8/numpy-2.4.6-cp313-cp313-macosx_11_0_arm64.whl"
-upload-time = 2026-05-18T23:34:33Z
-size = 14693902
-
-[packages.wheels.hashes]
-sha256 = "bf162abab1c1a736333192707cef898e735a5ca00f38f27eeedf44b39d9e85eb"
-
-[[packages.wheels]]
-url = "https://files.pythonhosted.org/packages/97/12/70b5d0d7c15e1ebb8a6a84a8caa1d19e181d84fb58bb6d70aca29099dec1/numpy-2.4.6-cp313-cp313-macosx_14_0_arm64.whl"
-upload-time = 2026-05-18T23:34:36Z
-size = 5198992
-
-[packages.wheels.hashes]
-sha256 = "043191bfa8eab18c776647b62723ac9dddece59743b13f49b2016094129c2b3f"
-
-[[packages.wheels]]
-url = "https://files.pythonhosted.org/packages/63/6d/cc5619247c8f4204e507f5883528372e4ac4bb189e579fb859a12e480b1f/numpy-2.4.6-cp313-cp313t-macosx_11_0_arm64.whl"
-upload-time = 2026-05-18T23:35:05Z
-size = 14821197
-
-[packages.wheels.hashes]
-sha256 = "112b06a867b235ef466ed3508ddf0238050df9c727cafb5301ac385b899189a1"
-
-[[packages.wheels]]
-url = "https://files.pythonhosted.org/packages/00/58/f1c39161c87d9e9bed660f1ed4bafc0e403d5ec9650b6dd77aead07d489b/numpy-2.4.6-cp313-cp313t-macosx_14_0_arm64.whl"
-upload-time = 2026-05-18T23:35:08Z
-size = 5326287
-
-[packages.wheels.hashes]
-sha256 = "eaf7fa2de5c0be8ae6ff8e9bea2ccd725e980541244521d8d4b5f3354a27babe"
-
-[[packages]]
 name = "openresponses-types"
 version = "2.3.0.post1"
 index = "https://pypi.org/simple"
@@ -327,40 +147,6 @@ size = 13847
 
 [packages.wheels.hashes]
 sha256 = "88f6abcef9cad839203abff420dd080978bf6eb33cc06ddc5d78da4ccdba7613"
-
-[[packages]]
-name = "packaging"
-version = "26.2"
-index = "https://pypi.org/simple"
-
-[[packages.wheels]]
-url = "https://files.pythonhosted.org/packages/df/b2/87e62e8c3e2f4b32e5fe99e0b86d576da1312593b39f47d8ceef365e95ed/packaging-26.2-py3-none-any.whl"
-upload-time = 2026-04-24T20:15:22Z
-size = 100195
-
-[packages.wheels.hashes]
-sha256 = "5fc45236b9446107ff2415ce77c807cee2862cb6fac22b8a73826d0693b0980e"
-
-[[packages]]
-name = "protobuf"
-version = "7.35.0"
-index = "https://pypi.org/simple"
-
-[[packages.wheels]]
-url = "https://files.pythonhosted.org/packages/83/ee/93d06e358a4aa32280b00e722d3ea0a1f25fc3cc5778d80581c9cca2c10e/protobuf-7.35.0-cp310-abi3-macosx_10_9_universal2.whl"
-upload-time = 2026-05-19T23:02:19Z
-size = 433225
-
-[packages.wheels.hashes]
-sha256 = "66be6c513931c794fa92c080ffee41671390da3d79da219cf9c0c0907f035dda"
-
-[[packages.wheels]]
-url = "https://files.pythonhosted.org/packages/b8/ef/50433d346c56657a70d27f156c7b349ac59a068b01de4eb796e747eecc43/protobuf-7.35.0-py3-none-any.whl"
-upload-time = 2026-05-19T23:02:27Z
-size = 171659
-
-[packages.wheels.hashes]
-sha256 = "c13f325cf242bad135c350629eeb5d54b24228eb472fb3e2e9ebbd4c5dc20ca0"
 
 [[packages]]
 name = "pydantic"
@@ -389,145 +175,6 @@ size = 1951906
 sha256 = "c94f0688e7b8d0a67abf40e57a7eaaecd17cc9586706a31b76c031f63df052b4"
 
 [[packages]]
-name = "pygments"
-version = "2.20.0"
-index = "https://pypi.org/simple"
-
-[[packages.wheels]]
-url = "https://files.pythonhosted.org/packages/f4/7e/a72dd26f3b0f4f2bf1dd8923c85f7ceb43172af56d63c7383eb62b332364/pygments-2.20.0-py3-none-any.whl"
-upload-time = 2026-03-29T13:29:30Z
-size = 1231151
-
-[packages.wheels.hashes]
-sha256 = "81a9e26dd42fd28a23a2d169d86d7ac03b46e2f8b59ed4698fb4785f946d0176"
-
-[[packages]]
-name = "pyyaml"
-version = "6.0.3"
-index = "https://pypi.org/simple"
-
-[[packages.wheels]]
-url = "https://files.pythonhosted.org/packages/b1/16/95309993f1d3748cd644e02e38b75d50cbc0d9561d21f390a76242ce073f/pyyaml-6.0.3-cp313-cp313-macosx_11_0_arm64.whl"
-upload-time = 2025-09-25T21:32:25Z
-size = 173252
-
-[packages.wheels.hashes]
-sha256 = "2283a07e2c21a2aa78d9c4442724ec1eb15f5e42a723b99cb3d822d48f5f7ad1"
-
-[[packages]]
-name = "regex"
-version = "2026.5.9"
-index = "https://pypi.org/simple"
-
-[[packages.wheels]]
-url = "https://files.pythonhosted.org/packages/aa/da/797e91ecec6f84135da778ddce78c20e0af5d2a15c26f87a81bc3eadb6db/regex-2026.5.9-cp313-cp313-macosx_10_13_universal2.whl"
-upload-time = 2026-05-09T23:13:04Z
-size = 490303
-
-[packages.wheels.hashes]
-sha256 = "d626b84406444b165fc0ba981604edea39f0588ff1f92baa23fe50799ea9afdb"
-
-[[packages.wheels]]
-url = "https://files.pythonhosted.org/packages/2d/e7/d0eaf5713828417b9e5648cf81fa9bacd4961f6ab98c380c2034f8716e35/regex-2026.5.9-cp313-cp313-macosx_11_0_arm64.whl"
-upload-time = 2026-05-09T23:13:08Z
-size = 289468
-
-[packages.wheels.hashes]
-sha256 = "a8820737949116ffff55fe18f9fc644530063ba6ebfcb8314239416e78f1347c"
-
-[[packages.wheels]]
-url = "https://files.pythonhosted.org/packages/e8/e9/d21346f7b60ed58789371358ed66b09d00f832e1bd7c06e55d9da5679882/regex-2026.5.9-cp313-cp313t-macosx_10_13_universal2.whl"
-upload-time = 2026-05-09T23:13:35Z
-size = 494172
-
-[packages.wheels.hashes]
-sha256 = "01f28d868834624c934b8d2e0aa1c8341337e37831f4a012f18a5afcba4cbaf3"
-
-[[packages.wheels]]
-url = "https://files.pythonhosted.org/packages/f2/7d/9fbf919768368d3f8a4f6c692cf2aa61e482b2b81ec6a298ace4cbf02480/regex-2026.5.9-cp313-cp313t-macosx_11_0_arm64.whl"
-upload-time = 2026-05-09T23:13:40Z
-size = 292314
-
-[packages.wheels.hashes]
-sha256 = "b96350aa424e79d4fd6b567b344dcbe2b2d6bfc48dfe7717587e1fa6d43da6ff"
-
-[[packages]]
-name = "rich"
-version = "15.0.0"
-index = "https://pypi.org/simple"
-
-[[packages.wheels]]
-url = "https://files.pythonhosted.org/packages/82/3b/64d4899d73f91ba49a8c18a8ff3f0ea8f1c1d75481760df8c68ef5235bf5/rich-15.0.0-py3-none-any.whl"
-upload-time = 2026-04-12T08:24:02Z
-size = 310654
-
-[packages.wheels.hashes]
-sha256 = "33bd4ef74232fb73fe9279a257718407f169c09b78a87ad3d296f548e27de0bb"
-
-[[packages]]
-name = "safetensors"
-version = "0.7.0"
-index = "https://pypi.org/simple"
-
-[[packages.wheels]]
-url = "https://files.pythonhosted.org/packages/e8/00/374c0c068e30cd31f1e1b46b4b5738168ec79e7689ca82ee93ddfea05109/safetensors-0.7.0-cp38-abi3-macosx_11_0_arm64.whl"
-upload-time = 2025-11-19T15:18:34Z
-size = 447058
-
-[packages.wheels.hashes]
-sha256 = "94fd4858284736bb67a897a41608b5b0c2496c9bdb3bf2af1fa3409127f20d57"
-
-[[packages]]
-name = "sentencepiece"
-version = "0.2.1"
-index = "https://pypi.org/simple"
-
-[[packages.wheels]]
-url = "https://files.pythonhosted.org/packages/ba/4a/85fbe1706d4d04a7e826b53f327c4b80f849cf1c7b7c5e31a20a97d8f28b/sentencepiece-0.2.1-cp313-cp313-macosx_10_13_universal2.whl"
-upload-time = 2025-08-12T06:59:53Z
-size = 1943150
-
-[packages.wheels.hashes]
-sha256 = "dcd8161eee7b41aae57ded06272905dbd680a0a04b91edd0f64790c796b2f706"
-
-[[packages.wheels]]
-url = "https://files.pythonhosted.org/packages/8d/de/5a007fb53b1ab0aafc69d11a5a3dd72a289d5a3e78dcf2c3a3d9b14ffe93/sentencepiece-0.2.1-cp313-cp313-macosx_11_0_arm64.whl"
-upload-time = 2025-08-12T06:59:56Z
-size = 1253641
-
-[packages.wheels.hashes]
-sha256 = "097f3394e99456e9e4efba1737c3749d7e23563dd1588ce71a3d007f25475fff"
-
-[[packages.wheels]]
-url = "https://files.pythonhosted.org/packages/4a/b6/08fe2ce819e02ccb0296f4843e3f195764ce9829cbda61b7513f29b95718/sentencepiece-0.2.1-cp313-cp313t-macosx_10_13_universal2.whl"
-upload-time = 2025-08-12T07:00:08Z
-size = 1946052
-
-[packages.wheels.hashes]
-sha256 = "8dd4b477a7b069648d19363aad0cab9bad2f4e83b2d179be668efa672500dc94"
-
-[[packages.wheels]]
-url = "https://files.pythonhosted.org/packages/99/7e/1fb26e8a21613f6200e1ab88824d5d203714162cf2883248b517deb500b7/sentencepiece-0.2.1-cp313-cp313t-macosx_11_0_arm64.whl"
-upload-time = 2025-08-12T07:00:11Z
-size = 1254857
-
-[packages.wheels.hashes]
-sha256 = "ad8493bea8432dae8d6830365352350f3b4144415a1d09c4c8cb8d30cf3b6c3c"
-
-[[packages]]
-name = "shellingham"
-version = "1.5.4"
-index = "https://pypi.org/simple"
-
-[[packages.wheels]]
-url = "https://files.pythonhosted.org/packages/e0/f9/0595336914c5619e5f28a1fb793285925a8cd4b432c9da0a987836c7f822/shellingham-1.5.4-py2.py3-none-any.whl"
-upload-time = 2023-10-24T04:13:38Z
-size = 9755
-
-[packages.wheels.hashes]
-sha256 = "7ecfff8f2fd72616f7481040475a65b2bf8af90a56c89140852d1120324e8686"
-
-[[packages]]
 name = "starlette"
 version = "0.52.1"
 index = "https://pypi.org/simple"
@@ -539,71 +186,6 @@ size = 74272
 
 [packages.wheels.hashes]
 sha256 = "0029d43eb3d273bc4f83a08720b4912ea4b071087a3b48db01b7c839f7954d74"
-
-[[packages]]
-name = "tiles-harmony"
-version = "0.0.8rc4"
-index = "https://pypi.org/simple"
-
-[[packages.wheels]]
-url = "https://files.pythonhosted.org/packages/3c/23/95dba0ed01c85ff7820ee046010b7d7261e3a396b7b03a82e342b7e46323/tiles_harmony-0.0.8rc4-cp38-abi3-macosx_11_0_arm64.whl"
-upload-time = 2026-06-19T03:00:40Z
-size = 2671604
-
-[packages.wheels.hashes]
-sha256 = "44d4a5c7d37443a98e4bc082554800aa7f0d7f69d6846806b612527ed3872995"
-
-[[packages]]
-name = "tokenizers"
-version = "0.22.2"
-index = "https://pypi.org/simple"
-
-[[packages.wheels]]
-url = "https://files.pythonhosted.org/packages/2e/47/174dca0502ef88b28f1c9e06b73ce33500eedfac7a7692108aec220464e7/tokenizers-0.22.2-cp39-abi3-macosx_11_0_arm64.whl"
-upload-time = 2026-01-05T10:41:00Z
-size = 2981472
-
-[packages.wheels.hashes]
-sha256 = "1e418a55456beedca4621dbab65a318981467a2b188e982a23e117f115ce5001"
-
-[[packages]]
-name = "tqdm"
-version = "4.67.3"
-index = "https://pypi.org/simple"
-
-[[packages.wheels]]
-url = "https://files.pythonhosted.org/packages/16/e1/3079a9ff9b8e11b846c6ac5c8b5bfb7ff225eee721825310c91b3b50304f/tqdm-4.67.3-py3-none-any.whl"
-upload-time = 2026-02-03T17:35:50Z
-size = 78374
-
-[packages.wheels.hashes]
-sha256 = "ee1e4c0e59148062281c49d80b25b67771a127c85fc9676d3be5f243206826bf"
-
-[[packages]]
-name = "transformers"
-version = "5.9.0"
-index = "https://pypi.org/simple"
-
-[[packages.wheels]]
-url = "https://files.pythonhosted.org/packages/02/ca/2eaa5359f2ccb8c2e1656bc26305ad0cf438aa392ce4b29ae67a315c186e/transformers-5.9.0-py3-none-any.whl"
-upload-time = 2026-05-20T14:50:45Z
-size = 10787648
-
-[packages.wheels.hashes]
-sha256 = "1d19509bcff7028ebc6b277d71caa712e8353778463d38764237d14b42b52788"
-
-[[packages]]
-name = "typer"
-version = "0.25.1"
-index = "https://pypi.org/simple"
-
-[[packages.wheels]]
-url = "https://files.pythonhosted.org/packages/3f/f9/2b3ff4e56e5fa7debfaf9eb135d0da96f3e9a1d5b27222223c7296336e5f/typer-0.25.1-py3-none-any.whl"
-upload-time = 2026-04-30T19:32:18Z
-size = 58409
-
-[packages.wheels.hashes]
-sha256 = "75caa44ed46a03fb2dab8808753ffacdbfea88495e74c85a28c5eefcf5f39c89"
 
 [[packages]]
 name = "typing-extensions"
