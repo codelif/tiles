@@ -59,10 +59,14 @@ def build_llama_server_command(gguf_path: Path, llama_config: dict[str, Any]) ->
     are left to llama-server's own defaults.
     """
     binary = resolve_llama_server_binary()
-    # Host/port are not passed here so llama-server keeps its defaults
-    # (127.0.0.1:8080). The HTTP client still targets LLAMA_SERVER_*.
+    # Always bind to Tiles' llama-server port (default 18080) so we don't
+    # collide with a stock llama-server on 8080.
     cmd = [
         binary,
+        "--host",
+        LLAMA_SERVER_HOST,
+        "--port",
+        str(LLAMA_SERVER_PORT),
         "-m",
         str(gguf_path),
         "--jinja",

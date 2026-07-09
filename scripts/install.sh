@@ -5,34 +5,76 @@ REPO="tilesprivacy/tiles"
 
 VERSION="0.4.15"
 DEV="false"
+NIGHTLY="false"
+
+log() { echo -e "\033[1;36m$*\033[0m"; }
+err() { echo -e "\033[1;31m$*\033[0m" >&2; exit 1; }
+warn() {
+  printf "\033[1;33m%s\033[0m\n" "$*"
+}
+
+usage() {
+  echo "Usage: scripts/install.sh [--dev] [--nightly]"
+  echo ""
+  echo "  --dev       Install from a local dist/*.tar.gz instead of GitHub"
+  echo "  --nightly   Install the latest nightly GitHub release"
+  echo "              (e.g. tiles-v0.4.16-nightly.1-x86_64-linux.tar.gz)"
+}
+
+# Resolve the newest GitHub nightly release that has a tarball for this platform.
+# Expected asset: tiles-v0.4.16-nightly.1-x86_64-linux.tar.gz
+# Sets RELEASE_TAG (download URL) and VERSION (asset name).
+resolve_nightly_version() {
+  local api_url="https://api.github.com/repos/${REPO}/releases?per_page=30"
+  local releases_json tag version asset
+  local platform="${ARCH}-${OS}"
+
+  releases_json="$(curl -fsSL "${api_url}")" || err "Failed to query GitHub releases for ${REPO}."
+
+  # Walk nightly tags (API returns newest first) and pick the first with our asset.
+  while IFS= read -r tag; do
+    [[ -z "${tag}" ]] && continue
+    version="${tag#v}"
+    asset="tiles-v${version}-${platform}.tar.gz"
+    if printf '%s' "${releases_json}" | grep -qF "\"name\": \"${asset}\""; then
+      RELEASE_TAG="${tag}"
+      VERSION="${version}"
+      return 0
+    fi
+  done < <(
+    printf '%s' "${releases_json}" \
+      | grep -oE '"tag_name"[[:space:]]*:[[:space:]]*"[^"]+"' \
+      | sed -E 's/.*"([^"]+)".*/\1/' \
+      | grep -i 'nightly' \
+      || true
+  )
+
+  err "No nightly found for ${platform} (no matching tiles-v*-${platform}.tar.gz on GitHub)."
+}
 
 for arg in "$@"; do
   case "$arg" in
     --dev|-dev)
       DEV="true"
       ;;
+    --nightly|-nightly)
+      NIGHTLY="true"
+      ;;
     -h|--help)
-      echo "Usage: scripts/install.sh [--dev]"
-      echo ""
-      echo "  --dev   Install from a local dist/*.tar.gz instead of GitHub"
+      usage
       exit 0
       ;;
     *)
       echo "Unknown argument: $arg" >&2
-      echo "Usage: scripts/install.sh [--dev]" >&2
+      usage >&2
       exit 1
       ;;
   esac
 done
 
-INSTALL_DIR="/usr/local/bin"           # CLI install location
-
-SERVER_DIR="/usr/local/share/tiles/server"         # Python server folder
-MODELFILE_DIR="/usr/local/share/tiles/modelfiles"  # Modelfile server folder
-
-PI_DIR="/usr/local/share/tiles/pi"
-
-TMPDIR="$(mktemp -d)"
+if [[ "${DEV}" == "true" && "${NIGHTLY}" == "true" ]]; then
+  err "--dev and --nightly cannot be used together."
+fi
 
 OS=$(uname -s | tr '[:upper:]' '[:lower:]')
 ARCH=$(uname -m)
@@ -50,21 +92,22 @@ MODELFILE_DIR="${LIB_DIR}/modelfiles"  # Modelfile server folder
 PI_DIR="${LIB_DIR}/pi"
 
 TMPDIR="$(mktemp -d)"
+RELEASE_TAG="${VERSION}"
 
-log() { echo -e "\033[1;36m$*\033[0m"; }
-err() { echo -e "\033[1;31m$*\033[0m" >&2; exit 1; }
-warn() {
-  printf "\033[1;33m%s\033[0m\n" "$*"
-}
-
-if [[ "${DEV}" == "true" ]]; then
+if [[ "${NIGHTLY}" == "true" ]]; then
+  resolve_nightly_version
+  log "⬇️  Downloading Tiles nightly (${VERSION}) for ${ARCH}-${OS}..."
+elif [[ "${DEV}" == "true" ]]; then
   log "⬇️  Installing local Tiles build for ${ARCH}-${OS}..."
 else
   log "⬇️  Downloading Tiles (${VERSION}) for ${ARCH}-${OS}..."
 fi
 
 if [[ "${DEV}" == "false" ]]; then
-  TAR_URL="https://github.com/${REPO}/releases/download/${VERSION}/tiles-v${VERSION}-${ARCH}-${OS}.tar.gz"
+  # Stable (default) and --nightly both download from GitHub.
+  # Unflagged install always uses the hardcoded VERSION above (never nightly).
+  # Nightly only runs when --nightly is passed (resolve_nightly_version).
+  TAR_URL="https://github.com/${REPO}/releases/download/${RELEASE_TAG}/tiles-v${VERSION}-${ARCH}-${OS}.tar.gz"
   curl -fL -o "${TMPDIR}/tiles.tar.gz" "$TAR_URL"
 else
   if [[ -n "${TILES_DEV_TARBALL:-}" ]]; then

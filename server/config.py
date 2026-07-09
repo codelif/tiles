@@ -10,7 +10,7 @@ logger = logging.getLogger("app")
 PORT = 6969
 DAEMON_PORT = 1729
 LLAMA_SERVER_HOST = os.environ.get("TILES_LLAMA_SERVER_HOST", "127.0.0.1")
-LLAMA_SERVER_PORT = int(os.environ.get("TILES_LLAMA_SERVER_PORT", "8080"))
+LLAMA_SERVER_PORT = int(os.environ.get("TILES_LLAMA_SERVER_PORT", "18080"))
 MODEL_ID = "driaforall/mem-agent"
 
 MEMORY_PATH = os.path.expanduser("~") + "/tiles_memory"

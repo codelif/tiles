@@ -31,6 +31,10 @@ def test_build_llama_server_command_omits_unset_flags():
 
     assert cmd == [
         "/usr/bin/llama-server",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "18080",
         "-m",
         str(gguf),
         "--jinja",
