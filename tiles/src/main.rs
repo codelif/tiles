@@ -10,7 +10,9 @@ use tiles::{
         network::sync,
         plugin::{self, install, uninstall},
     },
-    daemon::{start_cmd, start_server, stop_cmd},
+    daemon::{
+        remote_status, share_remote_link, start_cmd, start_server, stop_cmd, unshare_remote_link,
+    },
     repl::{self, RunArgs},
     utils::{config::LlamaConfig, installer},
 };
@@ -56,7 +58,8 @@ const CLI_HELP_TEMPLATE: &str = concat!(
     "    data      Configure your data and storage\n\n",
     "  Sync\n",
     "    link      Link devices via peer-to-peer\n",
-    "    sync      Sync chats with peers\n\n",
+    "    sync      Sync chats with peers\n",
+    "    remote    Remote inference commands\n\n",
     "  System\n",
     "    update    Update Tiles to the latest version\n",
     "    uninstall Uninstall Tiles from this machine\n",
@@ -154,6 +157,9 @@ enum SyncCommands {
         /// The DID of the peer you want to sync
         did: Option<String>,
     },
+
+    /// Remote stuff
+    Remote(RemoteArgs),
 }
 
 #[derive(Debug, Subcommand)]
@@ -220,6 +226,10 @@ struct RunFlags {
     /// Prompt processing batch size for llama.cpp
     #[arg(long)]
     batch_size: Option<u32>,
+
+    /// Connect to remote inference with the ticket
+    #[arg(long)]
+    remote: Option<String>,
 }
 
 fn llama_config_from_flags(flags: &RunFlags) -> Option<LlamaConfig> {
@@ -361,6 +371,25 @@ enum LinkCommands {
 #[derive(Debug, Args)]
 #[command(args_conflicts_with_subcommands = true)]
 #[command(flatten_help = true)]
+struct RemoteArgs {
+    #[command(subcommand)]
+    command: RemoteCommands,
+}
+
+#[derive(Debug, Subcommand)]
+enum RemoteCommands {
+    /// Share your inference to the world
+    Share,
+
+    /// Unshare the your remote inference
+    Unshare,
+
+    // Shows the info of your inference status
+    Status,
+}
+#[derive(Debug, Args)]
+#[command(args_conflicts_with_subcommands = true)]
+#[command(flatten_help = true)]
 struct AtArgs {
     #[command(subcommand)]
     command: AtCommands,
@@ -393,6 +422,7 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
                 relay_count: cli.flags.relay_count,
                 memory: cli.flags.memory,
                 llama_config: llama_config_from_flags(&cli.flags),
+                remote: cli.flags.remote,
             };
 
             commands::run_setup_for_ftue(&run_args)
@@ -424,6 +454,7 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
                 relay_count: flags.relay_count,
                 memory: flags.memory,
                 llama_config: llama_config_from_flags(&flags),
+                remote: flags.remote,
             };
             commands::run_setup_for_ftue(&run_args)
                 .await
@@ -509,6 +540,20 @@ pub async fn main() -> Result<(), Box<dyn Error>> {
             }
         },
         Some(Commands::Sync(SyncCommands::Sync { did })) => sync(did).await?,
+        Some(Commands::Sync(SyncCommands::Remote(remote_args))) => match remote_args.command {
+            RemoteCommands::Share => {
+                //open py inference proxy
+                // share(&db_conn).await?;
+                //
+                println!("{}", share_remote_link().await?);
+            }
+            RemoteCommands::Unshare => {
+                unshare_remote_link().await?;
+            }
+            RemoteCommands::Status => {
+                println!("{}", remote_status().await?);
+            }
+        },
         Some(Commands::Accounts(AccountCommandsGroup::At(at_args))) => match at_args.command {
             AtCommands::Login { handle } => {
                 login(&db_conn, &handle).await?;

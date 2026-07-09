@@ -4,6 +4,7 @@ use crate::core::chats::{
     Session, create_session, fetch_chats_by_session_id, fetch_session, fetch_sessions, save_chat,
     update_snapshot,
 };
+use crate::core::network;
 use crate::core::storage::db::Dbconn;
 use crate::utils::config::{
     ConfigProvider, DefaultProvider, LlamaConfig, create_pi_provider_config, get_inference_config,
@@ -68,6 +69,7 @@ pub struct RunArgs {
     pub relay_count: u32,
     pub memory: bool,
     pub llama_config: Option<LlamaConfig>,
+    pub remote: Option<String>,
 }
 #[derive(Clone, Debug)]
 pub struct ChatResponse {
@@ -602,27 +604,39 @@ async fn run_model_with_server(
     run_args: &RunArgs,
     db_conn: &Dbconn,
 ) -> Result<()> {
-    if !cfg!(debug_assertions) {
-        let _ = start_server_daemon().await.inspect_err(|e| {
-            eprintln!("Failed to start inference server due to {:?}", e);
-        });
-        let _ = wait_until_server_is_up().await;
-    }
-    // loading the model from mem-agent via daemon server
+    //TODO: deprecated remove..
     let memory_path = get_memory_path().context("Setting/Retrieving memory_path failed")?;
     if let Some(llama_config) = &run_args.llama_config {
         update_llama_config(llama_config).context("Failed to update llama config")?;
     }
-    match load_model(&modelfile, &default_modelfile, &memory_path, 0).await {
-        Ok(_) => start_repl(&modelfile, run_args, db_conn)
+    if let Some(ticket) = run_args.remote.clone() {
+        tokio::spawn(async move {
+            let _ = network::connect(&ticket)
+                .await
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR);
+            Result::<()>::Ok(())
+        });
+        start_repl(&modelfile, run_args, db_conn)
             .await
-            .map_err(|e| anyhow!(e)),
-        Err(err) => Err(anyhow!(err)),
+            .map_err(|e| anyhow!(e))
+    } else {
+        if !cfg!(debug_assertions) {
+            let _ = start_server_daemon().await.inspect_err(|e| {
+                eprintln!("Failed to start inference server due to {:?}", e);
+            });
+            let _ = wait_until_server_is_up().await;
+        }
+        match load_model(&modelfile, &default_modelfile, &memory_path, 0).await {
+            Ok(_) => start_repl(&modelfile, run_args, db_conn)
+                .await
+                .map_err(|e| anyhow!(e)),
+            Err(err) => Err(anyhow!(err)),
+        }
     }
 }
 
 #[allow(unused_assignments)]
-async fn start_repl(modelfile: &Modelfile, _run_args: &RunArgs, db_conn: &Dbconn) -> Result<()> {
+async fn start_repl(modelfile: &Modelfile, run_args: &RunArgs, db_conn: &Dbconn) -> Result<()> {
     let modelname = modelfile
         .from
         .clone()
@@ -647,7 +661,7 @@ async fn start_repl(modelfile: &Modelfile, _run_args: &RunArgs, db_conn: &Dbconn
     .expect("Error setting Ctrl-C handler");
 
     // Setting up Pi rpc process handles
-    let mut pi_process = start_pi_rpc(&modelname, &system_prompt)?;
+    let mut pi_process = start_pi_rpc(&modelname, &system_prompt, run_args.remote.clone())?;
     let pi_stdin = pi_process.stdin.as_mut().unwrap();
     let mut pi_stdout = pi_process.stdout.take().expect("stdout");
 
@@ -901,14 +915,15 @@ async fn download_model(model_name: &str) -> Result<()> {
     }
 }
 
-fn start_pi_rpc(model_name: &str, system_prompt: &str) -> Result<Child> {
+fn start_pi_rpc(model_name: &str, system_prompt: &str, remote: Option<String>) -> Result<Child> {
     let tiles_lib_dir = DefaultProvider.get_lib_dir()?;
     let user_data_dir = DefaultProvider.get_user_data_dir()?;
     let pi_agent_dir = user_data_dir.join("pi/agent/");
     std::fs::create_dir_all(&pi_agent_dir).context("Failed to create Pi agent directory")?;
 
+    let port = if remote.is_none() { PY_PORT } else { 9271 };
     let provider_config_file_path = pi_agent_dir.join("models.json");
-    let endpoint_url = format!("http://127.0.0.1:{}/v1", PY_PORT);
+    let endpoint_url = format!("http://127.0.0.1:{}/v1", port);
     let model_config = create_pi_provider_config(model_name, &endpoint_url)?;
 
     fs::write(provider_config_file_path, model_config)?;
