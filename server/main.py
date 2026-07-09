@@ -1,9 +1,13 @@
+import atexit
+import signal
+import sys
+
 import uvicorn
 
 from .api import app
-from .config import PORT
 import logging
-import sys
+
+from .config import PORT
 from fastapi import Request
 from . import runtime
 
@@ -44,6 +48,29 @@ def get_backend():
     return llama_server
 
 runtime.backend = get_backend()
+
+
+def _stop_backend_server() -> None:
+    """Best-effort shutdown hook for backend-managed subprocesses."""
+    try:
+        backend = getattr(runtime, "backend", None)
+        process_mod = getattr(backend, "process", None)
+        stop_fn = getattr(process_mod, "stop", None)
+        if callable(stop_fn):
+            stop_fn()
+    except Exception:  # noqa: BLE001 - shutdown path should be resilient
+        logger.exception("Failed to stop backend subprocess during shutdown")
+
+
+def _handle_termination(_signum: int, _frame) -> None:
+    """Ensure llama-server exits when the API process is terminated."""
+    _stop_backend_server()
+    sys.exit(0)
+
+
+atexit.register(_stop_backend_server)
+signal.signal(signal.SIGTERM, _handle_termination)
+signal.signal(signal.SIGINT, _handle_termination)
 
 def run():
     uvicorn.run(app, host="127.0.0.1", port=PORT)

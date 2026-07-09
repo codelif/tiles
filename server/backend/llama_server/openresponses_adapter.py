@@ -19,14 +19,45 @@ from ..commons import (
     _get_response_on_completed,
     _get_response_on_create,
     _process_error_event,
+    _process_init_reasoning_events,
     _process_output_item_added,
     _process_output_item_delta,
     _process_output_item_done,
+    _process_stop_reasoning_events,
     _process_stop_tool_call_events,
     _sse,
 )
 from ...schemas import OutputItemDeltaModel, ResponsesRequest
 from .client import stream_chat_completions
+
+# Map Pi/OpenResponses reasoning effort levels onto the `reasoning_effort`
+# values Harmony-style templates (gpt-oss) accept. gpt-oss only supports
+# low/medium/high, so `xhigh` clamps to `high`.
+_REASONING_EFFORT_MAP = {
+    "low": "low",
+    "medium": "medium",
+    "high": "high",
+    "xhigh": "high",
+}
+
+
+def _reasoning_template_kwargs(effort_value: str | None) -> dict[str, Any]:
+    """Build model-agnostic chat_template_kwargs for reasoning control.
+
+    Different chat templates read different keys, so we pass all of them and let
+    each template use what it understands (Jinja ignores unknown kwargs):
+      - Qwen3-style templates read `enable_thinking` (bool).
+      - gpt-oss (Harmony) reads `reasoning_effort` ("low"/"medium"/"high").
+
+    `none` turns thinking off where the template supports it (Qwen); gpt-oss has
+    no off switch, so it falls back to its own template default in that case.
+    """
+    enable_thinking = effort_value not in (None, "none")
+    kwargs: dict[str, Any] = {"enable_thinking": enable_thinking}
+    reasoning_effort = _REASONING_EFFORT_MAP.get(effort_value or "")
+    if reasoning_effort is not None:
+        kwargs["reasoning_effort"] = reasoning_effort
+    return kwargs
 
 
 def _text_from_content(content: Any) -> str:
@@ -179,7 +210,13 @@ async def generate_response_chat_stream(
     if tools:
         body["tools"] = tools
         body["tool_choice"] = "auto"
-    body["chat_template_kwargs"] = {"enable_thinking": False}
+
+    # Reasoning is opt-in per request and model-agnostic: Pi (or any client)
+    # drives it through reasoning.effort, and we translate that into the kwargs
+    # each chat template understands (see _reasoning_template_kwargs).
+    effort = request.reasoning.effort if request.reasoning else None
+    effort_value = getattr(effort, "value", effort)
+    body["chat_template_kwargs"] = _reasoning_template_kwargs(effort_value)
 
     answer_text = ""
     content_index = 0
@@ -189,6 +226,10 @@ async def generate_response_chat_stream(
     tool_name: str | None = None
     tool_call_text = ""
     tool_calls_state: dict[int, dict[str, str]] = {}
+    in_reasoning = False
+    reasoning_text = ""
+    reasoning_id = f"reasoning_{uuid.uuid4()}"
+    reasoning_content_index = 0
     prompt_tokens = 0
     completion_tokens = 0
 
@@ -206,7 +247,42 @@ async def generate_response_chat_stream(
             choice = choices[0]
             delta = choice.get("delta") or {}
 
+            reasoning_piece = delta.get("reasoning_content")
+            if reasoning_piece:
+                if not in_reasoning:
+                    in_reasoning = True
+                    # Open the reasoning item with empty text; the first chunk is
+                    # streamed as a delta below so it isn't dropped by the client.
+                    resp_str, sequence_number = _process_init_reasoning_events(
+                        reasoning_id, "", output_index, sequence_number
+                    )
+                    yield resp_str
+                    reasoning_content_index = 0
+                reasoning_text += reasoning_piece
+                output_item = OutputItemDeltaModel(
+                    item_name="reasoning_summary_text",
+                    item_id=reasoning_id,
+                    index=output_index,
+                    delta=reasoning_piece,
+                    content_index=reasoning_content_index,
+                )
+                resp_str, sequence_number = _process_output_item_delta(
+                    output_item, sequence_number
+                )
+                yield resp_str
+                reasoning_content_index += 1
+
             if delta.get("tool_calls"):
+                if in_reasoning:
+                    in_reasoning = False
+                    resp_str, sequence_number, output_index, item = (
+                        _process_stop_reasoning_events(
+                            reasoning_id, output_index, reasoning_text, sequence_number
+                        )
+                    )
+                    output_items.append(item)
+                    yield resp_str
+                    reasoning_text = ""
                 for tool_delta in delta["tool_calls"]:
                     index = int(tool_delta.get("index") or 0)
                     state = tool_calls_state.setdefault(
@@ -257,6 +333,16 @@ async def generate_response_chat_stream(
 
             content_piece = delta.get("content")
             if content_piece:
+                if in_reasoning:
+                    in_reasoning = False
+                    resp_str, sequence_number, output_index, item = (
+                        _process_stop_reasoning_events(
+                            reasoning_id, output_index, reasoning_text, sequence_number
+                        )
+                    )
+                    output_items.append(item)
+                    yield resp_str
+                    reasoning_text = ""
                 if in_tool_call:
                     in_tool_call = False
                     resp_str, sequence_number, output_index, item = (
@@ -277,26 +363,27 @@ async def generate_response_chat_stream(
 
                 if not in_message:
                     in_message = True
-                    answer_text = content_piece
+                    # Open the message item with empty text; the first chunk is
+                    # streamed as a delta below so it isn't dropped by the client.
                     resp_str, sequence_number = _process_output_item_added(
-                        "message", message_id, content_piece, output_index, sequence_number
+                        "message", message_id, "", output_index, sequence_number
                     )
                     yield resp_str
-                    content_index = 1
-                else:
-                    answer_text += content_piece
-                    output_item = OutputItemDeltaModel(
-                        item_name="output_text",
-                        item_id=message_id,
-                        index=output_index,
-                        delta=content_piece,
-                        content_index=content_index,
-                    )
-                    resp_str, sequence_number = _process_output_item_delta(
-                        output_item, sequence_number
-                    )
-                    yield resp_str
-                    content_index += 1
+                    content_index = 0
+
+                answer_text += content_piece
+                output_item = OutputItemDeltaModel(
+                    item_name="output_text",
+                    item_id=message_id,
+                    index=output_index,
+                    delta=content_piece,
+                    content_index=content_index,
+                )
+                resp_str, sequence_number = _process_output_item_delta(
+                    output_item, sequence_number
+                )
+                yield resp_str
+                content_index += 1
 
             if choice.get("finish_reason") == "tool_calls":
                 for index in sorted(tool_calls_state):
@@ -326,6 +413,15 @@ async def generate_response_chat_stream(
         )
         yield resp_str
         return
+
+    if in_reasoning:
+        in_reasoning = False
+        resp_str, sequence_number, output_index, item = _process_stop_reasoning_events(
+            reasoning_id, output_index, reasoning_text, sequence_number
+        )
+        output_items.append(item)
+        yield resp_str
+        reasoning_text = ""
 
     if in_tool_call and tool_name:
         resp_str, sequence_number, output_index, item = _process_stop_tool_call_events(

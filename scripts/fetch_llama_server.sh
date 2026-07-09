@@ -14,6 +14,13 @@ LLAMA_CPP_TAG="${LLAMA_CPP_TAG:-b9867}"
 
 mkdir -p "${OUT_DIR}"
 
+# Reuse an already-provisioned binary. Set FORCE_LLAMA_FETCH=1 to rebuild or
+# re-download (e.g. when bumping LLAMA_CPP_TAG).
+if [[ -x "${OUT_DIR}/llama-server" && "${FORCE_LLAMA_FETCH:-}" != "1" ]]; then
+  echo "llama-server already present at ${OUT_DIR}/llama-server; skipping fetch (set FORCE_LLAMA_FETCH=1 to force)."
+  exit 0
+fi
+
 OS="$(uname -s)"
 
 if [[ "${OS}" == "Darwin" ]]; then

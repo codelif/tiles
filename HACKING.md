@@ -68,7 +68,7 @@ This guide will help you set up a reproducible development environment for Tiles
    ./scripts/setup_dev_layout.sh
    ```
 
-   The Gemma model is downloaded automatically on the first `cargo run`; to fetch it ahead of time use `./scripts/download_gemma_model.sh`.
+   The default model (`unsloth/gpt-oss-20b-GGUF`) is downloaded automatically on the first `cargo run`.
 
 ### Embedding Pi
 

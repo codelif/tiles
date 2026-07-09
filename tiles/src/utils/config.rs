@@ -534,7 +534,7 @@ fn create_pi_provider_config_with_context(
         base_url: enpoint_base_url.to_string(),
         models: vec![PiProviderModelConfig {
             id: model_name.to_string(),
-            reasoning: false,
+            reasoning: true,
             context_window,
             max_tokens: Some(max_tokens),
         }],
@@ -565,7 +565,7 @@ fn try_update_pi_provider_model(config: &str, model_name: &str) -> Result<String
         let max_tokens = get_pi_max_tokens(context_window).unwrap_or(MAX_TOKENS);
         tiles_provider_config.models = vec![PiProviderModelConfig {
             id: model_name.to_owned(),
-            reasoning: false,
+            reasoning: true,
             context_window,
             max_tokens: Some(max_tokens),
         }];
@@ -656,7 +656,7 @@ mod tests {
     fn expected_pi_provider_json(model_name: &str, endpoint_base_url: &str) -> Value {
         let mut model = json!({
             "id": model_name,
-            "reasoning": false,
+            "reasoning": true,
             "maxTokens": MAX_TOKENS
         });
 
