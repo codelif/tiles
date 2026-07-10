@@ -227,6 +227,18 @@ struct RunFlags {
     #[arg(long)]
     batch_size: Option<u32>,
 
+    /// n_cpu_more, default 12 for macos
+    #[arg(long)]
+    n_cpu_moe: Option<u32>,
+
+    /// flash, not the DC one
+    #[arg(long, default_missing_value = "true")]
+    flash_attn: Option<bool>,
+
+    /// no_mmap, default true
+    #[arg(long)]
+    no_mmap: Option<bool>,
+
     /// Connect to remote inference with the ticket
     #[arg(long)]
     remote: Option<String>,
@@ -239,16 +251,12 @@ fn llama_config_from_flags(flags: &RunFlags) -> Option<LlamaConfig> {
         offload_kqv: flags.offload_kqv,
         batch_size: flags.batch_size,
         mtp: None,
-        n_cpu_moe: None,
-        flash_attn: None,
-        no_mmap: None,
+        n_cpu_moe: flags.n_cpu_moe,
+        flash_attn: flags.flash_attn,
+        no_mmap: flags.no_mmap,
     };
 
-    if config.is_empty() {
-        None
-    } else {
-        Some(config)
-    }
+    Some(config)
 }
 
 #[derive(Debug, Args)]

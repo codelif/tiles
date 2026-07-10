@@ -615,6 +615,9 @@ pub fn update_llama_config(config: &LlamaConfig) -> Result<()> {
     if config.context_length.is_some() {
         llama_config.context_length = config.context_length;
     }
+    if llama_config.context_length.is_none() && cfg!(target_os = "macos") {
+        llama_config.context_length = Some(32768);
+    }
     if config.gpu_layers.is_some() {
         llama_config.gpu_layers = config.gpu_layers;
     }
@@ -630,13 +633,21 @@ pub fn update_llama_config(config: &LlamaConfig) -> Result<()> {
     if config.n_cpu_moe.is_some() {
         llama_config.n_cpu_moe = config.n_cpu_moe;
     }
+    if llama_config.n_cpu_moe.is_none() && cfg!(target_os = "macos") {
+        llama_config.n_cpu_moe = Some(12);
+    }
     if config.flash_attn.is_some() {
         llama_config.flash_attn = config.flash_attn;
+    }
+    if llama_config.flash_attn.is_none() && cfg!(target_os = "macos") {
+        llama_config.flash_attn = Some(true);
     }
     if config.no_mmap.is_some() {
         llama_config.no_mmap = config.no_mmap;
     }
-
+    if llama_config.no_mmap.is_none() && cfg!(target_os = "macos") {
+        llama_config.no_mmap = Some(true);
+    }
     root_config.llama = Some(llama_config);
     save_root_config(&root_config)
 }
