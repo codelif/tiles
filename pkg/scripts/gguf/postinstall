@@ -1,0 +1,18 @@
+#!/bin/bash
+
+set -e 
+# Since pkg installer can't build with large files (here 11gb model) we
+# split into multiple 2gb files while building the installer
+# and then during installation, joins each and extract it to the directory
+
+MODELS_DIR="/usr/local/share/tiles/models/huggingface/hub"
+
+cd "${MODELS_DIR}"
+
+cat gpt-oss-20b-GGUF.tar.gz.part.* > gpt-oss-20b-GGUF.tar.gz
+
+tar -xzf gpt-oss-20b-GGUF.tar.gz -C .
+
+rm gpt-oss-20b-GGUF.tar.gz.part.*
+
+rm gpt-oss-20b-GGUF.tar.gz

@@ -5,6 +5,14 @@ The format is based on https://keepachangelog.com/en/1.1.0/
 
 ## [Unreleased]
 
+## [0.4.16] - 2026-07-11
+
+### Added
+
+- Switching to llama server from custon inference server
+
+### Added
+
 ## [0.4.15] - 2026-07-07
 
 ### Added
