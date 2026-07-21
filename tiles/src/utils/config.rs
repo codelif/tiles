@@ -615,42 +615,14 @@ pub fn update_llama_config(config: &LlamaConfig) -> Result<()> {
     let mut root_config = get_or_create_root_config()?;
     let mut llama_config = root_config.llama.unwrap_or_default();
 
-    if config.context_length.is_some() {
-        llama_config.context_length = config.context_length;
-    }
-    if llama_config.context_length.is_none() && cfg!(target_os = "macos") {
-        llama_config.context_length = Some(32768);
-    }
-    if config.gpu_layers.is_some() {
-        llama_config.gpu_layers = config.gpu_layers;
-    }
-    if config.offload_kqv.is_some() {
-        llama_config.offload_kqv = config.offload_kqv;
-    }
-    if config.batch_size.is_some() {
-        llama_config.batch_size = config.batch_size;
-    }
-    if config.mtp.is_some() {
-        llama_config.mtp = config.mtp;
-    }
-    if config.n_cpu_moe.is_some() {
-        llama_config.n_cpu_moe = config.n_cpu_moe;
-    }
-    if llama_config.n_cpu_moe.is_none() && cfg!(target_os = "macos") {
-        llama_config.n_cpu_moe = Some(12);
-    }
-    if config.flash_attn.is_some() {
-        llama_config.flash_attn = config.flash_attn;
-    }
-    if llama_config.flash_attn.is_none() && cfg!(target_os = "macos") {
-        llama_config.flash_attn = Some(true);
-    }
-    if config.no_mmap.is_some() {
-        llama_config.no_mmap = config.no_mmap;
-    }
-    if llama_config.no_mmap.is_none() && cfg!(target_os = "macos") {
-        llama_config.no_mmap = Some(true);
-    }
+    llama_config.context_length = config.context_length.or(llama_config.context_length).or(Some(32768));
+    llama_config.gpu_layers = config.gpu_layers.or(llama_config.gpu_layers);
+    llama_config.offload_kqv = config.offload_kqv.or(llama_config.offload_kqv);
+    llama_config.batch_size = config.batch_size.or(llama_config.batch_size);
+    llama_config.mtp = config.mtp.or(llama_config.mtp);
+    llama_config.n_cpu_moe = config.n_cpu_moe.or(llama_config.n_cpu_moe).or(Some(12));
+    llama_config.flash_attn = config.flash_attn.or(llama_config.flash_attn).or(Some(true));
+    llama_config.no_mmap = config.no_mmap.or(llama_config.no_mmap).or(Some(true));
     root_config.llama = Some(llama_config);
     save_root_config(&root_config)
 }
