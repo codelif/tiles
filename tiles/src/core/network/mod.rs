@@ -863,10 +863,10 @@ pub async fn share(endpoint: Endpoint, mut recvx: Receiver<bool>) -> Result<()> 
                             let Some(incoming) = incoming else {
                                 break;
                             };
-                            let connection = incoming.await.or_else(|e| {
+                            let connection = incoming.await.map_err(|e| {
                                 log::error!(
                                     "<remote_infy::host>::Error on connection incoming due to {:?}",e);
-                                    Err(e)
+                                    e
                                 })?;
 
                             tokio::spawn(async move {
@@ -880,36 +880,36 @@ pub async fn share(endpoint: Endpoint, mut recvx: Receiver<bool>) -> Result<()> 
                                     };
 
                                     tokio::spawn(async move {
-                                        let mut local_tcp = TcpStream::connect(format!("127.0.0.1:6969"))
+                                        let mut local_tcp = TcpStream::connect("127.0.0.1:6969".to_string())
                                             .await
                                             .expect("Failed to connect to local service");
 
                                         let (mut local_read, mut local_write) = local_tcp.split();
                                         let local_to_remote = async {
-                                            copy(&mut local_read, &mut iroh_send).await.or_else(|e| {
+                                            copy(&mut local_read, &mut iroh_send).await.map_err(|e| {
                                                 log::error!(
                                                     "<remote_infy::host> failed forwarding local response to peer: {:?}",
                                                     e
                                                 );
-                                                Err(e)
+                                                e
                                             })?;
-                                            iroh_send.finish().or_else(|e| {
+                                            iroh_send.finish().map_err(|e| {
                                                 log::error!(
                                                     "<remote_infy::host> failed finishing response stream: {:?}",
                                                     e
                                                 );
-                                                Err(e)
+                                                e
                                             })?;
                                             Result::<()>::Ok(())
                                         };
                                         let remote_to_local = async {
-                                            copy(&mut iroh_recv, &mut local_write).await.or_else(|e| {
+                                            copy(&mut iroh_recv, &mut local_write).await.map_err(|e| {
                                                 log::error!("<remote_infy::host> failed forwarding peer request to local server: {:?}", e);
-                                                Err(e)
+                                                e
                                             })?;
-                                            local_write.shutdown().await.or_else(|e| {
+                                            local_write.shutdown().await.map_err(|e| {
                                                 log::error!("<remote_infy::host> failed shutting down local server write half: {:?}", e);
-                                                Err(e)
+                                                e
                                             })?;
                                             Result::<()>::Ok(())
                                         };
@@ -957,12 +957,12 @@ pub async fn connect(ticket: &str) -> Result<()> {
     println!("Connected to remote inference");
 
     loop {
-        let (mut local_tcp, _) = local_listener.accept().await.or_else(|e| {
+        let (mut local_tcp, _) = local_listener.accept().await.map_err(|e| {
             log::error!(
                 "<reminf::peer>::Error on local listener accept due to {:?}",
                 e
             );
-            Err(e)
+            e
         })?;
         let endpoint = endpoint.clone();
         let host_addr = host_addr.clone();
@@ -972,33 +972,33 @@ pub async fn connect(ticket: &str) -> Result<()> {
             let (mut iroh_send, mut iroh_recv) = connection.open_bi().await.unwrap();
             let (mut local_read, mut local_write) = local_tcp.split();
             let local_to_remote = async {
-                copy(&mut local_read, &mut iroh_send).await.or_else(|e| {
+                copy(&mut local_read, &mut iroh_send).await.map_err(|e| {
                     log::error!(
                         "<reminf::peer> failed forwarding local request to peer: {:?}",
                         e
                     );
-                    Err(e)
+                    e
                 })?;
-                iroh_send.finish().or_else(|e| {
+                iroh_send.finish().map_err(|e| {
                     log::error!("<reminf::peer> failed finishing request stream: {:?}", e);
-                    Err(e)
+                    e
                 })?;
                 Result::<()>::Ok(())
             };
             let remote_to_local = async {
-                copy(&mut iroh_recv, &mut local_write).await.or_else(|e| {
+                copy(&mut iroh_recv, &mut local_write).await.map_err(|e| {
                     log::error!(
                         "<reminf::peer> failed forwarding peer response to local client: {:?}",
                         e
                     );
-                    Err(e)
+                    e
                 })?;
-                local_write.shutdown().await.or_else(|e| {
+                local_write.shutdown().await.map_err(|e| {
                     log::error!(
                         "<reminf::peer> failed shutting down local client write half: {:?}",
                         e
                     );
-                    Err(e)
+                    e
                 })?;
                 Result::<()>::Ok(())
             };

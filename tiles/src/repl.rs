@@ -1928,7 +1928,7 @@ mod tests {
             "what is capital of sweden".to_string()
         );
         let last_session = chats.chats.last().unwrap();
-        assert_eq!(last_session.content, "**[Reasoning]**\n\nUser asks: \"what is capital of sweden\". Likely they mean Sweden. Answer: Stockholm.\n\n**[ToolCall]**\nTool: bash\nArguments: {\"command\":\"bash\"}\n\n---\n\n**[Answer]**\n\nThe capital of Sweden is **Stockholm** (often spelled \"Stockholm\" in English).The capital of Sweden is **Stockholm** (often spelled \"Stockholm\" in English).".to_string());
+        assert_eq!(last_session.content, "**[Reasoning]**\n\nUser asks: \"what is capital of sweden\". Likely they mean Sweden. Answer: Stockholm.\n\n**[ToolCall]**\nTool: bash\nArguments: \"{\\\"command\\\":\\\"bash\\\"}\"\n\n---\n\n**[Answer]**\n\nThe capital of Sweden is **Stockholm** (often spelled \"Stockholm\" in English).The capital of Sweden is **Stockholm** (often spelled \"Stockholm\" in English).".to_string());
 
         assert_eq!(repl_session.last_chat_id.clone().unwrap(), last_session.id);
 
