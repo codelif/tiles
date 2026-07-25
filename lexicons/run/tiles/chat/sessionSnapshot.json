@@ -1,9 +1,11 @@
 {
   "lexicon": 1,
   "id": "run.tiles.chat.sessionSnapshot",
+  "description": "Stores a complete snapshot of an LLM chat session.",
   "defs": {
     "main": {
       "type": "record",
+      "description": "A complete snapshot of an LLM chat session.",
       "key": "tid",
       "record": {
         "type": "object",
@@ -14,15 +16,16 @@
           "turns"
         ],
         "properties": {
-          "name": { "type": "string" },
-          "sessionId": { "type": "string" },
+          "name": { "type": "string", "description": "Name of the chat session"},
+          "sessionId": { "type": "string", "description": "Internal ID of the session. If any"},
           "createdAt": {
             "type": "string",
-            "format": "datetime"
-          },
-
+            "format": "datetime",
+            "description": "Date at which the session was created"
+           },
           "turns": {
             "type": "array",
+            "description": "A turn is list of messages including the user prompt that initiated it and the responses from the LLM. A response can include multiple messages from different roles such as assistant, toolResult etc. A chat session can have multiple turns",
             "items": {
               "type": "object",
               "required": [
@@ -31,12 +34,13 @@
                 "messages"
               ],
               "properties": {
-                "api": { "type": "string" },
-                "provider": { "type": "string" },
-                "model": { "type": "string" },
+                "api": { "type": "string", "description": "Api format used (e.g. open-responses, openai-responses, openai-completions)"},
+                "provider": { "type": "string", "description": "LLM provider (e.g. tiles, OpenAI, Anthropic)."},
+                "model": { "type": "string", "description": "Name of the model used for this turn."},
 
                 "messages": {
                   "type": "array",
+                  "description": "List of messages of a turn",
                   "items": {
                     "type": "ref",
                     "ref": "#message"
@@ -51,31 +55,34 @@
 
     "message": {
       "type": "object",
+      "description": "A single message in the conversation.",
       "required": ["role", "content"],
       "properties": {
-        "role": { "type": "string" },
+        "role": { "type": "string", "description": "Role of the message author(e.g. user, assistant)"},
         "content": {
           "type": "array",
+          "description": "Ordered content blocks of the message.",
           "items": {
             "type": "ref",
             "ref": "#contentItem"
           }
         },
-        "timestamp": { "type": "integer" },
-        "toolName": { "type": "string" },
-        "stopReason": {"type": "string"}
+        "timestamp": { "type": "integer", "description": "Unix timestamp at which the message was generated"},
+        "toolName": { "type": "string", "description": "Name of the tool used in the tool call. If any"},
+        "stopReason": {"type": "string", "description": "The reason for stopping of the turn. If any"}
       }
     },
 
     "contentItem": {
       "type": "object",
+      "description": "Content of the message",
       "required": ["type"],
       "properties": {
-        "type": { "type": "string" },
-        "text": { "type": "string" },
-        "thinking": { "type": "string" },
-        "name": { "type": "string" },
-        "arguments": { "type": "string" }
+        "type": { "type": "string", "description": "Type of message (e.g. text, thinking, toolCall)"},
+        "text": { "type": "string", "description": "Text content, if type is text"},
+        "thinking": { "type": "string", "description": "Thinking content, if type is thinking"},
+        "name": { "type": "string", "description": "Name of the tool, if type is toolCall"},
+        "arguments": { "type": "string", "description": "Arguments used in the toolCall in stringified JSON format"}
       }
     }
   }

@@ -516,7 +516,8 @@ impl ReplSession {
 }
 fn handle_input(input: &str) -> InputType {
     if let Some(cmd) = input.strip_prefix('/') {
-        match cmd {
+        let keyword = cmd.split_whitespace().next().unwrap_or("");
+        match keyword.to_lowercase().as_str() {
             "help" | "?" => {
                 show_help();
                 InputType::Skip
@@ -526,7 +527,7 @@ fn handle_input(input: &str) -> InputType {
                 println!("Empty command. Type /help for available commands.");
                 InputType::Skip
             }
-            cmd => InputType::Command(cmd.to_owned()),
+            _ => InputType::Command(cmd.to_owned()),
         }
     } else if let Some(_skill) = input.strip_prefix('$') {
         InputType::Skill
@@ -542,7 +543,7 @@ fn show_help() {
             vec![
                 (
                     "/reasoning <effort>",
-                    "Sets the reasoning effort of current model (high, medium, low)",
+                    "Sets the reasoning effort of current model (none, low, medium, high, xhigh)",
                 ),
                 ("/status", "Show the current session state"),
                 ("/sessions", "List all available sessions"),
@@ -863,13 +864,10 @@ fn get_default_modelfile(memory_mode: bool) -> Result<PathBuf> {
     if memory_mode {
         let path = DefaultProvider.get_lib_dir()?.join("modelfiles/mem-agent");
         Ok(path)
-    } else if cfg!(target_os = "linux") {
+    } else {
         let path = DefaultProvider
             .get_lib_dir()?
             .join("modelfiles/gpt-oss-gguf");
-        Ok(path)
-    } else {
-        let path = DefaultProvider.get_lib_dir()?.join("modelfiles/gpt-oss");
         Ok(path)
     }
 }
@@ -990,11 +988,21 @@ async fn process_command(
     match response_msg.command {
         CommandType::SetThinkingLevel => {
             let state = get_pi_state(pi_stdin, pi_stdout).await?;
-            repl_session.reasoning = state
-                .thinking_level
-                .parse::<ReasoningEffort>()
-                .context("Failed to parse reasoning effort")?;
-            println!("Reasoning settings updated successfully")
+            match state.thinking_level.parse::<ReasoningEffort>() {
+                Ok(effort) => {
+                    repl_session.reasoning = effort;
+                    if let Err(err) = persist_default_thinking_level(&state.thinking_level) {
+                        warn!("Failed to persist thinking level across restarts: {}", err);
+                    }
+                    println!("Reasoning settings updated successfully")
+                }
+                Err(_) => {
+                    println!(
+                        "Pi reported reasoning level '{}', which Tiles does not recognize; leaving it unchanged",
+                        state.thinking_level
+                    )
+                }
+            }
         }
         CommandType::GetCommands => {
             if let Some(commands) = response_msg.data {
@@ -1227,6 +1235,7 @@ fn handle_pi_message_update(msg_update: PiMessageUpdate) {
     match msg_update.assistant_message_event.r#type {
         AsstMsgEventType::TextStart => {
             println!();
+            println!("{}\n", "**[Answer]**".bold());
             info!("msg text_start")
         }
         AsstMsgEventType::TextDelta => {
@@ -1241,6 +1250,7 @@ fn handle_pi_message_update(msg_update: PiMessageUpdate) {
         }
         AsstMsgEventType::ThinkingStart => {
             println!();
+            println!("{}\n", "**[Reasoning]**".dimmed());
         }
         AsstMsgEventType::ThinkingDelta => {
             if let Some(delta) = msg_update.assistant_message_event.delta {
@@ -1249,7 +1259,9 @@ fn handle_pi_message_update(msg_update: PiMessageUpdate) {
                 std::io::stdout().flush().ok();
             }
         }
-        AsstMsgEventType::ThinkingEnd => {}
+        AsstMsgEventType::ThinkingEnd => {
+            println!();
+        }
         AsstMsgEventType::ToolcallStart => {
             info!("Selecting tool to execute");
             println!();
@@ -1357,7 +1369,7 @@ async fn handle_input_commands(
     let args: Vec<&str> = cmd.split(" ").collect();
     let main_cmd = args.first().expect("Main command should be there");
 
-    let cmd_json = json!(main_cmd);
+    let cmd_json = json!(main_cmd.to_lowercase());
 
     let command: CommandType = serde_json::from_value(cmd_json)?;
     let res = match command {
@@ -1440,7 +1452,7 @@ fn save_agent_session(
     db_conn: &Dbconn,
     current_user: &crate::core::account::local::User,
 ) -> Result<()> {
-    let mut full_response: String = String::from("");
+    let mut assistant_parts: Vec<PiMsgContent> = vec![];
     let mut turn = Turn {
         api: Some(String::from("open-responses")),
         provider: Some(String::from("tiles")),
@@ -1478,13 +1490,13 @@ fn save_agent_session(
                 repl_session.last_chat_id = Some(prompt_chat.id);
             }
             Role::Assistant => {
-                let response = get_pi_msg_content(msg.content);
-                full_response.push_str(&response);
+                assistant_parts.extend(msg.content);
             }
             _ => (),
         }
         turn.messages.push(msg_copy);
     }
+    let full_response = format_assistant_content(assistant_parts);
     let chat_response = ChatResponse {
         input: full_response,
         session_id: repl_session.session_id.clone(),
@@ -1509,8 +1521,6 @@ fn get_pi_msg_content(msgs: Vec<PiMsgContent>) -> String {
     for msg in msgs {
         if msg.r#type == "text" {
             content.push(msg.text.unwrap_or(String::from("")));
-        } else if msg.r#type == "thinking" {
-            content.push(msg.thinking.unwrap_or(String::from("")));
         } else if msg.r#type == "toolCall"
             && let Some(args) = msg.arguments
         {
@@ -1522,6 +1532,52 @@ fn get_pi_msg_content(msgs: Vec<PiMsgContent>) -> String {
     content.join("\n")
 }
 
+/// Rebuild an assistant turn into the marker format the tiles.run/share
+/// frontend understands. Reasoning and any tool calls it makes are delimited by
+/// `**[Reasoning]**` ... `**[Answer]**`, so the frontend nests them into the
+/// collapsible "Reasoning details" block; the final answer follows. Reasoning is
+/// only opened when the model actually produced thinking or a tool call, so a
+/// plain answer with no reasoning stays clean (matching the previous backends).
+fn format_assistant_content(msgs: Vec<PiMsgContent>) -> String {
+    let mut out = String::new();
+    let mut reasoning_open = false;
+    let mut answer_open = false;
+
+    for msg in msgs {
+        match msg.r#type.as_str() {
+            "thinking" => {
+                if !reasoning_open {
+                    out.push_str("**[Reasoning]**\n\n");
+                    reasoning_open = true;
+                }
+                out.push_str(&msg.thinking.unwrap_or_default());
+            }
+            "toolCall" => {
+                let Some(args) = msg.arguments else { continue };
+                if !reasoning_open {
+                    out.push_str("**[Reasoning]**\n\n");
+                    reasoning_open = true;
+                }
+                let arguments = serde_json::to_string(&args).unwrap_or_else(|_| "{}".to_string());
+                out.push_str(&format!(
+                    "\n\n**[ToolCall]**\nTool: {}\nArguments: {}",
+                    msg.name.unwrap_or_else(|| "None".to_string()),
+                    arguments
+                ));
+            }
+            "text" => {
+                if reasoning_open && !answer_open {
+                    out.push_str("\n\n---\n\n**[Answer]**\n\n");
+                    answer_open = true;
+                }
+                out.push_str(&msg.text.unwrap_or_default());
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
 async fn set_reasoning_effort(pi_stdin: &mut ChildStdin, args: &[&str]) -> Result<()> {
     let args = if let Some((_main_command, sub_commands)) = args.split_first() {
         sub_commands
@@ -1531,7 +1587,7 @@ async fn set_reasoning_effort(pi_stdin: &mut ChildStdin, args: &[&str]) -> Resul
 
     let reasoning_effort: ReasoningEffort = if args.is_empty() {
         return Err(anyhow!(
-            "Please provide Reasoning effort (low, medium, high)"
+            "Please provide Reasoning effort (none, low, medium, high, xhigh)"
         ));
     } else {
         args[0].parse()?
@@ -1547,6 +1603,31 @@ async fn set_reasoning_effort(pi_stdin: &mut ChildStdin, args: &[&str]) -> Resul
     send_to_pi(pi_stdin, pi_cmd).await
 }
 
+/// Persist the reasoning level to Pi's settings.json so it survives restarts.
+/// Startup reads the level back from Pi's state, which Pi seeds from
+/// `defaultThinkingLevel`. Existing settings are preserved.
+fn persist_default_thinking_level(level: &str) -> Result<()> {
+    let user_data_dir = DefaultProvider.get_user_data_dir()?;
+    let settings_path = user_data_dir.join("pi/agent/settings.json");
+
+    let mut settings: Value = match fs::read_to_string(&settings_path) {
+        Ok(contents) => serde_json::from_str(&contents).unwrap_or_else(|_| json!({})),
+        Err(_) => json!({}),
+    };
+
+    let obj = settings
+        .as_object_mut()
+        .context("settings.json is not a JSON object")?;
+    obj.insert("defaultThinkingLevel".to_owned(), json!(level));
+
+    if let Some(parent) = settings_path.parent() {
+        fs::create_dir_all(parent).context("Failed to create Pi agent directory")?;
+    }
+    fs::write(&settings_path, serde_json::to_string_pretty(&settings)?)
+        .context("Failed to write settings.json")?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1557,12 +1638,7 @@ mod tests {
     #[test]
     fn default_modelfile_uses_platform_default() {
         let path = get_default_modelfile(false).expect("default modelfile should resolve");
-
-        if cfg!(target_os = "linux") {
-            assert!(path.ends_with("modelfiles/gpt-oss-gguf"));
-        } else {
-            assert!(path.ends_with("modelfiles/gpt-oss"));
-        }
+        assert!(path.ends_with("modelfiles/gpt-oss-gguf"));
     }
 
     #[test]
@@ -1676,7 +1752,7 @@ mod tests {
                         r#type: String::from("thinking"),
                         text: None,
                         thinking: Some(
-                            "**[Reasoning]**\n\nUser asks: \"what is capital of sweden\". Likely they mean Sweden. Answer: Stockholm.".to_string()),
+                            "User asks: \"what is capital of sweden\". Likely they mean Sweden. Answer: Stockholm.".to_string()),
                         arguments: None,
                         name: None
                     },
@@ -1689,7 +1765,7 @@ mod tests {
                      },
                     PiMsgContent {
                         r#type: String::from("text"),
-                        text: Some("\n---\n**[Answer]**\n\nThe capital of Sweden is **Stockholm** (often spelled \"Stockholm\" in English).".to_string()),
+                        text: Some("The capital of Sweden is **Stockholm** (often spelled \"Stockholm\" in English).".to_string()),
                         thinking: None,
                         arguments: None,
                         name: None
@@ -1716,7 +1792,7 @@ mod tests {
                     role: Role::Assistant,
                     content: vec![PiMsgContent {
                         r#type: String::from("text"),
-                        text: Some("\n---\n**[Answer]**\n\nThe capital of Sweden is **Stockholm** (often spelled \"Stockholm\" in English).".to_string()),
+                        text: Some("The capital of Sweden is **Stockholm** (often spelled \"Stockholm\" in English).".to_string()),
                         thinking: None,
                         arguments: None,
                         name: None
@@ -1742,7 +1818,7 @@ mod tests {
             "what is capital of sweden".to_string()
         );
         let last_session = chats.chats.last().unwrap();
-        assert_eq!(last_session.content, "**[Reasoning]**\n\nUser asks: \"what is capital of sweden\". Likely they mean Sweden. Answer: Stockholm.\n\n---\n**[Answer]**\n\nThe capital of Sweden is **Stockholm** (often spelled \"Stockholm\" in English).\n---\n**[Answer]**\n\nThe capital of Sweden is **Stockholm** (often spelled \"Stockholm\" in English).".to_string());
+        assert_eq!(last_session.content, "**[Reasoning]**\n\nUser asks: \"what is capital of sweden\". Likely they mean Sweden. Answer: Stockholm.\n\n---\n\n**[Answer]**\n\nThe capital of Sweden is **Stockholm** (often spelled \"Stockholm\" in English).The capital of Sweden is **Stockholm** (often spelled \"Stockholm\" in English).".to_string());
 
         assert_eq!(repl_session.last_chat_id.unwrap(), last_session.id);
     }
@@ -1786,7 +1862,7 @@ mod tests {
                         r#type: String::from("thinking"),
                         text: None,
                         thinking: Some(
-                            "**[Reasoning]**\n\nUser asks: \"what is capital of sweden\". Likely they mean Sweden. Answer: Stockholm.".to_string()),
+                            "User asks: \"what is capital of sweden\". Likely they mean Sweden. Answer: Stockholm.".to_string()),
                         arguments: None,
                         name: None
                     },
@@ -1799,7 +1875,7 @@ mod tests {
                      },
                     PiMsgContent {
                         r#type: String::from("text"),
-                        text: Some("\n---\n**[Answer]**\n\nThe capital of Sweden is **Stockholm** (often spelled \"Stockholm\" in English).".to_string()),
+                        text: Some("The capital of Sweden is **Stockholm** (often spelled \"Stockholm\" in English).".to_string()),
                         thinking: None,
                         arguments: None,
                         name: None
@@ -1826,7 +1902,7 @@ mod tests {
                     role: Role::Assistant,
                     content: vec![PiMsgContent {
                         r#type: String::from("text"),
-                        text: Some("\n---\n**[Answer]**\n\nThe capital of Sweden is **Stockholm** (often spelled \"Stockholm\" in English).".to_string()),
+                        text: Some("The capital of Sweden is **Stockholm** (often spelled \"Stockholm\" in English).".to_string()),
                         thinking: None,
                         arguments: None,
                         name: None
@@ -1852,7 +1928,7 @@ mod tests {
             "what is capital of sweden".to_string()
         );
         let last_session = chats.chats.last().unwrap();
-        assert_eq!(last_session.content, "**[Reasoning]**\n\nUser asks: \"what is capital of sweden\". Likely they mean Sweden. Answer: Stockholm.\n\n**[ToolCall]**\n\nTool: bash\nArguments: {\"command\":\"bash\"}\n\n---\n**[Answer]**\n\nThe capital of Sweden is **Stockholm** (often spelled \"Stockholm\" in English).\n---\n**[Answer]**\n\nThe capital of Sweden is **Stockholm** (often spelled \"Stockholm\" in English).".to_string());
+        assert_eq!(last_session.content, "**[Reasoning]**\n\nUser asks: \"what is capital of sweden\". Likely they mean Sweden. Answer: Stockholm.\n\n**[ToolCall]**\nTool: bash\nArguments: {\"command\":\"bash\"}\n\n---\n\n**[Answer]**\n\nThe capital of Sweden is **Stockholm** (often spelled \"Stockholm\" in English).The capital of Sweden is **Stockholm** (often spelled \"Stockholm\" in English).".to_string());
 
         assert_eq!(repl_session.last_chat_id.clone().unwrap(), last_session.id);
 
@@ -1888,7 +1964,7 @@ mod tests {
                     role: Role::Assistant,
                     content: vec![PiMsgContent {
                         r#type: String::from("text"),
-                        text: Some("\n---\n**[Answer]**\n\nThe capital of India is **Delhi** (often spelled \"Delhi\" in English).".to_string()),
+                        text: Some("The capital of India is **Delhi** (often spelled \"Delhi\" in English).".to_string()),
                         thinking: None,
                         arguments: None,
                         name: None

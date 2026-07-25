@@ -8,24 +8,14 @@ platforms = [
 ]
 
 
-[[frameworks]]
-name = "mlx"
-runtime = "cpython3.13"
-macosx_target = "14"
-requirements = [
-    "mlx==0.31.1"
-]
-
 [[applications]]
 name = "server"
 launch_module = "../../main.py"
-frameworks = ["mlx"]
+runtime = "cpython3.13"
 requirements = [
     "fastapi==0.130.0",
     "uvicorn==0.38.0",
-    "mlx-lm==0.31.0",
     "openresponses-types",
-    "tiles-harmony==0.0.8rc4",
     "httpx==0.28.1",
     ]
 

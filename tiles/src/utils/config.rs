@@ -53,6 +53,13 @@ pub struct LlamaConfig {
     pub gpu_layers: Option<i32>,
     pub offload_kqv: Option<bool>,
     pub batch_size: Option<u32>,
+    pub mtp: Option<bool>,
+    /// MoE only: keep expert weights for the first N layers on CPU (`--n-cpu-moe`).
+    pub n_cpu_moe: Option<u32>,
+    /// Enable flash attention (`--flash-attn`).
+    pub flash_attn: Option<bool>,
+    /// Disable memory-mapping the GGUF (`--no-mmap`).
+    pub no_mmap: Option<bool>,
 }
 
 impl LlamaConfig {
@@ -61,6 +68,10 @@ impl LlamaConfig {
             && self.gpu_layers.is_none()
             && self.offload_kqv.is_none()
             && self.batch_size.is_none()
+            && self.mtp.is_none()
+            && self.n_cpu_moe.is_none()
+            && self.flash_attn.is_none()
+            && self.no_mmap.is_none()
     }
 }
 
@@ -604,6 +615,9 @@ pub fn update_llama_config(config: &LlamaConfig) -> Result<()> {
     if config.context_length.is_some() {
         llama_config.context_length = config.context_length;
     }
+    if llama_config.context_length.is_none() && cfg!(target_os = "macos") {
+        llama_config.context_length = Some(32768);
+    }
     if config.gpu_layers.is_some() {
         llama_config.gpu_layers = config.gpu_layers;
     }
@@ -613,7 +627,27 @@ pub fn update_llama_config(config: &LlamaConfig) -> Result<()> {
     if config.batch_size.is_some() {
         llama_config.batch_size = config.batch_size;
     }
-
+    if config.mtp.is_some() {
+        llama_config.mtp = config.mtp;
+    }
+    if config.n_cpu_moe.is_some() {
+        llama_config.n_cpu_moe = config.n_cpu_moe;
+    }
+    if llama_config.n_cpu_moe.is_none() && cfg!(target_os = "macos") {
+        llama_config.n_cpu_moe = Some(12);
+    }
+    if config.flash_attn.is_some() {
+        llama_config.flash_attn = config.flash_attn;
+    }
+    if llama_config.flash_attn.is_none() && cfg!(target_os = "macos") {
+        llama_config.flash_attn = Some(true);
+    }
+    if config.no_mmap.is_some() {
+        llama_config.no_mmap = config.no_mmap;
+    }
+    if llama_config.no_mmap.is_none() && cfg!(target_os = "macos") {
+        llama_config.no_mmap = Some(true);
+    }
     root_config.llama = Some(llama_config);
     save_root_config(&root_config)
 }

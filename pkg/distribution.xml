@@ -25,7 +25,7 @@
 </choice>
 
 <choice id="model" visible="true" start_selected="true" title="model">
-    <pkg-ref id="com.tilesprivacy.tiles_models" onConclusion="none">tiles-model.pkg</pkg-ref>
+    <pkg-ref id="com.tilesprivacy.tiles_models_gguf" onConclusion="none">tiles-model_gguf.pkg</pkg-ref>
 </choice>
 
 
