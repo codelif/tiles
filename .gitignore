@@ -11,6 +11,7 @@ pkgroot/
 models/
 pkgroot_models/
 pi-darwin-arm64.tar.gz
+pi-linux-x64.tar.gz
 .cursor/hooks/state/continual-learning.json
 .cursor/hooks/state/continual-learning-index.json
 .cache
