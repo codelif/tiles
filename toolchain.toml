@@ -3,7 +3,7 @@
 
 
 [embedded-tools]
-pi = "v0.67.68"
+pi = "v0.81.0"
 # fork of tiles-pi
 tiles-pi="v0.67.68"
 sqlcipher = "4.10.0"

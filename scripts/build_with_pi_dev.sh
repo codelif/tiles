@@ -3,9 +3,9 @@ set -euo pipefail
 
 rm -rf .tiles_dev/tiles/pi
 
-VERSION=$(grep '^tiles-pi' toolchain.toml | head -1 | awk -F'"' '{print $2}')
+VERSION=$(grep '^pi' toolchain.toml | head -1 | awk -F'"' '{print $2}')
 
-# TAR_URL="https://github.com/badlogic/pi-mono/releases/download/${VERSION}/pi-darwin-arm64.tar.gz"
+TAR_URL="https://github.com/badlogic/pi-mono/releases/download/${VERSION}/pi-darwin-arm64.tar.gz"
 
 # Detect OS
 case "$(uname -s)" in
@@ -24,7 +24,7 @@ esac
 PLATFORM="${OS}-${ARCH}"
 TARBALL="pi-${PLATFORM}.tar.gz"
 
-TAR_URL="https://github.com/tilesprivacy/tiles-pi/releases/download/${VERSION}/${TARBALL}"
+# TAR_URL="https://github.com/tilesprivacy/tiles-pi/releases/download/${VERSION}/${TARBALL}"
 
 echo "Downloading Pi ${VERSION} for ${PLATFORM}..."
 curl -fL -o "$TARBALL" "$TAR_URL"
