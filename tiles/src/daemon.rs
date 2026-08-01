@@ -28,6 +28,7 @@ use tokio::sync::oneshot::{self, Receiver, Sender};
 use crate::{
     core::{
         account::{atproto::AtCallbackParams, local::get_current_user},
+        agent::pi::{PiReader, PiWriter},
         network::{self, create_endpoint, share},
         storage::db::get_db_conn,
     },
@@ -37,9 +38,12 @@ use crate::{
 struct AppState {
     pub shutdown_sender: Mutex<Option<oneshot::Sender<bool>>>,
     pub vsn: String,
+    //TODO: refactor the remote infy related fields
     pub remote_ticket: Mutex<Option<String>>,
     pub remote_running: Mutex<bool>,
     pub remote_shutdown_sender: Mutex<Option<oneshot::Sender<bool>>>,
+    pub agent_reader: Mutex<Option<PiReader>>,
+    pub agent_writer: Mutex<Option<PiWriter>>,
 }
 
 struct InternalAppState {
@@ -147,12 +151,18 @@ pub async fn start_server(port: Option<u32>) -> Result<()> {
 
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<bool>();
 
+    // let pi_agent = pi::new(&modelname, &system_prompt, port)?;
+
+    // let (mut agent_reader, mut agent_writer) = pi_agent.split();
+
     let state = AppState {
         shutdown_sender: Mutex::new(Some(shutdown_tx)),
         vsn: env!("CARGO_PKG_VERSION").to_owned(),
         remote_ticket: Mutex::new(None),
         remote_shutdown_sender: Mutex::new(None),
         remote_running: Mutex::new(false),
+        agent_reader: Mutex::new(None),
+        agent_writer: Mutex::new(None),
     };
 
     let shared_state = Arc::new(state);
@@ -165,6 +175,9 @@ pub async fn start_server(port: Option<u32>) -> Result<()> {
         .route("/remote-unshare", get(unshare_remote_inference))
         .route("/remote-status", get(show_remote_status))
         .route("/connect-remote", get(connect_remote_inference))
+        .route("/agent/start", get(start_agent))
+        // .route("/agent/stop", post(stop_agent))
+        // .route("/agent/status", get(get_agent_status))
         .with_state(shared_state);
 
     let addr = format!("127.0.0.1:{}", dyn_port);
@@ -471,6 +484,20 @@ pub async fn connect_remote(ticket: &str) -> Result<()> {
         Ok(_response) => Ok(()),
     }
 }
+
+async fn start_agent(State(state): State<Arc<AppState>>) -> Result<String, StatusCode> {
+    // let reader = state.agent_reader.lock().unwrap();
+
+    //     if let Some(reader) = *() {
+    //     Ok(String::from("agent already up"))
+    // } else {
+    //     Ok(String::from("Started agent"))
+    // }
+    //
+
+    todo!()
+}
+
 #[cfg(test)]
 mod tests {
     use anyhow::Result;

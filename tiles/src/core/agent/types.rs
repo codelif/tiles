@@ -1,0 +1,200 @@
+//! Types we use for Agent communication
+
+use serde::{Deserialize, Deserializer, Serialize};
+use serde_json::Value;
+use tilekit::modelfile::Role;
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(tag = "type")]
+pub enum PiResponse {
+    #[serde(rename = "response")]
+    Response(PiResponseMessage),
+    #[serde(rename = "agent_start")]
+    AgentStart,
+    #[serde(rename = "message_update")]
+    MessageUpdate(PiMessageUpdate),
+    #[serde(rename = "agent_end")]
+    AgentEnd(PiAgentEndEvent),
+    #[serde(rename = "turn_end")]
+    TurnEnd(PiTurnEndEvent),
+    #[serde[other]]
+    Unknown,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct PiAgentEndEvent {
+    pub messages: Vec<PiMsgEvent>,
+}
+#[derive(Serialize, Deserialize, Debug)]
+pub struct GetStateData {
+    pub model: PiModelInfo,
+    #[serde(rename = "thinkingLevel")]
+    pub thinking_level: String,
+    #[serde(rename = "isStreaming")]
+    pub is_streaming: bool,
+    #[serde(rename = "sessionId")]
+    pub session_id: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct PiModelInfo {
+    pub id: String,
+    pub name: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct PiSettings {
+    pub compaction: Option<CompactionSettings>,
+    #[serde(rename = "defaultThinkingLevel")]
+    pub default_thinking_level: Option<ReasoningEffort>,
+}
+
+impl Default for PiSettings {
+    fn default() -> Self {
+        PiSettings {
+            compaction: Some(CompactionSettings { enabled: false }),
+            default_thinking_level: Some(ReasoningEffort::Medium),
+        }
+    }
+}
+#[derive(Serialize, Deserialize, Debug, PartialEq, PartialOrd)]
+pub struct CompactionSettings {
+    pub enabled: bool,
+}
+#[derive(Serialize, Deserialize, Debug)]
+pub struct PiMessageUpdate {
+    #[serde(rename = "assistantMessageEvent")]
+    pub assistant_message_event: PiAsstTextMsg,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct PiAsstTextMsg {
+    pub r#type: AsstMsgEventType,
+    pub delta: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub enum AsstMsgEventType {
+    #[serde(rename = "start")]
+    Start,
+    #[serde(rename = "text_start")]
+    TextStart,
+    #[serde(rename = "text_delta")]
+    TextDelta,
+    #[serde(rename = "text_end")]
+    TextEnd,
+    #[serde(rename = "thinking_start")]
+    ThinkingStart,
+    #[serde(rename = "thinking_delta")]
+    ThinkingDelta,
+    #[serde(rename = "thinking_end")]
+    ThinkingEnd,
+    #[serde(rename = "toolcall_start")]
+    ToolcallStart,
+    #[serde(rename = "toolcall_delta")]
+    ToolcallDelta,
+    #[serde(rename = "toolcall_end")]
+    ToolcallEnd,
+    #[serde(rename = "done")]
+    Done,
+    #[serde(rename = "error")]
+    Error,
+}
+#[derive(Serialize, Deserialize, Debug)]
+pub struct PiResponseMessage {
+    pub command: CommandType,
+    pub success: bool,
+    pub data: Option<Value>,
+}
+#[derive(Deserialize, Serialize, Debug)]
+pub enum CommandType {
+    #[serde(rename = "status")]
+    Status,
+    #[serde(rename = "share")]
+    Share,
+    #[serde(rename = "sessions")]
+    Sessions,
+    #[serde(rename = "resume")]
+    Resume,
+    #[serde(rename = "reasoning")]
+    Reasoning,
+    #[serde(rename = "set_thinking_level")]
+    SetThinkingLevel,
+    #[serde(rename = "abort")]
+    Abort,
+    #[serde(rename = "skills")]
+    Skills,
+    #[serde(rename = "get_commands")]
+    GetCommands,
+    #[serde(other)]
+    Unknown,
+}
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Commands {
+    pub name: String,
+    pub description: String,
+    pub source: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct PiTurnEndEvent {
+    message: PiTurnEndEventMsg,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct PiTurnEndEventMsg {
+    role: String,
+    content: Vec<PiMsgContent>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct PiMsgEvent {
+    pub role: Role,
+    pub content: Vec<PiMsgContent>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "stopReason")]
+    pub stop_reason: Option<String>,
+    pub timestamp: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "toolName")]
+    pub tool_name: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct PiMsgContent {
+    pub r#type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, deserialize_with = "map_to_option_string")]
+    pub arguments: Option<String>,
+    // Tool name
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+fn map_to_option_string<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let opt = Option::<Value>::deserialize(deserializer)?;
+
+    match opt {
+        Some(Value::String(s)) => Ok(Some(s)),
+        Some(Value::Object(map)) => serde_json::to_string(&map)
+            .map(Some)
+            .map_err(serde::de::Error::custom),
+        Some(other) => Ok(Some(other.to_string())),
+        None => Ok(None),
+    }
+}
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, PartialOrd)]
+pub enum ReasoningEffort {
+    #[serde(rename = "high")]
+    High,
+    #[serde(rename = "medium")]
+    Medium,
+    #[serde(rename = "low")]
+    Low,
+}
