@@ -1,6 +1,6 @@
 use crate::core::account::atproto::{fetch_logged_in_data, login, share_session};
 use crate::core::account::local::get_current_user;
-use crate::core::agent::pi::{PiReader, PiWriter};
+use crate::core::agent::pi::{PiAgent, PiReader, PiWriter};
 use crate::core::agent::types::{
     CommandType, Commands, PiAgentEndEvent, PiMsgContent, PiResponse, PiResponseMessage,
     ReasoningEffort,
@@ -469,11 +469,9 @@ async fn start_repl(modelfile: &Modelfile, run_args: &RunArgs, db_conn: &Dbconn)
         REMOTE_BOUND_PORT
     };
     // Setting up Pi rpc process handles
-    let pi_agent = pi::new(&modelname, &system_prompt, port)?;
+    let mut pi_agent = pi::new(&modelname, &system_prompt, port)?;
 
-    let (mut agent_reader, mut agent_writer) = pi_agent.split();
-
-    let pi_session_state = agent_reader.get_pi_state(&mut agent_writer).await?;
+    let pi_session_state = pi_agent.reader.get_pi_state(&mut pi_agent.writer).await?;
     let mut repl_session = ReplSession::new(&pi_session_state);
 
     // The great REPL loop
@@ -483,7 +481,7 @@ async fn start_repl(modelfile: &Modelfile, run_args: &RunArgs, db_conn: &Dbconn)
         let input = match readline {
             Ok(line) => line.trim().to_string(),
             Err(_) => {
-                handle_repl_exit(&mut agent_writer).await?;
+                handle_repl_exit(&mut pi_agent.writer).await?;
                 break;
             }
         };
@@ -496,20 +494,21 @@ async fn start_repl(modelfile: &Modelfile, run_args: &RunArgs, db_conn: &Dbconn)
         match handle_input(&input.to_lowercase()) {
             InputType::Skip => continue,
             InputType::Exit => {
-                handle_repl_exit(&mut agent_writer).await?;
+                handle_repl_exit(&mut pi_agent.writer).await?;
                 break;
             }
             InputType::Prompt => {
-                handle_input_prompt(&mut agent_writer, &mut repl_session, &input).await?;
+                handle_input_prompt(&mut pi_agent.writer, &mut repl_session, &input).await?;
             }
             InputType::Skill => {
                 let (_, skill_name) = input.split_at(1);
                 let skill_prompt = format!("/skill:{}", skill_name);
-                handle_input_prompt(&mut agent_writer, &mut repl_session, &skill_prompt).await?;
+                handle_input_prompt(&mut pi_agent.writer, &mut repl_session, &skill_prompt).await?;
             }
             InputType::Command(cmd) => {
-                let res = handle_input_commands(cmd, &mut repl_session, db_conn, &mut agent_writer)
-                    .await?;
+                let res =
+                    handle_input_commands(cmd, &mut repl_session, db_conn, &mut pi_agent.writer)
+                        .await?;
 
                 if let InputCommandResponse::ProcessNextInput = res {
                     continue;
@@ -526,13 +525,13 @@ async fn start_repl(modelfile: &Modelfile, run_args: &RunArgs, db_conn: &Dbconn)
 
         // Reads the output from Pi and process and responds to the repl
 
-        while let Some(line) = agent_reader.next_line().await? {
+        while let Some(line) = pi_agent.reader.next_line().await? {
             if !running.load(std::sync::atomic::Ordering::SeqCst) {
                 info!("Ctrlc detected, aborting Pi ops");
                 let end_payload = json!({
                     "type": "abort",
                 });
-                agent_writer.send_to_pi(end_payload).await?;
+                pi_agent.writer.send_to_pi(end_payload).await?;
                 running.store(true, std::sync::atomic::Ordering::SeqCst);
                 continue;
             }
@@ -550,7 +549,7 @@ async fn start_repl(modelfile: &Modelfile, run_args: &RunArgs, db_conn: &Dbconn)
                     process_pi_agent_end_event(
                         &mut repl_session,
                         agent_end_event,
-                        &mut agent_writer,
+                        &mut pi_agent.writer,
                         db_conn,
                         &current_user,
                     )
@@ -573,13 +572,8 @@ async fn start_repl(modelfile: &Modelfile, run_args: &RunArgs, db_conn: &Dbconn)
                                 continue;
                             }
                             _ => {
-                                process_command(
-                                    response_msg,
-                                    &mut repl_session,
-                                    &mut agent_reader,
-                                    &mut agent_writer,
-                                )
-                                .await?;
+                                process_command(response_msg, &mut repl_session, &mut pi_agent)
+                                    .await?;
                                 break;
                             }
                         }
@@ -668,7 +662,8 @@ async fn wait_until_server_is_up() {
     }
 }
 
-fn get_default_modelfile(memory_mode: bool) -> Result<PathBuf> {
+//TODO: maybe move to config.rs, as it is used in daemon
+pub fn get_default_modelfile(memory_mode: bool) -> Result<PathBuf> {
     if memory_mode {
         let path = DefaultProvider.get_lib_dir()?.join("modelfiles/mem-agent");
         Ok(path)
@@ -724,12 +719,11 @@ async fn download_model(model_name: &str) -> Result<()> {
 async fn process_command(
     response_msg: PiResponseMessage,
     repl_session: &mut ReplSession,
-    agent_reader: &mut PiReader,
-    agent_writer: &mut PiWriter,
+    agent: &mut PiAgent,
 ) -> Result<()> {
     match response_msg.command {
         CommandType::SetThinkingLevel => {
-            let state = agent_reader.get_pi_state(agent_writer).await?;
+            let state = agent.reader.get_pi_state(&mut agent.writer).await?;
             match state.thinking_level.parse::<ReasoningEffort>() {
                 Ok(effort) => {
                     repl_session.reasoning = effort;

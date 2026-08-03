@@ -11,11 +11,9 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 
 pub struct PiAgent {
-    #[allow(dead_code)]
-    // we will later use dead_code
-    process: Child,
-    writer: PiWriter,
-    reader: PiReader,
+    pub process: Child,
+    pub writer: PiWriter,
+    pub reader: PiReader,
 }
 
 pub struct PiWriter {
@@ -86,8 +84,8 @@ pub async fn handle_graceful_exit(writer: &mut PiWriter) -> Result<()> {
 
 //TODO: we should make the member function names pi agnostic..
 impl PiAgent {
-    pub fn split(self) -> (PiReader, PiWriter) {
-        (self.reader, self.writer)
+    pub fn split(self) -> (Child, PiReader, PiWriter) {
+        (self.process, self.reader, self.writer)
     }
 }
 
