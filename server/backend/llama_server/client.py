@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -15,8 +16,13 @@ def chat_completions_url() -> str:
     return f"http://{LLAMA_SERVER_HOST}:{LLAMA_SERVER_PORT}/v1/chat/completions"
 
 
+def _stream_timeout() -> httpx.Timeout:
+    read_timeout = float(os.environ.get("TILES_LLAMA_STREAM_READ_TIMEOUT", "600"))
+    return httpx.Timeout(connect=5.0, read=read_timeout, write=30.0, pool=5.0)
+
+
 async def stream_chat_completions(body: dict[str, Any]) -> AsyncIterator[dict[str, Any]]:
-    async with httpx.AsyncClient(timeout=None) as client:
+    async with httpx.AsyncClient(timeout=_stream_timeout()) as client:
         async with client.stream(
             "POST",
             chat_completions_url(),

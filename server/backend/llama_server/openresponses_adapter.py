@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
-import traceback
 import uuid
 from collections.abc import AsyncGenerator
 from typing import Any
@@ -29,6 +29,8 @@ from ..commons import (
 )
 from ...schemas import OutputItemDeltaModel, ResponsesRequest
 from .client import stream_chat_completions
+
+logger = logging.getLogger("app")
 
 # Map Pi/OpenResponses reasoning effort levels onto the `reasoning_effort`
 # values Harmony-style templates (gpt-oss) accept. gpt-oss only supports
@@ -180,10 +182,17 @@ def _effective_max_tokens(
     if request.max_output_tokens is not None:
         if context_length is None:
             return request.max_output_tokens
-        return min(request.max_output_tokens, max(int(context_length) // 2, 256))
+        # Honor an explicit request, clamped to the context window.
+        return min(request.max_output_tokens, int(context_length))
     if context_length is None:
         return None
-    return max(int(context_length) // 2, 256)
+    # Default: allow the full context window for output. This matches Pi's
+    # native llama.cpp provider (v0.82.0) and what we advertise to Pi in
+    # models.json (maxTokens = context_window). llama-server handles a
+    # prompt+output that exceeds the window via context-shift rather than
+    # erroring, so no static half-window reservation is needed. The 256 floor
+    # only matters for tiny test contexts so they still produce output.
+    return max(int(context_length), 256)
 
 
 async def generate_response_chat_stream(
@@ -211,6 +220,9 @@ async def generate_response_chat_stream(
         "stream": True,
         "temperature": request.temperature if request.temperature is not None else 0.7,
         "top_p": request.top_p if request.top_p is not None else 1.0,
+        # Ask llama-server to report token usage in the final stream chunk so we
+        # get real counts instead of falling back to length-based estimates.
+        "stream_options": {"include_usage": True},
     }
     max_tokens = _effective_max_tokens(request, llama_config)
     if max_tokens is not None:
@@ -230,8 +242,10 @@ async def generate_response_chat_stream(
     content_index = 0
     in_message = False
     in_tool_call = False
+    tool_finalized = False
     tool_id = ""
     tool_name: str | None = None
+    tool_call_index = -1
     tool_call_text = ""
     tool_calls_state: dict[int, dict[str, str]] = {}
     in_reasoning = False
@@ -306,9 +320,11 @@ async def generate_response_chat_stream(
 
                     if not in_tool_call:
                         in_tool_call = True
+                        tool_finalized = False
                         in_message = False
                         tool_id = f"toolcall_{uuid.uuid4()}"
                         tool_name = state["name"] or None
+                        tool_call_index = index
                         tool_call_text = ""
                         content_index = 0
                         if tool_name:
@@ -353,6 +369,7 @@ async def generate_response_chat_stream(
                     reasoning_text = ""
                 if in_tool_call:
                     in_tool_call = False
+                    tool_finalized = True
                     resp_str, sequence_number, output_index, item = (
                         _process_stop_tool_call_events(
                             tool_id,
@@ -398,24 +415,39 @@ async def generate_response_chat_stream(
                     state = tool_calls_state[index]
                     if not state.get("name"):
                         continue
-                    tool_id = f"toolcall_{uuid.uuid4()}"
-                    tool_name = state["name"]
-                    tool_call_text = state.get("arguments") or ""
+                    # The in-flight call may already have been finalized when a
+                    # content chunk closed it.
+                    # Skip it here to avoid a second done event with a fresh id.
+                    if index == tool_call_index and tool_finalized:
+                        continue
+                    if index == tool_call_index:
+                        # Reuse the streaming-time id so added/done match.
+                        call_id = tool_id
+                        call_name = tool_name or state["name"]
+                        call_text = tool_call_text or state.get("arguments") or ""
+                        in_tool_call = False
+                        tool_finalized = True
+                    else:
+                        # a parallel call that never streamed its own added
+                        # event; add a fresh id for it.
+                        call_id = f"toolcall_{uuid.uuid4()}"
+                        call_name = state["name"]
+                        call_text = state.get("arguments") or ""
                     resp_str, sequence_number, output_index, item = (
                         _process_stop_tool_call_events(
-                            tool_id,
+                            call_id,
                             output_index,
-                            tool_call_text,
+                            call_text,
                             sequence_number,
                             request,
-                            tool_name,
+                            call_name,
                         )
                     )
                     output_items.append(item)
                     yield resp_str
 
-    except Exception as exc:  # noqa: BLE001
-        traceback.print_exc()
+    except Exception as exc: 
+        logger.exception("llama-server stream failed")
         resp_str, sequence_number = _process_error_event(
             str(exc), response_id, request, created, sequence_number
         )
@@ -450,6 +482,7 @@ async def generate_response_chat_stream(
         yield resp_str
 
     if prompt_tokens == 0:
+        # Fallback when the server didn't report usage: rough char/4 estimate.
         prompt_tokens = max(len(json.dumps(messages)) // 4, 1)
     if completion_tokens == 0:
         completion_tokens = max(len(answer_text) // 4, 0)

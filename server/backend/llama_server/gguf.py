@@ -31,13 +31,9 @@ def find_mtp_gguf_file(model_path: Path) -> Path | None:
     """Return the MTP head GGUF for speculative decoding, if present."""
     model_dir = model_path.parent if model_path.is_file() else model_path
 
-    preferred = model_dir / "mtp-gemma-4-12b-it.gguf"
-    if preferred.is_file():
-        return preferred
-
     mtp_dir = model_dir / "MTP"
     if mtp_dir.is_dir():
-        candidates = [p for p in mtp_dir.glob("*.gguf") if p.name.lower() != "readme.md"]
+        candidates = list(mtp_dir.glob("*.gguf"))
         for name_part in ("Q8_0", "F16", "BF16"):
             for candidate in candidates:
                 if name_part in candidate.name:
