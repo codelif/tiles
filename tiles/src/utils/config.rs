@@ -615,7 +615,10 @@ pub fn update_llama_config(config: &LlamaConfig) -> Result<()> {
     let mut root_config = get_or_create_root_config()?;
     let mut llama_config = root_config.llama.unwrap_or_default();
 
-    llama_config.context_length = config.context_length.or(llama_config.context_length).or(Some(32768));
+    llama_config.context_length = config
+        .context_length
+        .or(llama_config.context_length)
+        .or(Some(32768));
     llama_config.gpu_layers = config.gpu_layers.or(llama_config.gpu_layers);
     llama_config.offload_kqv = config.offload_kqv.or(llama_config.offload_kqv);
     llama_config.batch_size = config.batch_size.or(llama_config.batch_size);
