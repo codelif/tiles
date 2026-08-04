@@ -24,7 +24,7 @@ use std::time::SystemTime;
 use std::{env, fs};
 use toml::Table;
 
-use crate::repl::{CompactionSettings, PiSettings};
+use crate::core::agent::types::{CompactionSettings, PiSettings};
 
 #[derive(Serialize, Deserialize, Debug)]
 struct ModelConfig {
@@ -115,6 +115,9 @@ const MODEL_SUB_PATH: &str = "models/huggingface/hub";
 pub const SYSTEM_BIN_DIR: &str = "/usr/local/bin";
 pub const SYSTEM_BIN_PATH: &str = "/usr/local/bin/tiles";
 pub const SYSTEM_LIB_DIR: &str = "/usr/local/share/tiles";
+pub const PY_PORT: u32 = 6969;
+// Used in remote inference, this is port where we open a TCP connection to proxy
+pub const REMOTE_BOUND_PORT: u32 = 9271;
 
 /// Bundled runtime directories under lib_dir removed on default uninstall.
 pub const LIB_RUNTIME_DIRS_TO_REMOVE: &[&str] = &["server", "modelfiles", "pi", "models"];
@@ -676,7 +679,7 @@ pub fn handle_pi_settings_config(settings_path: &PathBuf) -> Result<()> {
 #[cfg(test)]
 mod tests {
 
-    use crate::repl::ReasoningEffort;
+    use crate::core::agent::types::ReasoningEffort;
 
     use super::*;
     use serde_json::Value;

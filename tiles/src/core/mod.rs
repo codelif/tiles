@@ -14,6 +14,7 @@ use crate::{
 };
 
 pub mod account;
+pub mod agent;
 pub mod chats;
 pub mod health;
 pub mod network;

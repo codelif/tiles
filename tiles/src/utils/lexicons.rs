@@ -3,7 +3,7 @@
 use atrium_api::types::string::Datetime;
 use serde::{Deserialize, Serialize};
 
-use crate::repl::PiMsgEvent;
+use crate::core::agent::types::PiMsgEvent;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SessionSnapshotRecord {

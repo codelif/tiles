@@ -8,11 +8,13 @@ use std::{
     time::Duration,
 };
 
+use crate::{core::agent::pi::PiAgent, daemon::agent::agent_router};
 use anyhow::{Result, anyhow};
 use axum::{
-    Router,
+    Json, Router,
     extract::{Query, State},
     http::StatusCode,
+    response::IntoResponse,
     routing::get,
 };
 use axum_macros::debug_handler;
@@ -21,10 +23,13 @@ use log::info;
 use nix::unistd::setsid;
 use reqwest::Client;
 use semver::Version;
+use serde::Serialize;
+use serde_json::json;
 use std::fs::OpenOptions;
 use std::sync::Mutex;
+use tokio::sync::Mutex as AsyncMutex;
 use tokio::sync::oneshot::{self, Receiver, Sender};
-
+pub mod agent;
 use crate::{
     core::{
         account::{atproto::AtCallbackParams, local::get_current_user},
@@ -34,12 +39,49 @@ use crate::{
     utils::config::{ConfigProvider, DefaultProvider, get_config_json, get_model_cache},
 };
 
-struct AppState {
+pub struct AppState {
     pub shutdown_sender: Mutex<Option<oneshot::Sender<bool>>>,
     pub vsn: String,
+    //TODO: refactor the remote infy related fields
     pub remote_ticket: Mutex<Option<String>>,
     pub remote_running: Mutex<bool>,
     pub remote_shutdown_sender: Mutex<Option<oneshot::Sender<bool>>>,
+    pub agent: AsyncMutex<Option<PiAgent>>,
+}
+
+pub enum AppError {
+    ModelFileNotFound(String),
+    InternalServerError(String),
+}
+impl IntoResponse for AppError {
+    fn into_response(self) -> axum::response::Response {
+        let (status, reason) = match self {
+            Self::ModelFileNotFound(e) => (StatusCode::NOT_FOUND, e),
+            Self::InternalServerError(e) => (StatusCode::INTERNAL_SERVER_ERROR, e),
+        };
+
+        let body = Json(json!({
+            "status": "failed",
+            "reason": reason
+        }));
+
+        (status, body).into_response()
+    }
+}
+
+#[derive(Serialize)]
+pub struct ApiResponse<T> {
+    status: String,
+    data: T,
+}
+
+impl<T: Serialize> ApiResponse<T> {
+    fn success(data: T) -> Json<Self> {
+        Json(Self {
+            status: "success".to_string(),
+            data,
+        })
+    }
 }
 
 struct InternalAppState {
@@ -153,6 +195,7 @@ pub async fn start_server(port: Option<u32>) -> Result<()> {
         remote_ticket: Mutex::new(None),
         remote_shutdown_sender: Mutex::new(None),
         remote_running: Mutex::new(false),
+        agent: None.into(),
     };
 
     let shared_state = Arc::new(state);
@@ -165,6 +208,7 @@ pub async fn start_server(port: Option<u32>) -> Result<()> {
         .route("/remote-unshare", get(unshare_remote_inference))
         .route("/remote-status", get(show_remote_status))
         .route("/connect-remote", get(connect_remote_inference))
+        .merge(agent_router())
         .with_state(shared_state);
 
     let addr = format!("127.0.0.1:{}", dyn_port);
@@ -471,6 +515,7 @@ pub async fn connect_remote(ticket: &str) -> Result<()> {
         Ok(_response) => Ok(()),
     }
 }
+
 #[cfg(test)]
 mod tests {
     use anyhow::Result;

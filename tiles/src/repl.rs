@@ -1,5 +1,11 @@
 use crate::core::account::atproto::{fetch_logged_in_data, login, share_session};
 use crate::core::account::local::get_current_user;
+use crate::core::agent::pi::{PiAgent, PiWriter};
+use crate::core::agent::types::{
+    CommandType, Commands, PiAgentEndEvent, PiMsgContent, PiResponse, PiResponseMessage,
+    ReasoningEffort,
+};
+use crate::core::agent::{pi, types};
 use crate::core::chats::{
     Session, create_session, fetch_chats_by_session_id, fetch_session, fetch_sessions, save_chat,
     update_snapshot,
@@ -7,9 +13,8 @@ use crate::core::chats::{
 use crate::core::network;
 use crate::core::storage::db::Dbconn;
 use crate::utils::config::{
-    ConfigProvider, DefaultProvider, LlamaConfig, create_pi_provider_config, get_inference_config,
-    get_memory_path, get_model_cache, handle_pi_settings_config, update_current_model,
-    update_llama_config,
+    ConfigProvider, DefaultProvider, LlamaConfig, PY_PORT, REMOTE_BOUND_PORT, get_inference_config,
+    get_memory_path, get_model_cache, update_current_model, update_llama_config,
 };
 use crate::utils::hf_model_downloader::*;
 use crate::utils::lexicons::{SessionSnapshotRecord, Turn};
@@ -24,7 +29,7 @@ use rustyline::hint::Hinter;
 use rustyline::history::DefaultHistory;
 use rustyline::validate::Validator;
 use rustyline::{Config, Editor, Helper};
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
@@ -37,8 +42,7 @@ use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 use tilekit::modelfile::Modelfile;
 use tilekit::modelfile::Role;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::process::{Child, ChildStdin, ChildStdout, Command};
+use tokio::process::Command;
 use tokio::time::sleep;
 
 const MAX_LOAD_MODEL_RETRIES: u8 = 3;
@@ -82,183 +86,6 @@ pub struct ChatResponse {
     pub model_used: String,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-#[serde(tag = "type")]
-enum PiResponse {
-    #[serde(rename = "response")]
-    Response(PiResponseMessage),
-    #[serde(rename = "agent_start")]
-    AgentStart,
-    #[serde(rename = "message_update")]
-    MessageUpdate(PiMessageUpdate),
-    #[serde(rename = "agent_end")]
-    AgentEnd(PiAgentEndEvent),
-    #[serde(rename = "turn_end")]
-    TurnEnd(PiTurnEndEvent),
-    #[serde[other]]
-    Unknown,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct GetStateData {
-    model: PiModelInfo,
-    #[serde(rename = "thinkingLevel")]
-    pub thinking_level: String,
-    #[serde(rename = "isStreaming")]
-    is_streaming: bool,
-    #[serde(rename = "sessionId")]
-    session_id: String,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct PiModelInfo {
-    id: String,
-    name: String,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct PiSettings {
-    pub compaction: Option<CompactionSettings>,
-    #[serde(rename = "defaultThinkingLevel")]
-    pub default_thinking_level: Option<ReasoningEffort>,
-}
-
-impl Default for PiSettings {
-    fn default() -> Self {
-        PiSettings {
-            compaction: Some(CompactionSettings { enabled: false }),
-            default_thinking_level: Some(ReasoningEffort::Medium),
-        }
-    }
-}
-#[derive(Serialize, Deserialize, Debug, PartialEq, PartialOrd)]
-pub struct CompactionSettings {
-    pub enabled: bool,
-}
-#[derive(Serialize, Deserialize, Debug)]
-struct PiMessageUpdate {
-    #[serde(rename = "assistantMessageEvent")]
-    assistant_message_event: PiAsstTextMsg,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct PiAsstTextMsg {
-    r#type: AsstMsgEventType,
-    delta: Option<String>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct PiResponseMessage {
-    command: CommandType,
-    success: bool,
-    data: Option<Value>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct Commands {
-    name: String,
-    description: String,
-    source: String,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct PiTurnEndEvent {
-    message: PiTurnEndEventMsg,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct PiTurnEndEventMsg {
-    role: String,
-    content: Vec<PiMsgContent>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct PiMsgEvent {
-    role: Role,
-    content: Vec<PiMsgContent>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(rename = "stopReason")]
-    stop_reason: Option<String>,
-    timestamp: u64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(rename = "toolName")]
-    tool_name: Option<String>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-struct PiMsgContent {
-    r#type: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    text: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    thinking: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(default, deserialize_with = "map_to_option_string")]
-    pub arguments: Option<String>,
-    // Tool name
-    #[serde(skip_serializing_if = "Option::is_none")]
-    name: Option<String>,
-}
-
-fn map_to_option_string<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let opt = Option::<Value>::deserialize(deserializer)?;
-
-    match opt {
-        Some(Value::String(s)) => Ok(Some(s)),
-        Some(Value::Object(map)) => serde_json::to_string(&map)
-            .map(Some)
-            .map_err(serde::de::Error::custom),
-        Some(other) => Ok(Some(other.to_string())),
-        None => Ok(None),
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct PiAgentEndEvent {
-    messages: Vec<PiMsgEvent>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-enum AsstMsgEventType {
-    #[serde(rename = "start")]
-    Start,
-    #[serde(rename = "text_start")]
-    TextStart,
-    #[serde(rename = "text_delta")]
-    TextDelta,
-    #[serde(rename = "text_end")]
-    TextEnd,
-    #[serde(rename = "thinking_start")]
-    ThinkingStart,
-    #[serde(rename = "thinking_delta")]
-    ThinkingDelta,
-    #[serde(rename = "thinking_end")]
-    ThinkingEnd,
-    #[serde(rename = "toolcall_start")]
-    ToolcallStart,
-    #[serde(rename = "toolcall_delta")]
-    ToolcallDelta,
-    #[serde(rename = "toolcall_end")]
-    ToolcallEnd,
-    #[serde(rename = "done")]
-    Done,
-    #[serde(rename = "error")]
-    Error,
-}
-
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, PartialOrd)]
-pub enum ReasoningEffort {
-    #[serde(rename = "high")]
-    High,
-    #[serde(rename = "medium")]
-    Medium,
-    #[serde(rename = "low")]
-    Low,
-}
-
 enum InputCommandResponse {
     WaitForNextLine,
     ProcessNextInput,
@@ -284,7 +111,6 @@ impl From<ReasoningEffort> for String {
         }
     }
 }
-const PY_PORT: u32 = 6969;
 
 pub async fn run(run_args: RunArgs, db_conn: &Dbconn) -> Result<()> {
     let (modelfile, default_modelfile) = if let Some(modelfile_str) = &run_args.modelfile_path {
@@ -431,30 +257,6 @@ enum InputType {
     Skill,
 }
 
-#[derive(Deserialize, Serialize, Debug)]
-enum CommandType {
-    #[serde(rename = "status")]
-    Status,
-    #[serde(rename = "share")]
-    Share,
-    #[serde(rename = "sessions")]
-    Sessions,
-    #[serde(rename = "resume")]
-    Resume,
-    #[serde(rename = "reasoning")]
-    Reasoning,
-    #[serde(rename = "set_thinking_level")]
-    SetThinkingLevel,
-    #[serde(rename = "abort")]
-    Abort,
-    #[serde(rename = "skills")]
-    Skills,
-    #[serde(rename = "get_commands")]
-    GetCommands,
-    #[serde(other)]
-    Unknown,
-}
-
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SharedSession {
     #[serde(rename = "$type")]
@@ -485,7 +287,7 @@ struct ReplSession {
 }
 
 impl ReplSession {
-    pub fn new(state: &GetStateData) -> Self {
+    pub fn new(state: &types::GetStateData) -> Self {
         ReplSession {
             session_id: state.session_id.clone(),
             resume_session_pending: false,
@@ -661,12 +463,15 @@ async fn start_repl(modelfile: &Modelfile, run_args: &RunArgs, db_conn: &Dbconn)
     })
     .expect("Error setting Ctrl-C handler");
 
+    let port = if run_args.remote.is_none() {
+        PY_PORT
+    } else {
+        REMOTE_BOUND_PORT
+    };
     // Setting up Pi rpc process handles
-    let mut pi_process = start_pi_rpc(&modelname, &system_prompt, run_args.remote.clone())?;
-    let pi_stdin = pi_process.stdin.as_mut().unwrap();
-    let mut pi_stdout = pi_process.stdout.take().expect("stdout");
+    let mut pi_agent = pi::new(&modelname, &system_prompt, port)?;
 
-    let pi_session_state = get_pi_state(pi_stdin, &mut pi_stdout).await?;
+    let pi_session_state = pi_agent.reader.get_pi_state(&mut pi_agent.writer).await?;
     let mut repl_session = ReplSession::new(&pi_session_state);
 
     // The great REPL loop
@@ -676,7 +481,7 @@ async fn start_repl(modelfile: &Modelfile, run_args: &RunArgs, db_conn: &Dbconn)
         let input = match readline {
             Ok(line) => line.trim().to_string(),
             Err(_) => {
-                handle_repl_exit(pi_stdin).await?;
+                handle_repl_exit(&mut pi_agent.writer).await?;
                 break;
             }
         };
@@ -689,19 +494,21 @@ async fn start_repl(modelfile: &Modelfile, run_args: &RunArgs, db_conn: &Dbconn)
         match handle_input(&input.to_lowercase()) {
             InputType::Skip => continue,
             InputType::Exit => {
-                handle_repl_exit(pi_stdin).await?;
+                handle_repl_exit(&mut pi_agent.writer).await?;
                 break;
             }
             InputType::Prompt => {
-                handle_input_prompt(pi_stdin, &mut repl_session, &input).await?;
+                handle_input_prompt(&mut pi_agent.writer, &mut repl_session, &input).await?;
             }
             InputType::Skill => {
                 let (_, skill_name) = input.split_at(1);
                 let skill_prompt = format!("/skill:{}", skill_name);
-                handle_input_prompt(pi_stdin, &mut repl_session, &skill_prompt).await?;
+                handle_input_prompt(&mut pi_agent.writer, &mut repl_session, &skill_prompt).await?;
             }
             InputType::Command(cmd) => {
-                let res = handle_input_commands(cmd, &mut repl_session, db_conn, pi_stdin).await?;
+                let res =
+                    handle_input_commands(cmd, &mut repl_session, db_conn, &mut pi_agent.writer)
+                        .await?;
 
                 if let InputCommandResponse::ProcessNextInput = res {
                     continue;
@@ -709,22 +516,22 @@ async fn start_repl(modelfile: &Modelfile, run_args: &RunArgs, db_conn: &Dbconn)
             }
         }
 
-        // This is to prevent the session name being messeup if user starts
+        // This is to prevent the session name being messedup if user starts
         // with skills. Pi unfurls skills command to entire skill doc.So we
-        // cant put that as session name.
+        // can't put that as session name.
         if !repl_session.session_started {
             repl_session.session_snapshot.name = input.clone();
         };
-        // Reads the output from Pi and process and responds to the repl
-        let mut reader = BufReader::new(&mut pi_stdout).lines();
 
-        while let Some(line) = reader.next_line().await? {
+        // Reads the output from Pi and process and responds to the repl
+
+        while let Some(line) = pi_agent.reader.next_line().await? {
             if !running.load(std::sync::atomic::Ordering::SeqCst) {
                 info!("Ctrlc detected, aborting Pi ops");
                 let end_payload = json!({
                     "type": "abort",
                 });
-                send_to_pi(pi_stdin, end_payload).await?;
+                pi_agent.writer.send_to_pi(end_payload).await?;
                 running.store(true, std::sync::atomic::Ordering::SeqCst);
                 continue;
             }
@@ -742,7 +549,7 @@ async fn start_repl(modelfile: &Modelfile, run_args: &RunArgs, db_conn: &Dbconn)
                     process_pi_agent_end_event(
                         &mut repl_session,
                         agent_end_event,
-                        pi_stdin,
+                        &mut pi_agent.writer,
                         db_conn,
                         &current_user,
                     )
@@ -765,13 +572,8 @@ async fn start_repl(modelfile: &Modelfile, run_args: &RunArgs, db_conn: &Dbconn)
                                 continue;
                             }
                             _ => {
-                                process_command(
-                                    response_msg,
-                                    &mut repl_session,
-                                    pi_stdin,
-                                    &mut pi_stdout,
-                                )
-                                .await?;
+                                process_command(response_msg, &mut repl_session, &mut pi_agent)
+                                    .await?;
                                 break;
                             }
                         }
@@ -860,7 +662,8 @@ async fn wait_until_server_is_up() {
     }
 }
 
-fn get_default_modelfile(memory_mode: bool) -> Result<PathBuf> {
+//TODO: maybe move to config.rs, as it is used in daemon
+pub fn get_default_modelfile(memory_mode: bool) -> Result<PathBuf> {
     if memory_mode {
         let path = DefaultProvider.get_lib_dir()?.join("modelfiles/mem-agent");
         Ok(path)
@@ -913,81 +716,14 @@ async fn download_model(model_name: &str) -> Result<()> {
     }
 }
 
-fn start_pi_rpc(model_name: &str, system_prompt: &str, remote: Option<String>) -> Result<Child> {
-    let tiles_lib_dir = DefaultProvider.get_lib_dir()?;
-    let user_data_dir = DefaultProvider.get_user_data_dir()?;
-    let pi_agent_dir = user_data_dir.join("pi/agent/");
-    std::fs::create_dir_all(&pi_agent_dir).context("Failed to create Pi agent directory")?;
-
-    let port = if remote.is_none() { PY_PORT } else { 9271 };
-    let provider_config_file_path = pi_agent_dir.join("models.json");
-    let endpoint_url = format!("http://127.0.0.1:{}/v1", port);
-    let model_config = create_pi_provider_config(model_name, &endpoint_url)?;
-
-    fs::write(provider_config_file_path, model_config)?;
-
-    let settings_file_path = pi_agent_dir.join("settings.json");
-    handle_pi_settings_config(&settings_file_path)?;
-    // For easy debugging Pi, when developing when needed we can directly call the
-    // local on-demand build pi binary and point local path
-    // assuming `tiles-pi` is cloned as a sibling in the same dir
-    // let pi_exec_path =
-    //  PathBuf::from("~/tiles-pi/packages/coding-agent/binaries/darwin-arm64/pi");
-    // For example:
-    // let pi_exec_path =
-    //     PathBuf::from("/Users/tiles/tiles-pi/packages/coding-agent/binaries/darwin-arm64/pi");
-    // On building binary locally, from tiles-pi root dir run
-    // `./scripts/build-binaries.sh --platform darwin-arm64`
-    // More platform flags can be seen in the `build-binaries.sh`
-
-    let pi_exec_path = tiles_lib_dir.join("pi/pi");
-
-    let pi_process = unsafe {
-        Command::new(pi_exec_path)
-            .arg("--mode")
-            .arg("rpc")
-            .arg("--append-system-prompt")
-            .arg(system_prompt)
-            .arg("--no-session")
-            .env("PI_CODING_AGENT_DIR", pi_agent_dir)
-            .env("PI_OFFLINE", "true")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .pre_exec(|| {
-                if let Err(err) = setsid() {
-                    Err(Into::into(err))
-                } else {
-                    Ok(())
-                }
-            })
-            .spawn()
-            .expect("failed to run Pi")
-    };
-    Ok(pi_process)
-}
-
-async fn send_to_pi(pi_child_stdin: &mut ChildStdin, payload_json: Value) -> Result<()> {
-    let payload_str = format!("{}\n", serde_json::to_string(&payload_json)?);
-    pi_child_stdin
-        .write_all(payload_str.as_bytes())
-        .await
-        .context("Failed to send to Pi's stdin")?;
-    pi_child_stdin
-        .flush()
-        .await
-        .context("Failed to flush Pi stdin")?;
-    Ok(())
-}
-
 async fn process_command(
     response_msg: PiResponseMessage,
     repl_session: &mut ReplSession,
-    pi_stdin: &mut ChildStdin,
-    pi_stdout: &mut ChildStdout,
+    agent: &mut PiAgent,
 ) -> Result<()> {
     match response_msg.command {
         CommandType::SetThinkingLevel => {
-            let state = get_pi_state(pi_stdin, pi_stdout).await?;
+            let state = agent.reader.get_pi_state(&mut agent.writer).await?;
             match state.thinking_level.parse::<ReasoningEffort>() {
                 Ok(effort) => {
                     repl_session.reasoning = effort;
@@ -1231,97 +967,65 @@ fn build_status_lines(
         .collect()
 }
 
-fn handle_pi_message_update(msg_update: PiMessageUpdate) {
+fn handle_pi_message_update(msg_update: types::PiMessageUpdate) {
     match msg_update.assistant_message_event.r#type {
-        AsstMsgEventType::TextStart => {
+        types::AsstMsgEventType::TextStart => {
             println!();
             println!("{}\n", "**[Answer]**".bold());
             info!("msg text_start")
         }
-        AsstMsgEventType::TextDelta => {
+        types::AsstMsgEventType::TextDelta => {
             if let Some(delta) = msg_update.assistant_message_event.delta {
                 print!("{}", delta);
                 use std::io::Write;
                 std::io::stdout().flush().ok();
             }
         }
-        AsstMsgEventType::TextEnd => {
+        types::AsstMsgEventType::TextEnd => {
             info!("msg text_end")
         }
-        AsstMsgEventType::ThinkingStart => {
+        types::AsstMsgEventType::ThinkingStart => {
             println!();
             println!("{}\n", "**[Reasoning]**".dimmed());
         }
-        AsstMsgEventType::ThinkingDelta => {
+        types::AsstMsgEventType::ThinkingDelta => {
             if let Some(delta) = msg_update.assistant_message_event.delta {
                 print!("{}", delta.dimmed());
                 use std::io::Write;
                 std::io::stdout().flush().ok();
             }
         }
-        AsstMsgEventType::ThinkingEnd => {
+        types::AsstMsgEventType::ThinkingEnd => {
             println!();
         }
-        AsstMsgEventType::ToolcallStart => {
+        types::AsstMsgEventType::ToolcallStart => {
             info!("Selecting tool to execute");
             println!();
             let delta = "**[Tool Calling]**";
             println!("{}", delta.dimmed());
         }
-        AsstMsgEventType::ToolcallDelta => {
+        types::AsstMsgEventType::ToolcallDelta => {
             if let Some(delta) = msg_update.assistant_message_event.delta {
                 print!("{}", delta.dimmed());
                 use std::io::Write;
                 std::io::stdout().flush().ok();
             }
         }
-        AsstMsgEventType::ToolcallEnd => {
+        types::AsstMsgEventType::ToolcallEnd => {
             info!("Tool call selected");
         }
-        AsstMsgEventType::Done => {
+        types::AsstMsgEventType::Done => {
             info!("msg done event")
         }
-        AsstMsgEventType::Error => {
+        types::AsstMsgEventType::Error => {
             warn!("msg error event")
         }
         _ => (),
     }
 }
 
-async fn get_pi_state(
-    pi_stdin: &mut ChildStdin,
-    pi_stdout: &mut ChildStdout,
-) -> Result<GetStateData> {
-    let init_cmd_payload = json!({
-        "type": "get_state",
-    });
-    send_to_pi(pi_stdin, init_cmd_payload)
-        .await
-        .inspect_err(|_e| eprintln!("sending command to  pi failed"))?;
-
-    let reader = BufReader::new(pi_stdout);
-
-    if let Some(line) = reader.lines().next_line().await? {
-        let response: PiResponse = serde_json::from_str(&line)?;
-        if let PiResponse::Response(msg) = response {
-            let state: GetStateData =
-                serde_json::from_value(msg.data.expect("get state parsing failed"))?;
-            Ok(state)
-        } else {
-            Err(anyhow!("Failed to fetch initial state from Pi"))
-        }
-    } else {
-        Err(anyhow!("Failed to fetch session_id from Pi"))
-    }
-}
-
-async fn handle_repl_exit(pi_stdin: &mut ChildStdin) -> Result<()> {
-    let end_payload = json!({
-        "type": "abort",
-    });
-    let payload_str = format!("{}\n", serde_json::to_string(&end_payload)?);
-    pi_stdin.write_all(payload_str.as_bytes()).await?;
-    pi_stdin.flush().await?;
+async fn handle_repl_exit(agent_writer: &mut PiWriter) -> Result<()> {
+    pi::handle_graceful_exit(agent_writer).await?;
     println!("Exiting interactive mode");
     if !cfg!(debug_assertions) {
         match get_inference_config()? {
@@ -1338,7 +1042,7 @@ async fn handle_repl_exit(pi_stdin: &mut ChildStdin) -> Result<()> {
 }
 
 async fn handle_input_prompt(
-    pi_stdin: &mut ChildStdin,
+    agent_writer: &mut PiWriter,
     repl_session: &mut ReplSession,
     input: &str,
 ) -> Result<()> {
@@ -1357,14 +1061,15 @@ async fn handle_input_prompt(
         "type": "prompt",
         "message": final_input
     });
-    send_to_pi(pi_stdin, payload).await
+    agent_writer.send_to_pi(payload).await
 }
 
+//TODO: command type should be in repl.rs not in agent::types
 async fn handle_input_commands(
     cmd: String,
     repl_session: &mut ReplSession,
     db_conn: &Dbconn,
-    pi_stdin: &mut ChildStdin,
+    agent_writer: &mut PiWriter,
 ) -> Result<InputCommandResponse> {
     let args: Vec<&str> = cmd.split(" ").collect();
     let main_cmd = args.first().expect("Main command should be there");
@@ -1401,7 +1106,7 @@ async fn handle_input_commands(
             InputCommandResponse::ProcessNextInput
         }
         CommandType::Reasoning => {
-            if let Err(err) = set_reasoning_effort(pi_stdin, &args).await {
+            if let Err(err) = set_reasoning_effort(agent_writer, &args).await {
                 println!("Failed to set reasoning effort due to {}", err);
                 InputCommandResponse::ProcessNextInput
             } else {
@@ -1413,7 +1118,7 @@ async fn handle_input_commands(
                 "type": "get_commands",
             });
 
-            send_to_pi(pi_stdin, pi_cmd).await?;
+            agent_writer.send_to_pi(pi_cmd).await?;
             InputCommandResponse::WaitForNextLine
         }
         _ => InputCommandResponse::ProcessNextInput,
@@ -1424,7 +1129,7 @@ async fn handle_input_commands(
 async fn process_pi_agent_end_event(
     repl_session: &mut ReplSession,
     agent_end_event: PiAgentEndEvent,
-    pi_stdin: &mut ChildStdin,
+    agent: &mut PiWriter,
     db_conn: &Dbconn,
     current_user: &crate::core::account::local::User,
 ) -> Result<()> {
@@ -1438,7 +1143,7 @@ async fn process_pi_agent_end_event(
         let payload = json!({
             "type": "abort"
         });
-        send_to_pi(pi_stdin, payload).await?;
+        agent.send_to_pi(payload).await?;
         println!("An issue occurred, please try again!");
     }
 
@@ -1578,7 +1283,7 @@ fn format_assistant_content(msgs: Vec<PiMsgContent>) -> String {
     out
 }
 
-async fn set_reasoning_effort(pi_stdin: &mut ChildStdin, args: &[&str]) -> Result<()> {
+async fn set_reasoning_effort(agent_writer: &mut PiWriter, args: &[&str]) -> Result<()> {
     let args = if let Some((_main_command, sub_commands)) = args.split_first() {
         sub_commands
     } else {
@@ -1600,7 +1305,7 @@ async fn set_reasoning_effort(pi_stdin: &mut ChildStdin, args: &[&str]) -> Resul
         "level": &effort_str
     });
 
-    send_to_pi(pi_stdin, pi_cmd).await
+    agent_writer.send_to_pi(pi_cmd).await
 }
 
 /// Persist the reasoning level to Pi's settings.json so it survives restarts.
@@ -1631,6 +1336,9 @@ fn persist_default_thinking_level(level: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::agent::types::{
+        GetStateData, PiAgentEndEvent, PiModelInfo, PiMsgContent, PiMsgEvent,
+    };
     use crate::core::chats::create_session;
     use crate::core::chats::tests::create_user;
     use rusqlite::Connection;
@@ -1945,11 +1653,11 @@ mod tests {
         };
         let mut repl_session_b = ReplSession::new(&state);
 
-        let agent_end_event = PiAgentEndEvent {
+        let agent_end_event = PiAgentEndEvent{
             messages: vec![
-                PiMsgEvent {
+                PiMsgEvent{
                     role: Role::User,
-                    content: vec![PiMsgContent {
+                    content: vec![PiMsgContent{
                         r#type: String::from("text"),
                         text: Some("what is capital of India".to_string()),
                         thinking: None,
