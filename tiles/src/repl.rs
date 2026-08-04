@@ -1,6 +1,6 @@
 use crate::core::account::atproto::{fetch_logged_in_data, login, share_session};
 use crate::core::account::local::get_current_user;
-use crate::core::agent::pi::{PiAgent, PiReader, PiWriter};
+use crate::core::agent::pi::{PiAgent, PiWriter};
 use crate::core::agent::types::{
     CommandType, Commands, PiAgentEndEvent, PiMsgContent, PiResponse, PiResponseMessage,
     ReasoningEffort,

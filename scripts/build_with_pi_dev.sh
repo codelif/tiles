@@ -5,7 +5,7 @@ rm -rf .tiles_dev/tiles/pi
 
 VERSION=$(grep '^pi' toolchain.toml | head -1 | awk -F'"' '{print $2}')
 
-TAR_URL="https://github.com/badlogic/pi-mono/releases/download/${VERSION}/pi-darwin-arm64.tar.gz"
+
 
 # Detect OS
 case "$(uname -s)" in
@@ -23,6 +23,8 @@ esac
 
 PLATFORM="${OS}-${ARCH}"
 TARBALL="pi-${PLATFORM}.tar.gz"
+
+TAR_URL="https://github.com/badlogic/pi-mono/releases/download/${VERSION}/${TARBALL}"
 
 # TAR_URL="https://github.com/tilesprivacy/tiles-pi/releases/download/${VERSION}/${TARBALL}"
 

@@ -24,6 +24,8 @@ pub struct PiReader {
     lines: Lines<BufReader<ChildStdout>>,
 }
 
+//TODO: check if we need a use case of kill_on_drop(true)
+/// Creates a Pi Agent instance with writer and reader for comms with Pi
 pub fn new(model_name: &str, system_prompt: &str, port: u32) -> Result<PiAgent> {
     let tiles_lib_dir = DefaultProvider.get_lib_dir()?;
     let user_data_dir = DefaultProvider.get_user_data_dir()?;
@@ -59,13 +61,18 @@ pub fn new(model_name: &str, system_prompt: &str, port: u32) -> Result<PiAgent> 
                     Ok(())
                 }
             })
-            .spawn()
-            .expect("failed to run Pi")
+            .spawn()?
     };
 
-    //TODO: Remove the unwrap
-    let pi_stdin = pi_process.stdin.take().unwrap();
-    let pi_stdout = pi_process.stdout.take().expect("stdout");
+    let pi_stdin = pi_process
+        .stdin
+        .take()
+        .ok_or(anyhow!("Failed to get pi stdin"))?;
+
+    let pi_stdout = pi_process
+        .stdout
+        .take()
+        .ok_or(anyhow!("Failed to get pi stdout"))?;
 
     Ok(PiAgent {
         process: pi_process,
@@ -75,6 +82,9 @@ pub fn new(model_name: &str, system_prompt: &str, port: u32) -> Result<PiAgent> 
         writer: PiWriter { stdin: pi_stdin },
     })
 }
+
+/// Gracefully exit an ongoing Pi agent session.
+/// NOTE: This doesnot kill Pi background process
 pub async fn handle_graceful_exit(writer: &mut PiWriter) -> Result<()> {
     let end_payload = json!({
         "type": "abort",
@@ -82,31 +92,26 @@ pub async fn handle_graceful_exit(writer: &mut PiWriter) -> Result<()> {
     writer.send_to_pi(end_payload).await
 }
 
-//TODO: we should make the member function names pi agnostic..
 impl PiAgent {
     pub fn split(self) -> (Child, PiReader, PiWriter) {
         (self.process, self.reader, self.writer)
     }
 }
 
-//TODO: move this to an associative function
-
 impl PiWriter {
+    /// Send requests to Pi in `json!` format
     pub async fn send_to_pi(&mut self, payload_json: Value) -> Result<()> {
         let payload_str = format!("{}\n", serde_json::to_string(&payload_json)?);
         self.stdin
             .write_all(payload_str.as_bytes())
             .await
             .context("Failed to send to Pi's stdin")?;
-        self.stdin
-            .flush()
-            .await
-            .context("Failed to flush Pi stdin")?;
-        Ok(())
+        self.stdin.flush().await.context("Failed to flush Pi stdin")
     }
 }
 
 impl PiReader {
+    /// Gets current Pi State
     pub async fn get_pi_state(&mut self, writer: &mut PiWriter) -> Result<GetStateData> {
         let init_cmd_payload = json!({
             "type": "get_state",
@@ -131,6 +136,7 @@ impl PiReader {
         }
     }
 
+    /// Reads the next line for Pi's stdout
     pub async fn next_line(&mut self) -> std::result::Result<Option<String>, std::io::Error> {
         self.lines.next_line().await
     }

@@ -3,6 +3,9 @@
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use tilekit::modelfile::Role;
+
+//TODO: Change this into harness agnostic types in the names
+
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(tag = "type")]
 pub enum PiResponse {

@@ -11,9 +11,10 @@ use std::{
 use crate::{core::agent::pi::PiAgent, daemon::agent::agent_router};
 use anyhow::{Result, anyhow};
 use axum::{
-    Router,
+    Json, Router,
     extract::{Query, State},
     http::StatusCode,
+    response::IntoResponse,
     routing::get,
 };
 use axum_macros::debug_handler;
@@ -22,6 +23,8 @@ use log::info;
 use nix::unistd::setsid;
 use reqwest::Client;
 use semver::Version;
+use serde::Serialize;
+use serde_json::json;
 use std::fs::OpenOptions;
 use std::sync::Mutex;
 use tokio::sync::Mutex as AsyncMutex;
@@ -44,6 +47,41 @@ pub struct AppState {
     pub remote_running: Mutex<bool>,
     pub remote_shutdown_sender: Mutex<Option<oneshot::Sender<bool>>>,
     pub agent: AsyncMutex<Option<PiAgent>>,
+}
+
+pub enum AppError {
+    ModelFileNotFound(String),
+    InternalServerError(String),
+}
+impl IntoResponse for AppError {
+    fn into_response(self) -> axum::response::Response {
+        let (status, reason) = match self {
+            Self::ModelFileNotFound(e) => (StatusCode::NOT_FOUND, e),
+            Self::InternalServerError(e) => (StatusCode::INTERNAL_SERVER_ERROR, e),
+        };
+
+        let body = Json(json!({
+            "status": "failed",
+            "reason": reason
+        }));
+
+        (status, body).into_response()
+    }
+}
+
+#[derive(Serialize)]
+pub struct ApiResponse<T> {
+    status: String,
+    data: T,
+}
+
+impl<T: Serialize> ApiResponse<T> {
+    fn success(data: T) -> Json<Self> {
+        Json(Self {
+            status: "success".to_string(),
+            data,
+        })
+    }
 }
 
 struct InternalAppState {

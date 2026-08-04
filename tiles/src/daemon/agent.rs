@@ -2,74 +2,79 @@
 
 use std::sync::Arc;
 
-use axum::{Router, extract::State, routing::get};
+use axum::{Router, extract::State, response::IntoResponse, routing::get};
 use axum_macros::debug_handler;
-use reqwest::StatusCode;
+use serde_json::json;
 
 use crate::{
-    core::agent::pi::{self, PiAgent},
-    daemon::AppState,
+    core::agent::pi::{self},
+    daemon::{ApiResponse, AppError, AppState},
     repl::get_default_modelfile,
     utils::config::PY_PORT,
 };
 
 pub fn agent_router() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/agent/start", get(start_agent))
-        .route("/agent/stop", get(stop_agent))
-        .route("/agent/status", get(agent_status))
+        .route("/v1/tilekit/agent/start", get(start_agent))
+        .route("/v1/tilekit/agent/end_session", get(end_current_session))
+        .route("/v1/tilekit/agent/status", get(agent_status))
 }
 
-async fn start_agent(State(state): State<Arc<AppState>>) -> Result<String, StatusCode> {
+async fn start_agent(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse, AppError> {
     let modelfile_path =
-        get_default_modelfile(false).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let default_modelfile = tilekit::modelfile::parse_from_file(
-        modelfile_path
-            .to_str()
-            .expect("default_modelfile_path: Failed PathBuf to str"),
-    )
-    .map_err(|_| StatusCode::INSUFFICIENT_STORAGE)?;
+        get_default_modelfile(false).map_err(|e| AppError::ModelFileNotFound(e.to_string()))?;
+    let default_modelfile = tilekit::modelfile::parse_from_file(&modelfile_path.to_string_lossy())
+        .map_err(|e| AppError::InternalServerError(e.to_string()))?;
 
     let modelname = default_modelfile
         .from
         .clone()
-        .ok_or_else(|| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .expect("failed to take modelfile from Option");
 
     let system_prompt = default_modelfile.system.clone().unwrap_or("".to_owned());
 
-    let pi_agent = pi::new(&modelname, &system_prompt, PY_PORT)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
     let mut agent = state.agent.lock().await;
     if agent.is_some() {
-        Ok(String::from("agent already up"))
+        Ok(ApiResponse::success(
+            json!({"message": "Agent already started"}),
+        ))
     } else {
+        let pi_agent = pi::new(&modelname, &system_prompt, PY_PORT)
+            .map_err(|e| AppError::InternalServerError(e.to_string()))?;
         *agent = Some(pi_agent);
-        Ok(String::from("Started agent"))
+        Ok(ApiResponse::success(json!({"message": "started agent"})))
     }
 }
 
 #[debug_handler]
-async fn stop_agent(State(state): State<Arc<AppState>>) -> Result<String, StatusCode> {
+async fn end_current_session(
+    State(state): State<Arc<AppState>>,
+) -> Result<impl IntoResponse, AppError> {
     let mut agent = state.agent.lock().await;
-    let agent = agent.as_mut().unwrap();
+    let agent = agent.as_mut().ok_or(AppError::InternalServerError(
+        "Failed to get a mutable agent instance".to_string(),
+    ))?;
     pi::handle_graceful_exit(&mut agent.writer)
         .await
-        .map_err(|_| StatusCode::METHOD_NOT_ALLOWED)?;
-    Ok(String::from("Stopped agent"))
+        .map_err(|e| AppError::InternalServerError(e.to_string()))?;
+
+    Ok(ApiResponse::success(
+        json!({"message": "Successfully ended current session"}),
+    ))
 }
 
-async fn agent_status(State(state): State<Arc<AppState>>) -> Result<String, StatusCode> {
+// TODO: add timeout to apis
+async fn agent_status(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse, AppError> {
     let mut agent = state.agent.lock().await;
-    let agent = agent.as_mut().unwrap();
+    let agent = agent.as_mut().ok_or(AppError::InternalServerError(
+        "Failed to get a mutable agent instance".to_string(),
+    ))?;
 
     let state = agent
         .reader
         .get_pi_state(&mut agent.writer)
         .await
-        .map_err(|_| StatusCode::FAILED_DEPENDENCY)?;
+        .map_err(|e| AppError::InternalServerError(e.to_string()))?;
 
-    let state_str = format!("{}", serde_json::to_string(&state).unwrap());
-
-    Ok(state_str)
+    Ok(ApiResponse::success(serde_json::to_value(state).unwrap()))
 }
