@@ -63,7 +63,6 @@ async fn end_current_session(
     ))
 }
 
-// TODO: add timeout to apis
 async fn agent_status(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse, AppError> {
     let mut agent = state.agent.lock().await;
     let agent = agent.as_mut().ok_or(AppError::InternalServerError(

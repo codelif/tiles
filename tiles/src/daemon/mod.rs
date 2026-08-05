@@ -12,6 +12,7 @@ use crate::{core::agent::pi::PiAgent, daemon::agent::agent_router};
 use anyhow::{Result, anyhow};
 use axum::{
     Json, Router,
+    error_handling::HandleErrorLayer,
     extract::{Query, State},
     http::StatusCode,
     response::IntoResponse,
@@ -29,6 +30,10 @@ use std::fs::OpenOptions;
 use std::sync::Mutex;
 use tokio::sync::Mutex as AsyncMutex;
 use tokio::sync::oneshot::{self, Receiver, Sender};
+use tower::{
+    BoxError, ServiceBuilder,
+    timeout::{self, TimeoutLayer},
+};
 pub mod agent;
 use crate::{
     core::{
@@ -52,12 +57,14 @@ pub struct AppState {
 pub enum AppError {
     ModelFileNotFound(String),
     InternalServerError(String),
+    RequestTimeout,
 }
 impl IntoResponse for AppError {
     fn into_response(self) -> axum::response::Response {
         let (status, reason) = match self {
             Self::ModelFileNotFound(e) => (StatusCode::NOT_FOUND, e),
             Self::InternalServerError(e) => (StatusCode::INTERNAL_SERVER_ERROR, e),
+            Self::RequestTimeout => (StatusCode::REQUEST_TIMEOUT, "request timedout".to_string()),
         };
 
         let body = Json(json!({
@@ -199,6 +206,11 @@ pub async fn start_server(port: Option<u32>) -> Result<()> {
     };
 
     let shared_state = Arc::new(state);
+
+    let service = ServiceBuilder::new()
+        .layer(HandleErrorLayer::new(handle_timeout_error))
+        .layer(TimeoutLayer::new(Duration::from_secs(30)));
+
     let app = Router::new()
         .route("/", get(root))
         .route("/config", get(get_config))
@@ -209,6 +221,7 @@ pub async fn start_server(port: Option<u32>) -> Result<()> {
         .route("/remote-status", get(show_remote_status))
         .route("/connect-remote", get(connect_remote_inference))
         .merge(agent_router())
+        .layer(service)
         .with_state(shared_state);
 
     let addr = format!("127.0.0.1:{}", dyn_port);
@@ -513,6 +526,14 @@ pub async fn connect_remote(ticket: &str) -> Result<()> {
     match res {
         Err(err) => Err(anyhow!("Daemon remote connect failed due to {:?}", err)),
         Ok(_response) => Ok(()),
+    }
+}
+
+async fn handle_timeout_error(err: BoxError) -> AppError {
+    if err.is::<timeout::error::Elapsed>() {
+        AppError::RequestTimeout
+    } else {
+        AppError::InternalServerError("Something unexpected happened".to_string())
     }
 }
 

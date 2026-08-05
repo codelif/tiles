@@ -6097,6 +6097,7 @@ dependencies = [
  "tilekit",
  "tokio",
  "toml",
+ "tower",
  "uuid",
  "wiremock",
 ]
