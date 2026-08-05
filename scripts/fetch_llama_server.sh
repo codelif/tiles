@@ -1,21 +1,27 @@
 #!/usr/bin/env bash
 # Provision the llama-server binary that powers Tiles inference.
-#   - Linux: build from source with CUDA when nvcc is available, CPU otherwise.
+#   - Linux: download a prebuilt CUDA binary from ai-dock/llama.cpp-cuda.
+#     Default is the latest release; pin with LLAMA_CPP_TAG=bXXXX.
 #   - macOS: download the official prebuilt Metal release from llama.cpp.
-# Override the pinned release with LLAMA_CPP_TAG=bXXXX.
+#
+# Linux (CUDA-only): the downloaded binary links against CUDA 12.8 runtime
+# libraries, which must be present on the host for llama-server to start.
+#
+# Environment variables:
+#   LLAMA_CPP_TAG        Pin a specific release tag (e.g. b10276). If unset,
+#                        the latest ai-dock/llama.cpp-cuda release is used.
+#   TILES_CUDA_VERSION   CUDA version suffix for the asset (default: 12.8).
+#                        Only used when LLAMA_CPP_TAG is pinned; the auto-
+#                        latest path reads the version from the asset name.
+#   FORCE_LLAMA_FETCH    Set to 1 to re-download even if a binary is present.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT_DIR="${ROOT}/server/bin"
-BUILD_DIR="${ROOT}/.cache/llama.cpp-build"
-REPO_DIR="${ROOT}/.cache/llama.cpp"
-
-LLAMA_CPP_TAG="${LLAMA_CPP_TAG:-b9867}"
 
 mkdir -p "${OUT_DIR}"
 
-# Reuse an already-provisioned binary. Set FORCE_LLAMA_FETCH=1 to rebuild or
-# re-download (e.g. when bumping LLAMA_CPP_TAG).
+# Reuse an already-provisioned binary. Set FORCE_LLAMA_FETCH=1 to re-download.
 if [[ -x "${OUT_DIR}/llama-server" && "${FORCE_LLAMA_FETCH:-}" != "1" ]]; then
   echo "llama-server already present at ${OUT_DIR}/llama-server; skipping fetch (set FORCE_LLAMA_FETCH=1 to force)."
   exit 0
@@ -23,7 +29,11 @@ fi
 
 OS="$(uname -s)"
 
+# ---------------------------------------------------------------------------
+# macOS: official prebuilt Metal release from ggml-org/llama.cpp.
+# --------------------------------------------------------------------------
 if [[ "${OS}" == "Darwin" ]]; then
+  LLAMA_CPP_TAG="${LLAMA_CPP_TAG:-b9867}"
   ARCH="$(uname -m)"
   case "${ARCH}" in
     arm64)  ASSET="llama-${LLAMA_CPP_TAG}-bin-macos-arm64.tar.gz" ;;
@@ -57,27 +67,58 @@ if [[ "${OS}" != "Linux" ]]; then
   exit 1
 fi
 
-# Linux: build from source. CUDA when the toolkit is present, CPU otherwise.
-if [[ ! -d "${REPO_DIR}/.git" ]]; then
-  git clone --depth 1 --branch "${LLAMA_CPP_TAG}" \
-    https://github.com/ggml-org/llama.cpp "${REPO_DIR}"
+# ---------------------------------------------------------------------------
+# Linux: prebuilt CUDA binary from ai-dock/llama.cpp-cuda.
+# --------------------------------------------------------------------------
+ARCH="$(uname -m)"
+case "${ARCH}" in
+  x86_64)  ASSET_ARCH="amd64" ;;
+  aarch64|arm64) ASSET_ARCH="arm64" ;;
+  *) echo "Unsupported Linux architecture: ${ARCH}" >&2; exit 1 ;;
+esac
+
+API_URL="https://api.github.com/repos/ai-dock/llama.cpp-cuda/releases/latest"
+
+if [[ -n "${LLAMA_CPP_TAG:-}" ]]; then
+  # Pinned tag: construct the URL directly. CUDA version comes from the
+  # override (default 12.8), since the API isn't queried.
+  CUDA_VERSION="${TILES_CUDA_VERSION:-12.8}"
+  TAG="${LLAMA_CPP_TAG}"
+  ASSET="llama.cpp-${TAG}-cuda-${CUDA_VERSION}-${ASSET_ARCH}.tar.gz"
+  URL="https://github.com/ai-dock/llama.cpp-cuda/releases/download/${TAG}/${ASSET}"
 else
-  git -C "${REPO_DIR}" fetch --depth 1 origin tag "${LLAMA_CPP_TAG}" || true
-  git -C "${REPO_DIR}" checkout "${LLAMA_CPP_TAG}" || true
+  # Auto-latest: query the GitHub API. jq picks the asset matching our arch.
+  echo "Querying ai-dock/llama.cpp-cuda latest release..."
+  API_JSON="$(curl -fsSL "${API_URL}")"
+  TAG="$(printf '%s' "${API_JSON}" | jq -r '.tag_name')"
+  if [[ -z "${TAG}" || "${TAG}" == "null" ]]; then
+    echo "Failed to determine latest ai-dock release tag" >&2
+    exit 1
+  fi
+  URL="$(printf '%s' "${API_JSON}" | jq -r --arg arch "${ASSET_ARCH}" \
+    '.assets[] | select(.name | endswith("-" + $arch + ".tar.gz")) | .browser_download_url')"
+  if [[ -z "${URL}" || "${URL}" == "null" ]]; then
+    echo "No asset matching arch ${ASSET_ARCH} in ai-dock release ${TAG}" >&2
+    exit 1
+  fi
+  ASSET="$(basename "${URL}")"
 fi
 
-CMAKE_ARGS=(-B "${BUILD_DIR}")
-if command -v nvcc >/dev/null 2>&1; then
-  echo "nvcc detected -> building llama-server with CUDA"
-  CMAKE_ARGS+=(-DGGML_CUDA=ON)
-else
-  echo "nvcc not found -> building CPU-only llama-server"
+TMP="$(mktemp -d)"
+trap 'rm -rf "${TMP}"' EXIT
+echo "Downloading ${ASSET} (prebuilt CUDA, ${TAG})"
+curl -fL -o "${TMP}/${ASSET}" "${URL}"
+tar -xzf "${TMP}/${ASSET}" -C "${TMP}"
+
+SERVER_BIN="$(find "${TMP}" -type f -name llama-server | head -1)"
+if [[ -z "${SERVER_BIN}" ]]; then
+  echo "llama-server not found inside ${ASSET}" >&2
+  exit 1
 fi
-
-cmake -S "${REPO_DIR}" "${CMAKE_ARGS[@]}"
-cmake --build "${BUILD_DIR}" --target llama-server -j"$(nproc 2>/dev/null || echo 4)"
-
-cp "${BUILD_DIR}/bin/llama-server" "${OUT_DIR}/llama-server"
-cp "${BUILD_DIR}/bin/"lib*.so* "${OUT_DIR}/" 2>/dev/null || true
+BIN_DIR="$(dirname "${SERVER_BIN}")"
+cp "${SERVER_BIN}" "${OUT_DIR}/llama-server"
+# Bring along bundled shared libs (libggml*.so etc.) if shipped next to it.
+cp "${BIN_DIR}/"*.so* "${OUT_DIR}/" 2>/dev/null || true
 chmod +x "${OUT_DIR}/llama-server"
-echo "Installed ${OUT_DIR}/llama-server (Linux, ${LLAMA_CPP_TAG})"
+echo "Installed ${OUT_DIR}/llama-server (Linux CUDA prebuilt, ${TAG})"
+echo "Note: requires CUDA 12.8 runtime libraries on the host to run."
