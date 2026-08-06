@@ -1,3 +1,5 @@
+import asyncio
+
 from server.backend.llama_server.openresponses_adapter import (
     generate_response_chat_stream,
     openresponses_input_to_messages,
@@ -186,3 +188,92 @@ def test_tool_call_finish_reason_uses_consistent_id_and_no_double_emit():
     assert len(done) == 1, f"expected 1 done, got {len(done)}"
     assert len(args_done) == 1, f"expected 1 args.done, got {len(args_done)}"
     assert added[0]["item"]["id"] == done[0]["item"]["id"], "added/done tool ids must match"
+
+
+def test_interleaved_tool_call_indices_keep_independent_state():
+    """Two tool calls that interleave (index 0, then 1, then 0 again) must each
+    get their own added/done events with consistent ids, and each index's
+    argument deltas must accumulate only its own pieces — no cross-index mixing.
+    """
+    chunks = [
+        {"choices": [{"delta": {"tool_calls": [
+            {"index": 0, "id": "c0", "function": {"name": "read", "arguments": '{"p":"'}}
+        ]}, "finish_reason": None}]},
+        {"choices": [{"delta": {"tool_calls": [
+            {"index": 1, "id": "c1", "function": {"name": "write", "arguments": '{"p":"b"}'}}
+        ]}, "finish_reason": None}]},
+        {"choices": [{"delta": {"tool_calls": [
+            {"index": 0, "function": {"arguments": 'a","q":"c"}'}}
+        ]}, "finish_reason": None}]},
+        {"choices": [{"delta": {}, "finish_reason": "tool_calls"}]},
+    ]
+
+    out = asyncio.run(_drain_tool_stream(_minimal_request(), chunks))
+    events = _parse_sse(out)
+
+    added = [d for n, d in events if n == "response.output_item.added" and d.get("item", {}).get("type") == "function_call"]
+    done = [d for n, d in events if n == "response.output_item.done" and d.get("item", {}).get("type") == "function_call"]
+    args_delta = [d for n, d in events if n == "response.function_call_arguments.delta"]
+    args_done = [d for n, d in events if n == "response.function_call_arguments.done"]
+
+    assert len(added) == 2, f"expected 2 added (one per index), got {len(added)}"
+    assert len(done) == 2, f"expected 2 done, got {len(done)}"
+    assert len(args_done) == 2, f"expected 2 args.done, got {len(args_done)}"
+
+    # Each added must match a done by id, and ids must be distinct per tool.
+    added_ids = {d["item"]["id"] for d in added}
+    done_ids = {d["item"]["id"] for d in done}
+    assert added_ids == done_ids, f"added/done id sets differ: {added_ids} vs {done_ids}"
+    assert len(added_ids) == 2, f"expected 2 distinct ids, got {added_ids}"
+
+    # Names: one read, one write.
+    assert {d["item"]["name"] for d in done} == {"read", "write"}
+
+    # Argument deltas grouped by item_id: index 0's pieces concatenate to the
+    # full JSON object; index 1's stand alone. No cross-contamination.
+    by_id: dict[str, str] = {}
+    for d in args_delta:
+        by_id.setdefault(d["item_id"], "")
+        by_id[d["item_id"]] += d["delta"]
+
+    # Map ids back to names via the done events.
+    id_to_name = {d["item"]["id"]: d["item"]["name"] for d in done}
+    concat = {id_to_name[i]: txt for i, txt in by_id.items()}
+    assert concat["read"] == '{"p":"a","q":"c"}', f"read args mangled: {concat['read']!r}"
+    assert concat["write"] == '{"p":"b"}', f"write args mangled: {concat['write']!r}"
+    # The 'b' from index 1 must not have leaked into index 0's buffer.
+    assert "b" not in concat["read"]
+
+
+def test_late_function_name_still_emits_added_event():
+    """When argument chunks arrive before the function name, the added event must
+    still fire (once the name is known) and the buffered arguments must be
+    emitted — the pre-fix bug dropped the added event entirely.
+    """
+    chunks = [
+        {"choices": [{"delta": {"tool_calls": [
+            {"index": 0, "id": "c0", "function": {"arguments": '{"p":"a"}'}}
+        ]}, "finish_reason": None}]},
+        {"choices": [{"delta": {"tool_calls": [
+            {"index": 0, "function": {"name": "read"}}
+        ]}, "finish_reason": None}]},
+        {"choices": [{"delta": {}, "finish_reason": "tool_calls"}]},
+    ]
+
+    out = asyncio.run(_drain_tool_stream(_minimal_request(), chunks))
+    events = _parse_sse(out)
+
+    added = [d for n, d in events if n == "response.output_item.added" and d.get("item", {}).get("type") == "function_call"]
+    done = [d for n, d in events if n == "response.output_item.done" and d.get("item", {}).get("type") == "function_call"]
+    args_delta = [d for n, d in events if n == "response.function_call_arguments.delta"]
+    args_done = [d for n, d in events if n == "response.function_call_arguments.done"]
+
+    assert len(added) == 1, f"expected 1 added (was dropped pre-fix), got {len(added)}"
+    assert len(done) == 1, f"expected 1 done, got {len(done)}"
+    assert len(args_delta) == 1, f"expected 1 buffered args delta, got {len(args_delta)}"
+    assert len(args_done) == 1, f"expected 1 args.done, got {len(args_done)}"
+    assert added[0]["item"]["id"] == done[0]["item"]["id"], "added/done ids must match"
+    assert added[0]["item"]["name"] == "read"
+    # The buffered arguments arrive as a single delta once the name is known.
+    assert args_delta[0]["delta"] == '{"p":"a"}'
+    assert args_delta[0]["item_id"] == added[0]["item"]["id"]

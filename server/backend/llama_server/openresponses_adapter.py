@@ -241,19 +241,46 @@ async def generate_response_chat_stream(
     answer_text = ""
     content_index = 0
     in_message = False
-    in_tool_call = False
-    tool_finalized = False
-    tool_id = ""
-    tool_name: str | None = None
-    tool_call_index = -1
-    tool_call_text = ""
-    tool_calls_state: dict[int, dict[str, str]] = {}
+    # Per-index tool-call state so interleaved indices stay independent. Each
+    # entry: {"id","name","args","content_index","added","finalized"}.
+    active_tools: dict[int, dict[str, Any]] = {}
     in_reasoning = False
     reasoning_text = ""
     reasoning_id = f"reasoning_{uuid.uuid4()}"
     reasoning_content_index = 0
     prompt_tokens = 0
     completion_tokens = 0
+
+    def _finalize_tool(entry, seq, out_idx):
+        if not entry["name"]:
+            return [], seq, out_idx, None
+        out: list[str] = []
+        if not entry["added"]:
+            tool_id = entry["id"] or f"toolcall_{uuid.uuid4()}"
+            entry["id"] = tool_id
+            s, seq = _process_output_item_added(
+                "function_call", tool_id, "", out_idx, seq, entry["name"]
+            )
+            out.append(s)
+            entry["added"] = True
+            entry["content_index"] = 1
+            if entry["args"]:
+                oi = OutputItemDeltaModel(
+                    item_name="function_call_arguments",
+                    item_id=tool_id,
+                    index=out_idx,
+                    delta=entry["args"],
+                    content_index=entry["content_index"],
+                )
+                s, seq = _process_output_item_delta(oi, seq)
+                out.append(s)
+                entry["content_index"] += 1
+        s, seq, out_idx, item = _process_stop_tool_call_events(
+            entry["id"], out_idx, entry["args"], seq, request, entry["name"]
+        )
+        out.append(s)
+        entry["finalized"] = True
+        return out, seq, out_idx, item
 
     try:
         async for chunk in stream_chat_completions(body):
@@ -307,53 +334,71 @@ async def generate_response_chat_stream(
                     reasoning_text = ""
                 for tool_delta in delta["tool_calls"]:
                     index = int(tool_delta.get("index") or 0)
-                    state = tool_calls_state.setdefault(
-                        index, {"id": "", "name": "", "arguments": ""}
+                    entry = active_tools.setdefault(
+                        index,
+                        {
+                            "id": "",
+                            "name": None,
+                            "args": "",
+                            "content_index": 0,
+                            "added": False,
+                            "finalized": False,
+                        },
                     )
                     if tool_delta.get("id"):
-                        state["id"] = tool_delta["id"]
+                        entry["id"] = tool_delta["id"]
                     function = tool_delta.get("function") or {}
                     if function.get("name"):
-                        state["name"] = function["name"]
-                    if function.get("arguments"):
-                        state["arguments"] += function["arguments"]
+                        entry["name"] = function["name"]
+                    arg_piece = function.get("arguments") or ""
+                    if arg_piece:
+                        entry["args"] += arg_piece
 
-                    if not in_tool_call:
-                        in_tool_call = True
-                        tool_finalized = False
-                        in_message = False
-                        tool_id = f"toolcall_{uuid.uuid4()}"
-                        tool_name = state["name"] or None
-                        tool_call_index = index
-                        tool_call_text = ""
-                        content_index = 0
-                        if tool_name:
-                            resp_str, sequence_number = _process_output_item_added(
-                                "function_call",
-                                tool_id,
-                                "",
-                                output_index,
-                                sequence_number,
-                                tool_name,
+                    # names may arrive after the first argument chunk; until then we
+                    # buffer args and flush them as a single delta once the
+                    # name is known.
+                    if entry["name"] and not entry["added"]:
+                        tool_id = entry["id"] or f"toolcall_{uuid.uuid4()}"
+                        entry["id"] = tool_id
+                        resp_str, sequence_number = _process_output_item_added(
+                            "function_call",
+                            tool_id,
+                            "",
+                            output_index,
+                            sequence_number,
+                            entry["name"],
+                        )
+                        yield resp_str
+                        entry["added"] = True
+                        entry["content_index"] = 1
+                        # Flush any arguments buffered before the name arrived.
+                        if entry["args"]:
+                            output_item = OutputItemDeltaModel(
+                                item_name="function_call_arguments",
+                                item_id=tool_id,
+                                index=output_index,
+                                delta=entry["args"],
+                                content_index=entry["content_index"],
+                            )
+                            resp_str, sequence_number = _process_output_item_delta(
+                                output_item, sequence_number
                             )
                             yield resp_str
-                            content_index = 1
-
-                    arg_piece = function.get("arguments") or ""
-                    if arg_piece and tool_name:
-                        tool_call_text += arg_piece
+                            entry["content_index"] += 1
+                    elif entry["added"] and arg_piece:
+                        # Subsequent argument pieces for an already-added call.
                         output_item = OutputItemDeltaModel(
                             item_name="function_call_arguments",
-                            item_id=tool_id,
+                            item_id=entry["id"],
                             index=output_index,
                             delta=arg_piece,
-                            content_index=content_index,
+                            content_index=entry["content_index"],
                         )
                         resp_str, sequence_number = _process_output_item_delta(
                             output_item, sequence_number
                         )
                         yield resp_str
-                        content_index += 1
+                        entry["content_index"] += 1
 
             content_piece = delta.get("content")
             if content_piece:
@@ -367,24 +412,19 @@ async def generate_response_chat_stream(
                     output_items.append(item)
                     yield resp_str
                     reasoning_text = ""
-                if in_tool_call:
-                    in_tool_call = False
-                    tool_finalized = True
-                    resp_str, sequence_number, output_index, item = (
-                        _process_stop_tool_call_events(
-                            tool_id,
-                            output_index,
-                            tool_call_text,
-                            sequence_number,
-                            request,
-                            tool_name,
-                        )
+                # A content chunk starts the assistant message; close any
+                # in-flight tool calls first, in index order.
+                for index in sorted(active_tools):
+                    entry = active_tools[index]
+                    if entry["finalized"]:
+                        continue
+                    strings, sequence_number, output_index, item = _finalize_tool(
+                        entry, sequence_number, output_index
                     )
-                    output_items.append(item)
-                    yield resp_str
-                    tool_call_text = ""
-                    tool_name = None
-                    content_index = 0
+                    for s in strings:
+                        yield s
+                    if item is not None:
+                        output_items.append(item)
 
                 if not in_message:
                     in_message = True
@@ -411,40 +451,17 @@ async def generate_response_chat_stream(
                 content_index += 1
 
             if choice.get("finish_reason") == "tool_calls":
-                for index in sorted(tool_calls_state):
-                    state = tool_calls_state[index]
-                    if not state.get("name"):
+                for index in sorted(active_tools):
+                    entry = active_tools[index]
+                    if entry["finalized"]:
                         continue
-                    # The in-flight call may already have been finalized when a
-                    # content chunk closed it.
-                    # Skip it here to avoid a second done event with a fresh id.
-                    if index == tool_call_index and tool_finalized:
-                        continue
-                    if index == tool_call_index:
-                        # Reuse the streaming-time id so added/done match.
-                        call_id = tool_id
-                        call_name = tool_name or state["name"]
-                        call_text = tool_call_text or state.get("arguments") or ""
-                        in_tool_call = False
-                        tool_finalized = True
-                    else:
-                        # a parallel call that never streamed its own added
-                        # event; add a fresh id for it.
-                        call_id = f"toolcall_{uuid.uuid4()}"
-                        call_name = state["name"]
-                        call_text = state.get("arguments") or ""
-                    resp_str, sequence_number, output_index, item = (
-                        _process_stop_tool_call_events(
-                            call_id,
-                            output_index,
-                            call_text,
-                            sequence_number,
-                            request,
-                            call_name,
-                        )
+                    strings, sequence_number, output_index, item = _finalize_tool(
+                        entry, sequence_number, output_index
                     )
-                    output_items.append(item)
-                    yield resp_str
+                    for s in strings:
+                        yield s
+                    if item is not None:
+                        output_items.append(item)
 
     except Exception as exc: 
         logger.exception("llama-server stream failed")
@@ -463,17 +480,19 @@ async def generate_response_chat_stream(
         yield resp_str
         reasoning_text = ""
 
-    if in_tool_call and tool_name:
-        resp_str, sequence_number, output_index, item = _process_stop_tool_call_events(
-            tool_id,
-            output_index,
-            tool_call_text,
-            sequence_number,
-            request,
-            tool_name,
-        )
-        output_items.append(item)
-        yield resp_str
+    pending_tools = [
+        active_tools[i] for i in sorted(active_tools)
+        if not active_tools[i]["finalized"] and active_tools[i]["name"]
+    ]
+    if pending_tools:
+        for entry in pending_tools:
+            strings, sequence_number, output_index, item = _finalize_tool(
+                entry, sequence_number, output_index
+            )
+            for s in strings:
+                yield s
+            if item is not None:
+                output_items.append(item)
     elif in_message or answer_text:
         resp_str, sequence_number, output_index, item = _process_output_item_done(
             "message", message_id, answer_text, output_index, sequence_number

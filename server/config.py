@@ -98,7 +98,9 @@ def get_llama_config() -> dict:
 
     config = _fetch_llama_config()
     _llama_config_cache = config
-    _llama_config_cache_ts = now
+    # Capture the timestamp when the fetch completes, not when the call began,
+    # so the TTL window reflects how long ago the cached value was obtained.
+    _llama_config_cache_ts = time.monotonic()
     return config
 
 

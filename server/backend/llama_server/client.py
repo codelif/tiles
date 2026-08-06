@@ -17,7 +17,16 @@ def chat_completions_url() -> str:
 
 
 def _stream_timeout() -> httpx.Timeout:
-    read_timeout = float(os.environ.get("TILES_LLAMA_STREAM_READ_TIMEOUT", "600"))
+    DEFAULT_READ_TIMEOUT = 600.0
+    read_timeout = DEFAULT_READ_TIMEOUT
+    raw = os.environ.get("TILES_LLAMA_STREAM_READ_TIMEOUT")
+    if raw is not None:
+        try:
+            parsed = float(raw)
+        except (TypeError, ValueError):
+            parsed = 0.0
+        if parsed > 0:
+            read_timeout = parsed
     return httpx.Timeout(connect=5.0, read=read_timeout, write=30.0, pool=5.0)
 
 

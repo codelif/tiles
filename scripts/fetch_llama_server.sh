@@ -102,6 +102,13 @@ else
     exit 1
   fi
   ASSET="$(basename "${URL}")"
+  # Asset name is llama.cpp-<tag>-cuda-<version>-<arch>.tar.gz; extract the
+  # CUDA version so the runtime note below reports the actual selected value.
+  if [[ "${ASSET}" =~ -cuda-([0-9.]+)- ]]; then
+    CUDA_VERSION="${BASH_REMATCH[1]}"
+  else
+    CUDA_VERSION="unknown"
+  fi
 fi
 
 TMP="$(mktemp -d)"
@@ -121,4 +128,4 @@ cp "${SERVER_BIN}" "${OUT_DIR}/llama-server"
 cp "${BIN_DIR}/"*.so* "${OUT_DIR}/" 2>/dev/null || true
 chmod +x "${OUT_DIR}/llama-server"
 echo "Installed ${OUT_DIR}/llama-server (Linux CUDA prebuilt, ${TAG})"
-echo "Note: requires CUDA 12.8 runtime libraries on the host to run."
+echo "Note: requires CUDA ${CUDA_VERSION} runtime libraries on the host to run."
