@@ -99,7 +99,7 @@ impl PiAgent {
 }
 
 impl PiWriter {
-    /// Send requests to Pi in `json!` format
+    /// Send requests to Pi in json
     pub async fn send_to_pi(&mut self, payload_json: Value) -> Result<()> {
         let payload_str = format!("{}\n", serde_json::to_string(&payload_json)?);
         self.stdin

@@ -15,9 +15,11 @@ use crate::{
 
 pub fn agent_router() -> Router<Arc<AppState>> {
     Router::new()
+        // TODO: start should be a POST request
         .route("/v1/tilekit/agent/start", get(start_agent))
+        // TODO: end_session should be a POST req
         .route("/v1/tilekit/agent/end_session", get(end_current_session))
-        .route("/v1/tilekit/agent/status", get(agent_status))
+        .route("/v1/tilekit/agent/state", get(agent_state))
 }
 
 async fn start_agent(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse, AppError> {
@@ -63,7 +65,9 @@ async fn end_current_session(
     ))
 }
 
-async fn agent_status(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse, AppError> {
+// TODO: Could we have explicity tell in return type we are sending
+// GetStateData?
+async fn agent_state(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse, AppError> {
     let mut agent = state.agent.lock().await;
     let agent = agent.as_mut().ok_or(AppError::InternalServerError(
         "Failed to get a mutable agent instance".to_string(),
