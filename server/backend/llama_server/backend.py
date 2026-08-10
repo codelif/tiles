@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import AsyncGenerator
 from pathlib import Path
@@ -10,7 +11,7 @@ from typing import Any
 import httpx
 from fastapi import HTTPException
 
-from ...config import get_llama_config
+from ...config import DAEMON_PORT, get_llama_config
 from ...schemas import ResponsesRequest
 from .gguf import find_gguf_file
 from . import process
@@ -19,9 +20,6 @@ from .openresponses_adapter import (
 )
 
 logger = logging.getLogger("app")
-
-_current_model_path: str | None = None
-_current_llama_config: dict[str, Any] | None = None
 
 
 class LlamaServerRunner:
@@ -37,7 +35,7 @@ def _resolve_model_path(model_spec: str, model_cache_path: str | None) -> Path:
         return Path(model_cache_path)
 
     response = httpx.get(
-        f"http://127.0.0.1:1729/model-cache-path?model_name={model_spec}",
+        f"http://127.0.0.1:{DAEMON_PORT}/model-cache-path?model_name={model_spec}",
         timeout=10,
     )
     if response.status_code != 200:
@@ -53,16 +51,7 @@ def get_or_load_model(
     model_cache_path: str | None = None,
     verbose: bool = True,
 ) -> LlamaServerRunner:
-    global _current_model_path, _current_llama_config
-
     llama_config = get_llama_config()
-    if (
-        model_cache_path is None
-        and _current_model_path is not None
-        and _current_llama_config == llama_config
-    ):
-        logger.info("Model %s already loaded in llama-server", model_spec)
-        return LlamaServerRunner(_current_model_path, llama_config)
 
     try:
         model_dir = _resolve_model_path(model_spec, model_cache_path)
@@ -80,22 +69,20 @@ def get_or_load_model(
             detail=f"Model {model_spec} not found: {exc}",
         ) from exc
 
-    if verbose:
-        print(f"Loading model via llama-server: {model_spec}")
-        print(f"Using GGUF file: {gguf_path}")
-
     logger.info("Loading model via llama-server: %s (%s)", model_spec, gguf_path)
+    # ensure_running is the single source of truth for "what's loaded"
+    #and restarts only when they change.
     process.ensure_running(gguf_path, llama_config)
 
-    _current_model_path = str(model_dir)
-    _current_llama_config = llama_config
     return LlamaServerRunner(str(model_dir), llama_config)
 
 
 async def generate_response_chat_stream(
     request: ResponsesRequest,
 ) -> AsyncGenerator[str, None]:
-    get_or_load_model(request.model)
+    # model loading blocks on llama-server startup. Run it in a
+    # worker thread so the async event loop isn't frozen for the duration.
+    await asyncio.to_thread(get_or_load_model, request.model)
     llama_config = get_llama_config()
     async for chunk in _generate_response_chat_stream(request, llama_config):
         yield chunk

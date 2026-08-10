@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import shutil
 import signal
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -21,7 +23,9 @@ logger = logging.getLogger("app")
 
 _process: subprocess.Popen[bytes] | None = None
 _loaded_gguf: Path | None = None
-_loaded_config_key: tuple[Any, ...] | None = None
+_loaded_config_key: str | None = None
+# Serializes ensure_running so concurrent requests can't double-start the server.
+_ensure_lock = threading.Lock()
 
 
 def resolve_llama_server_binary() -> str:
@@ -48,8 +52,9 @@ def resolve_llama_server_binary() -> str:
     )
 
 
-def _config_key(llama_config: dict[str, Any]) -> tuple[Any, ...]:
-    return tuple(sorted(llama_config.items()))
+def _config_key(llama_config: dict[str, Any]) -> str:
+
+    return json.dumps(llama_config, sort_keys=True, default=str)
 
 
 def build_llama_server_command(gguf_path: Path, llama_config: dict[str, Any]) -> list[str]:
@@ -130,11 +135,15 @@ def _health_url() -> str:
     return f"http://{LLAMA_SERVER_HOST}:{LLAMA_SERVER_PORT}/health"
 
 
-def _llama_server_log_hint() -> str:
+def _resolve_log_dir() -> Path:
     log_dir = Path.cwd() / ".tiles_dev" / "tiles" / "data" / "logs"
     if not log_dir.is_dir():
         log_dir = Path.home() / ".local" / "share" / "tiles" / "data" / "logs"
-    return str(log_dir / "llama-server.err.log")
+    return log_dir
+
+
+def _llama_server_log_hint() -> str:
+    return str(_resolve_log_dir() / "llama-server.err.log")
 
 
 def is_server_ready() -> bool:
@@ -244,52 +253,56 @@ def ensure_running(gguf_path: Path, llama_config: dict[str, Any]) -> None:
 
     gguf_path = gguf_path.resolve()
     key = _config_key(llama_config)
-    if (
-        _process is not None
-        and _process.poll() is None
-        and _loaded_gguf == gguf_path
-        and _loaded_config_key == key
-    ):
-        if is_server_ready():
+    with _ensure_lock:
+        if (
+            _process is not None
+            and _process.poll() is None
+            and _loaded_gguf == gguf_path
+            and _loaded_config_key == key
+        ):
+            if is_server_ready():
+                return
+            wait_until_ready(_process)
             return
+
+        stop()
+
+        gpu_layers = llama_config.get("gpu_layers")
+        if gpu_layers is not None and int(gpu_layers) <= 0:
+            logger.warning(
+                "gpu_layers=%s — running on CPU. Set [llama].gpu_layers in config.toml "
+                "for GPU offload.",
+                gpu_layers,
+            )
+
+        cmd = build_llama_server_command(gguf_path, llama_config)
+
+        logger.info("Starting llama-server: %s", " ".join(cmd))
+        env = os.environ.copy()
+        binary = cmd[0]
+        lib_dir = str(Path(binary).resolve().parent)
+        if sys.platform == "darwin":
+            for var in ("DYLD_LIBRARY_PATH", "DYLD_FALLBACK_LIBRARY_PATH"):
+                prev = env.get(var, "")
+                env[var] = f"{lib_dir}:{prev}" if prev else lib_dir
+        else:
+            prev = env.get("LD_LIBRARY_PATH", "")
+            env["LD_LIBRARY_PATH"] = f"{lib_dir}:{prev}" if prev else lib_dir
+        log_dir = _resolve_log_dir()
+        log_dir.mkdir(parents=True, exist_ok=True)
+        stdout_log = open(log_dir / "llama-server.out.log", "ab")
+        stderr_log = open(log_dir / "llama-server.err.log", "ab")
+        try:
+            # Popen dups the fds, so our copies can be closed immediately.
+            _process = subprocess.Popen(
+                cmd,
+                stdout=stdout_log,
+                stderr=stderr_log,
+                env=env,
+            )
+        finally:
+            stdout_log.close()
+            stderr_log.close()
+        _loaded_gguf = gguf_path
+        _loaded_config_key = key
         wait_until_ready(_process)
-        return
-
-    stop()
-
-    gpu_layers = llama_config.get("gpu_layers")
-    if gpu_layers is not None and int(gpu_layers) <= 0:
-        logger.warning(
-            "gpu_layers=%s — running on CPU. Set [llama].gpu_layers in config.toml "
-            "for GPU offload.",
-            gpu_layers,
-        )
-
-    cmd = build_llama_server_command(gguf_path, llama_config)
-
-    logger.info("Starting llama-server: %s", " ".join(cmd))
-    env = os.environ.copy()
-    binary = cmd[0]
-    lib_dir = str(Path(binary).resolve().parent)
-    if sys.platform == "darwin":
-        for var in ("DYLD_LIBRARY_PATH", "DYLD_FALLBACK_LIBRARY_PATH"):
-            prev = env.get(var, "")
-            env[var] = f"{lib_dir}:{prev}" if prev else lib_dir
-    else:
-        prev = env.get("LD_LIBRARY_PATH", "")
-        env["LD_LIBRARY_PATH"] = f"{lib_dir}:{prev}" if prev else lib_dir
-    log_dir = Path.cwd() / ".tiles_dev" / "tiles" / "data" / "logs"
-    if not log_dir.is_dir():
-        log_dir = Path.home() / ".local" / "share" / "tiles" / "data" / "logs"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    stdout_log = open(log_dir / "llama-server.out.log", "ab")  # noqa: SIM115
-    stderr_log = open(log_dir / "llama-server.err.log", "ab")  # noqa: SIM115
-    _process = subprocess.Popen(
-        cmd,
-        stdout=stdout_log,
-        stderr=stderr_log,
-        env=env,
-    )
-    _loaded_gguf = gguf_path
-    _loaded_config_key = key
-    wait_until_ready(_process)
