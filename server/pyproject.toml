@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Local inference server for the Tiles CLI"
 requires-python = "==3.13.*"
 dependencies = [
-    "fastapi==0.130.0",
+    "fastapi==0.140.0",
     "uvicorn==0.38.0",
     "httpx==0.28.1",
     "openresponses-types",
@@ -18,7 +18,7 @@ build-backend = "setuptools.build_meta"
 exclude = ["backend", "backend.*"]
 
 [tool.uv]
-exclude-newer = "2026-06-02T19:44:30+05:30"
+exclude-newer = "2026-07-28T19:44:30+05:30"
 
 [dependency-groups]
 dev = [

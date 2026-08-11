@@ -13,7 +13,7 @@
 <h1 align="center">Tiles</h1>
 
 <p align="center">
-  Local-first private AI assistant for everyday use.<br />
+  A private, collaborative AI assistant that works for you. Built with local models and AT Protocol<br/>
   <a href="#getting-started">Getting Started</a> ·
   <a href="https://tiles.run/book">Documentation</a> ·
   <a href="#about">About</a> ·
@@ -29,7 +29,7 @@
 
 ## Getting Started
 
-Tiles is a local-first private AI assistant for everyday use. Learn more on our [overview](https://www.tiles.run/book/overview) page.
+A private, collaborative AI assistant that works for you. Built with local models and AT Protocol. Learn more on our [overview](https://www.tiles.run/book/overview) page.
 
 Download Tiles for macOS or Linux: https://tiles.run/download
 

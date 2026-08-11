@@ -46,7 +46,7 @@ const CLI_HELP_TEMPLATE: &str = concat!(
 "#,
     "\nTiles ",
     env!("CARGO_PKG_VERSION"),
-    "\nLocal-first private AI assistant for everyday use\n\n",
+    "\nA private, collaborative AI assistant that works for you. Built with local models and AT Protocol\n\n",
     "Usage: {usage}\n\n",
     "Commands:\n\n",
     "  Getting Started\n",
@@ -79,7 +79,7 @@ const CLI_HELP_TEMPLATE: &str = concat!(
 #[command(name = "tiles")]
 #[command(
     version,
-    about = "Local-first private AI assistant for everyday use",
+    about = "A private, collaborative AI assistant that works for you. Built with local models and AT Protocol",
     disable_help_subcommand = true,
     long_about = None,
     override_usage = "tiles [OPTIONS] [COMMAND]",
