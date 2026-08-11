@@ -16,3 +16,4 @@ pi-linux-x64.tar.gz
 .cursor/hooks/state/continual-learning-index.json
 .cache
 server/bin
+server/stack/linux/requirements/

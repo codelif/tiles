@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 
@@ -31,19 +32,21 @@ def find_mtp_gguf_file(model_path: Path) -> Path | None:
     """Return the MTP head GGUF for speculative decoding, if present."""
     model_dir = model_path.parent if model_path.is_file() else model_path
 
-    preferred = model_dir / "mtp-gemma-4-12b-it.gguf"
-    if preferred.is_file():
-        return preferred
-
     mtp_dir = model_dir / "MTP"
     if mtp_dir.is_dir():
-        candidates = [p for p in mtp_dir.glob("*.gguf") if p.name.lower() != "readme.md"]
+        candidates = sorted(
+            p for p in mtp_dir.glob("*.gguf") if "mmproj" not in p.name.lower()
+        )
         for name_part in ("Q8_0", "F16", "BF16"):
             for candidate in candidates:
-                if name_part in candidate.name:
+                # Match as a complete filename token (split on - . space) so
+                # "F16" doesn't match "BF16". Underscore stays inside tokens so
+                # "Q8_0" matches as a whole.
+                tokens = re.split(r"[-. ]+", candidate.name)
+                if name_part in tokens:
                     return candidate
         if candidates:
-            return sorted(candidates)[0]
+            return candidates[0]
 
     for candidate in sorted(model_dir.glob("*mtp*.gguf")):
         if "mmproj" not in candidate.name.lower():

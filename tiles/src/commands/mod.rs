@@ -25,7 +25,7 @@ use toml::Table;
 use crate::{AccountArgs, AccountCommands};
 
 const FTUE_VERSION_TITLE: &str = "Tiles";
-const PRODUCT_DESCRIPTION: &str = "Local-first private AI assistant for everyday use";
+const PRODUCT_DESCRIPTION: &str = "A private, collaborative AI assistant that works for you. Built with local models and AT Protocol";
 const FTUE_HEADER: &str = "Initializing local account...";
 const FTUE_ASCII_ART: &str = r#"
                                .:-::.
@@ -48,7 +48,7 @@ const FTUE_ASCII_ART: &str = r#"
           .-.
 "#;
 
-const FTUE_REASSURANCE_LOCAL: &str = "Local-first private AI assistant for everyday use";
+const FTUE_REASSURANCE_LOCAL: &str = "A private, collaborative AI assistant that works for you. Built with local models and AT Protocol";
 // const FTUE_REASSURANCE_NO_CLOUD: &str = "Online models and identity optional.";
 const FTUE_NICKNAME_PROMPT: &str = "Choose a username:";
 const FTUE_NICKNAME_REQUIRED: &str = "Username is required. Please enter a username:";
@@ -402,12 +402,12 @@ mod tests {
     fn ftue_copy_matches_expected_constants() {
         assert_eq!(
             PRODUCT_DESCRIPTION,
-            "Local-first private AI assistant for everyday use"
+            "A private, collaborative AI assistant that works for you. Built with local models and AT Protocol"
         );
         assert_eq!(FTUE_HEADER, "Initializing local account...");
         assert_eq!(
             FTUE_REASSURANCE_LOCAL,
-            "Local-first private AI assistant for everyday use"
+            "A private, collaborative AI assistant that works for you. Built with local models and AT Protocol"
         );
         assert_eq!(FTUE_NICKNAME_PROMPT, "Choose a username:");
         assert_eq!(FTUE_ACCOUNT_LABEL, "Account");

@@ -1,10 +1,18 @@
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+from server.backend.llama_server import process
 from server.backend.llama_server.process import (
     build_llama_server_command,
+    ensure_running,
     is_server_ready,
 )
+
+
+def _reset_process_state():
+    process._process = None
+    process._loaded_gguf = None
+    process._loaded_config_key = None
 
 
 def test_is_server_ready_requires_health_ok():
@@ -69,3 +77,50 @@ def test_build_llama_server_command_includes_optional_flags():
     assert "--flash-attn" in cmd and "on" in cmd
     assert "--no-mmap" in cmd
     assert "--jinja" in cmd
+
+
+def test_ensure_running_reuses_running_server(tmp_path: Path):
+    _reset_process_state()
+    gguf = tmp_path / "model.gguf"
+    gguf.write_bytes(b"x")
+    config = {"gpu_layers": 8}
+
+    # A fake already-running process that is alive and reports ready.
+    fake_proc = Mock()
+    fake_proc.poll.return_value = None
+
+    with (
+        patch("server.backend.llama_server.process.subprocess.Popen", return_value=fake_proc) as popen,
+        patch("server.backend.llama_server.process.is_server_ready", return_value=True),
+        patch("server.backend.llama_server.process.build_llama_server_command", return_value=["llama-server"]),
+        patch("server.backend.llama_server.process.resolve_llama_server_binary", return_value="llama-server"),
+    ):
+        ensure_running(gguf, config)
+        ensure_running(gguf, config)
+
+    # Second call must not spawn again — same gguf + config, server already ready.
+    assert popen.call_count == 1
+
+
+def test_ensure_running_restarts_on_config_change(tmp_path: Path):
+    _reset_process_state()
+    gguf = tmp_path / "model.gguf"
+    gguf.write_bytes(b"x")
+
+    fake_proc = Mock()
+    fake_proc.poll.return_value = None
+
+    with (
+        patch("server.backend.llama_server.process.subprocess.Popen", return_value=fake_proc) as popen,
+        patch("server.backend.llama_server.process.is_server_ready", return_value=True),
+        patch("server.backend.llama_server.process.build_llama_server_command", return_value=["llama-server"]),
+        patch("server.backend.llama_server.process.resolve_llama_server_binary", return_value="llama-server"),
+        patch("server.backend.llama_server.process.stop") as stop,
+    ):
+        ensure_running(gguf, {"gpu_layers": 8})
+        ensure_running(gguf, {"gpu_layers": 99})
+
+    # Different config key -> the server is respawned (stop is called before
+    # every spawn; the first call is a no-op since no prior process exists).
+    assert popen.call_count == 2
+    assert stop.call_count == 2
