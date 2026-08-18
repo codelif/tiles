@@ -5,7 +5,7 @@ The format is based on https://keepachangelog.com/en/1.1.0/
 
 ## [Unreleased]
 
-## [0.14.7] - 2026-08-18
+## [0.4.17] - 2026-08-18
 
 ### Added
 

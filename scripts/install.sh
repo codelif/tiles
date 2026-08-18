@@ -26,7 +26,7 @@ set -euo pipefail
 
 REPO="tilesprivacy/tiles"
 
-VERSION="0.14.7"
+VERSION="0.4.17"
 DEV="false"
 NIGHTLY="false"
 
