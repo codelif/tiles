@@ -552,6 +552,9 @@ async fn start_repl(modelfile: &Modelfile, run_args: &RunArgs, db_conn: &Dbconn)
                     .await?;
                     break;
                 }
+                PiResponse::AgentSettled => {
+                    info!("agent settled")
+                }
                 PiResponse::TurnEnd(_turn_event) => {
                     println!("\n");
                 }
@@ -582,6 +585,7 @@ async fn start_repl(modelfile: &Modelfile, run_args: &RunArgs, db_conn: &Dbconn)
                     info!("Unsupported response {}", &line);
                     continue;
                 }
+                _ => (),
             }
         }
     }

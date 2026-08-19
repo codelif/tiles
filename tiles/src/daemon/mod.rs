@@ -268,7 +268,7 @@ async fn shutdown_signal(rx: Receiver<bool>) {
 }
 
 async fn shutdown(State(state): State<Arc<AppState>>) {
-    println!("Daemon server shutting down");
+    log::info!("Daemon server shutting down");
     let mut sender = state.shutdown_sender.lock().unwrap();
     let sender_real = sender.take().unwrap();
     let _ = sender_real.send(true);
@@ -297,7 +297,7 @@ async fn get_model_cache_path(
     State(_state): State<Arc<AppState>>,
     Query(params): Query<SendParams>,
 ) -> Result<String, StatusCode> {
-    println!("getting model cache path");
+    log::info!("getting model cache path");
     if let Ok(model_path) = get_model_cache(&params.model_name) {
         Ok(model_path
             .to_str()
@@ -343,9 +343,7 @@ async fn wait_until_server_is_up(port: Option<u32>) -> Result<()> {
     let mut error: String = String::new();
     loop {
         if retry_count < 1 {
-            if !cfg!(debug_assertions) {
-                println!("{:?}", error);
-            }
+            log::error!("{:?}", error);
             return Err(anyhow!(error));
         }
         match ping(port).await {
