@@ -22,7 +22,7 @@ STAGING="pkg/staging_gguf"
 PKGROOT="pkgroot_gguf"
 MODELS_HUB_DIR="${PKGROOT}/usr/local/share/tiles/models/huggingface/hub"
 # HF hub cache dir name: org/repo -> models--org--repo
-MODEL_DIR_NAME="models--$(echo "${REPO}" | tr '/' '-')"
+MODEL_DIR_NAME="models--$(echo "${REPO}" | sed 's/\//--/')"
 STAGING_MODEL_DIR="${STAGING}/${MODEL_DIR_NAME}"
 
 download() {

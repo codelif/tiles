@@ -106,19 +106,19 @@ if [[ "${OS}" == "darwin" ]]; then
 fi
 
 # flushing this folder, else the final zip will have previous app-server zips too (#84)
-# rm -rf "${SERVER_DIR}/stack_export_prod"
+rm -rf "${SERVER_DIR}/stack_export_prod"
 
-# echo "🔒 Locking the venvstack...."
+echo "🔒 Locking the venvstack...."
 
-# venvstacks lock "${STACK_SPEC}"
+venvstacks lock "${STACK_SPEC}"
 
-# echo "🛠️ Building the venvstack...."
+echo "🛠️ Building the venvstack...."
 
-# venvstacks build "${STACK_SPEC}"
+venvstacks build "${STACK_SPEC}"
 
-# echo "📦 Publishing the venvstack...."
+echo "📦 Publishing the venvstack...."
 
-# venvstacks publish --tag-outputs --output-dir ../../stack_export_prod "${STACK_SPEC}"
+venvstacks publish --tag-outputs --output-dir ../../stack_export_prod "${STACK_SPEC}"
 
 cp -r "${SERVER_DIR}" "${DIST_DIR}/tmp/"
 
