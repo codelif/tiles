@@ -3,10 +3,14 @@ name: Linux Release
 # Builds the Linux (x86_64) tarball whenever any tag is pushed
 # (stable, rc, nightly) and attaches it to the tag's GitHub Release.
 # install.sh resolves assets by pattern tiles-v*-{arch}-linux.tar.gz.
+# Can also be run manually (Actions tab -> Run workflow) from a branch
+# (artifacts land on the run page) or from a tag ref (uploads into the
+# release for that tag, e.g. re-publishing into an existing 0.4.17).
 
 on:
   push:
     tags: ["*"]
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -67,10 +71,23 @@ jobs:
           sha256sum tiles-v*-x86_64-linux.tar.gz > checksums.txt
           cat checksums.txt
 
+      # Manual (non-tag) runs: attach the bundle to the workflow run page
+      # instead of touching any release.
+      - name: Upload build artifacts
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-tarball
+          path: |
+            dist/tiles-v*-x86_64-linux.tar.gz
+            dist/checksums.txt
+          if-no-files-found: error
+
       # Creates the release if missing, or uploads into the tag's existing
       # release (same-named assets are overwritten on re-runs; existing
-      # release title/notes are preserved).
+      # release title/notes are preserved). Tag runs only.
       - name: Upload to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v3
         with:
           files: |
