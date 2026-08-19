@@ -12,7 +12,6 @@ use crate::{core::agent::pi::PiAgent, daemon::agent::agent_router};
 use anyhow::{Result, anyhow};
 use axum::{
     Json, Router,
-    error_handling::HandleErrorLayer,
     extract::{Query, State},
     http::StatusCode,
     response::IntoResponse,
@@ -31,8 +30,8 @@ use std::sync::Mutex;
 use tokio::sync::Mutex as AsyncMutex;
 use tokio::sync::oneshot::{self, Receiver, Sender};
 use tower::{
-    BoxError, ServiceBuilder,
-    timeout::{self, TimeoutLayer},
+    BoxError,
+    timeout::{self},
 };
 pub mod agent;
 use crate::{
@@ -54,6 +53,7 @@ pub struct AppState {
     pub agent: AsyncMutex<Option<PiAgent>>,
 }
 
+#[derive(Debug)]
 pub enum AppError {
     ModelFileNotFound(String),
     InternalServerError(String),
@@ -207,9 +207,9 @@ pub async fn start_server(port: Option<u32>) -> Result<()> {
 
     let shared_state = Arc::new(state);
 
-    let service = ServiceBuilder::new()
-        .layer(HandleErrorLayer::new(handle_timeout_error))
-        .layer(TimeoutLayer::new(Duration::from_secs(30)));
+    // let service = ServiceBuilder::new()
+    //     .layer(HandleErrorLayer::new(handle_timeout_error))
+    //     .layer(TimeoutLayer::new(Duration::from_secs(30)));
 
     let app = Router::new()
         .route("/", get(root))
@@ -221,7 +221,7 @@ pub async fn start_server(port: Option<u32>) -> Result<()> {
         .route("/remote-status", get(show_remote_status))
         .route("/connect-remote", get(connect_remote_inference))
         .merge(agent_router())
-        .layer(service)
+        // .layer(service)
         .with_state(shared_state);
 
     let addr = format!("127.0.0.1:{}", dyn_port);
