@@ -13,9 +13,9 @@ name = "server"
 launch_module = "../../main.py"
 runtime = "cpython3.13"
 requirements = [
-    "fastapi==0.130.0",
+    "fastapi==0.140.0",
     "uvicorn==0.38.0",
-    "openresponses-types",
+    "openresponses-types==2.4.0",
     "httpx==0.28.1",
     ]
 
@@ -23,7 +23,8 @@ requirements = [
 environments = [
     "sys_platform == 'darwin' and platform_machine == 'arm64'",
 ]
-exclude-newer = "2026-06-02T19:44:30+05:30"
+exclude-newer = "2026-07-28T19:44:30+05:30"
 
 [tool.uv.exclude-newer-package]
  tiles-harmony="2026-06-20T03:01:00Z"
+ openresponses-types="2026-08-06T00:00:00Z"
