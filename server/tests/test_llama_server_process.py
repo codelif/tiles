@@ -144,6 +144,63 @@ def test_mtp_explicit_false_overrides_head(tmp_path: Path):
     assert "--spec-draft-model" not in cmd
 
 
+def _hf_cache_layout(tmp_path: Path) -> tuple[Path, Path]:
+    blobs = tmp_path / "blobs"
+    blobs.mkdir()
+    snapshot = tmp_path / "snapshots" / "fc034cfff751157913579611efad8462ac1be606"
+    snapshot.mkdir(parents=True)
+
+    links = []
+    for blob_sha, filename in (
+        ("0a270ec9fe6b34f4a0d33992b6135117b484ebc4766ab76b51d4ae8c457e4c42", "gemma-4-12b-it-Q4_K_M.gguf"),
+        ("145db9094bc0f85f1701e255a2ed216dcc9800fc8bc8631ad00905b456bd451b", "mtp-gemma-4-12b-it.gguf"),
+    ):
+        (blobs / blob_sha).write_bytes(b"x")
+        link = snapshot / filename
+        link.symlink_to(Path("../../blobs") / blob_sha)
+        links.append(link)
+
+    return links[0], links[1]
+
+
+def test_mtp_auto_enables_through_hf_cache_symlinks(tmp_path: Path):
+    _reset_process_state()
+    gguf, mtp = _hf_cache_layout(tmp_path)
+
+    fake_proc = Mock()
+    fake_proc.poll.return_value = None
+
+    with (
+        patch("server.backend.llama_server.process.subprocess.Popen", return_value=fake_proc) as popen,
+        patch("server.backend.llama_server.process.is_server_ready", return_value=True),
+        patch("server.backend.llama_server.process.resolve_llama_server_binary", return_value="llama-server"),
+    ):
+        ensure_running(gguf, {})
+
+    cmd = popen.call_args.args[0]
+    assert "--spec-type" in cmd and "draft-mtp" in cmd
+    assert cmd[cmd.index("--spec-draft-model") + 1] == str(mtp)
+    assert cmd[cmd.index("-m") + 1] == str(gguf)
+
+
+def test_ensure_running_dedupes_unresolved_and_resolved_paths(tmp_path: Path):
+    _reset_process_state()
+    gguf, _ = _hf_cache_layout(tmp_path)
+
+    fake_proc = Mock()
+    fake_proc.poll.return_value = None
+
+    with (
+        patch("server.backend.llama_server.process.subprocess.Popen", return_value=fake_proc) as popen,
+        patch("server.backend.llama_server.process.is_server_ready", return_value=True),
+        patch("server.backend.llama_server.process.resolve_llama_server_binary", return_value="llama-server"),
+    ):
+        ensure_running(gguf, {})
+        ensure_running(gguf.resolve(), {})
+
+    assert popen.call_count == 1
+
+
 def test_ensure_running_reuses_running_server(tmp_path: Path):
     _reset_process_state()
     gguf = tmp_path / "model.gguf"
