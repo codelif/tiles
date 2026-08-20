@@ -141,3 +141,23 @@ impl PiReader {
         self.lines.next_line().await
     }
 }
+
+#[cfg(test)]
+pub fn from_test_command(program: &str, args: &[&str]) -> anyhow::Result<PiAgent> {
+    let mut process = Command::new(program)
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()?;
+
+    let stdin = process.stdin.take().unwrap();
+    let stdout = process.stdout.take().unwrap();
+
+    Ok(PiAgent {
+        process,
+        writer: PiWriter { stdin },
+        reader: PiReader {
+            lines: BufReader::new(stdout).lines(),
+        },
+    })
+}

@@ -9,7 +9,7 @@ use crate::{
     repl::{get_default_modelfile, model_spec},
     utils::config::PY_PORT,
 };
-use anyhow::Context;
+
 use axum::{
     Json, Router,
     extract::State,
@@ -21,7 +21,7 @@ use serde::Deserialize;
 use serde_json::json;
 use std::convert::Infallible;
 use std::sync::Arc;
-use tokio::sync::mpsc;
+use tokio::sync::mpsc::{self, Sender};
 use tokio_stream::StreamExt;
 use tokio_stream::wrappers::ReceiverStream;
 
@@ -103,7 +103,6 @@ async fn agent_state(State(state): State<Arc<AppState>>) -> Result<impl IntoResp
     Ok(ApiResponse::success(serde_json::to_value(state).unwrap()))
 }
 
-//TODO: understand the way of signature here
 #[debug_handler]
 async fn process_chat_prompt(
     State(state): State<Arc<AppState>>,
@@ -119,12 +118,7 @@ async fn process_chat_prompt(
             agent
         } else {
             let err_str = "Failed to get a mutable agent instance";
-            log::error!("{err_str}");
-            let event = SseEvent {
-                event: "error".to_owned(),
-                data: err_str.to_owned(),
-            };
-            let _ = tx.send(event).await.map_err(|e| log::error!("{:?}", e));
+            handle_pi_errors(err_str.to_owned(), &tx).await;
             return;
         };
 
@@ -134,19 +128,19 @@ async fn process_chat_prompt(
         });
         if let Err(err) = agent.writer.send_to_pi(payload).await {
             let err_str = format!("Failed to send the payload to Pi due to {:?}", err);
-
-            let event = SseEvent {
-                event: "error".to_owned(),
-                data: err_str.to_owned(),
-            };
-            let _ = tx.send(event).await.map_err(|e| log::error!("{:?}", e));
+            handle_pi_errors(err_str.to_owned(), &tx).await;
             return;
         }
 
         while let Ok(Some(line)) = agent.reader.next_line().await {
-            let response: PiResponse = serde_json::from_str(&line)
-                .context("Failed to parse Pi response")
-                .unwrap();
+            let response = if let Ok(response) = serde_json::from_str::<PiResponse>(&line) {
+                response
+            } else {
+                let err_str = format!("Failed to parse pi response, response {:?}", &line);
+
+                handle_pi_errors(err_str.to_owned(), &tx).await;
+                return;
+            };
 
             let sse_event = SseEvent {
                 event: response.get_type().to_owned(),
@@ -168,19 +162,29 @@ async fn process_chat_prompt(
     Ok(Sse::new(sse_stream))
 }
 
+async fn handle_pi_errors(err_str: String, tx: &Sender<SseEvent>) {
+    log::error!("{err_str}");
+    let event = SseEvent {
+        event: "error".to_owned(),
+        data: err_str,
+    };
+    let _ = tx.send(event).await.map_err(|e| log::error!("{:?}", e));
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Mutex;
 
+    use crate::core::agent::pi::from_test_command;
+    use crate::daemon::{AppState, agent::agent_router};
     use axum::{body::Body, http::Request};
+    use http_body_util::BodyExt;
     use reqwest::StatusCode;
     use serde_json::json;
+    use tokio::sync::Mutex as AsyncMutex;
     use tower::ServiceExt;
-
-    use crate::daemon::{AppState, agent::agent_router};
-
     #[tokio::test]
-    async fn test_process_chat_prompt_success() {
+    async fn test_process_chat_prompt_success_ok() {
         let state = AppState {
             shutdown_sender: Mutex::new(None),
             vsn: env!("CARGO_PKG_VERSION").to_owned(),
@@ -208,16 +212,104 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
-        // assert_eq!(
-        //     response.headers().get("content-type").unwrap(),
-        //     "text/event-stream"
-        // );
-        // let mut body_stream = response.into_body().into_data_stream();
-
-        // let first_chunk = body_stream.next().await.unwrap().unwrap();
 
         // curl -X POST "http://127.0.0.1:1729/v1/tilekit/agent/prompt" \
         //   -H "Content-Type: application/json" \
         //   -d '{"message":"hello"}'
+    }
+
+    #[tokio::test]
+    async fn test_process_chat_prompt_success_sse_events() {
+        let pi_agent = from_test_command(
+            "sh",
+            &[
+                "-c",
+                r#"read request
+  printf '{"type":"agent_start"}\n{"type":"message_end"}\n{"type":"agent_settled"}\n'"#,
+            ],
+        )
+        .unwrap();
+
+        let state = AppState {
+            shutdown_sender: Mutex::new(None),
+            vsn: env!("CARGO_PKG_VERSION").to_owned(),
+            remote_ticket: Mutex::new(None),
+            remote_shutdown_sender: Mutex::new(None),
+            remote_running: Mutex::new(false),
+            agent: AsyncMutex::new(Some(pi_agent)),
+        };
+
+        let body = json!({
+            "message": "hello"
+        })
+        .to_string();
+        let agent_app = agent_router();
+        let response = agent_app
+            .with_state(state.into())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .header("content-type", "application/json")
+                    .uri("/v1/tilekit/agent/prompt")
+                    .body(Body::new(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let sse_events = String::from_utf8(body_bytes.to_vec()).unwrap();
+
+        assert!(sse_events.contains("event: agent_start"));
+        assert!(sse_events.contains("event: message_end"));
+    }
+
+    #[tokio::test]
+    async fn test_process_chat_prompt_error_sse_events() {
+        let pi_agent = from_test_command(
+            "sh",
+            &[
+                "-c",
+                r#"read request
+  printf '{"watevr":"agent_start"}\n{"type":"message_end"}\n{"type":"agent_settled"}\n'"#,
+            ],
+        )
+        .unwrap();
+
+        let state = AppState {
+            shutdown_sender: Mutex::new(None),
+            vsn: env!("CARGO_PKG_VERSION").to_owned(),
+            remote_ticket: Mutex::new(None),
+            remote_shutdown_sender: Mutex::new(None),
+            remote_running: Mutex::new(false),
+            agent: AsyncMutex::new(Some(pi_agent)),
+        };
+
+        let body = json!({
+            "message": "hello"
+        })
+        .to_string();
+        let agent_app = agent_router();
+        let response = agent_app
+            .with_state(state.into())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .header("content-type", "application/json")
+                    .uri("/v1/tilekit/agent/prompt")
+                    .body(Body::new(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let sse_events = String::from_utf8(body_bytes.to_vec()).unwrap();
+
+        assert!(sse_events.contains("event: error"));
     }
 }

@@ -660,7 +660,12 @@ async fn load_model(
             retries
         ));
     }
-    let model_name = modelfile.from.clone().unwrap();
+    // TODO: why `from` is even an Option, gotta check latta
+    let model_name = modelfile
+        .from
+        .clone()
+        .expect("Modelfile not found, this is impossible to occur");
+
     let quant = modelfile.quant.as_deref();
     let model_cache_res = get_model_cache(&model_name);
 

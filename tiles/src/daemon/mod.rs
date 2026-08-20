@@ -29,10 +29,10 @@ use std::fs::OpenOptions;
 use std::sync::Mutex;
 use tokio::sync::Mutex as AsyncMutex;
 use tokio::sync::oneshot::{self, Receiver, Sender};
-use tower::{
-    BoxError,
-    timeout::{self},
-};
+// use tower::{
+//     // BoxError,
+//     timeout::{self},
+// };
 pub mod agent;
 use crate::{
     core::{
@@ -527,13 +527,13 @@ pub async fn connect_remote(ticket: &str) -> Result<()> {
     }
 }
 
-async fn handle_timeout_error(err: BoxError) -> AppError {
-    if err.is::<timeout::error::Elapsed>() {
-        AppError::RequestTimeout
-    } else {
-        AppError::InternalServerError("Something unexpected happened".to_string())
-    }
-}
+// async fn handle_timeout_error(err: BoxError) -> AppError {
+//     if err.is::<timeout::error::Elapsed>() {
+//         AppError::RequestTimeout
+//     } else {
+//         AppError::InternalServerError("Something unexpected happened".to_string())
+//     }
+// }
 
 #[cfg(test)]
 mod tests {
