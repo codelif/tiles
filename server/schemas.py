@@ -11,7 +11,6 @@ from openresponses_types import (
     ReasoningParam,
     ToolChoiceValueEnum,
     TruncationEnum,
-    Type15,
 )
 from openresponses_types.types import (
     AssistantMessageItemParam,
@@ -126,7 +125,7 @@ class CFunctionTool(BaseModel):
     description: str | None = None
     parameters: dict | None = None
     strict: bool | None = None
-    type: Type15
+    type: Literal["function"]
 
 
 class CFunctionCallItemParam(BaseModel):
