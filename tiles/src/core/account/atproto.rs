@@ -138,6 +138,11 @@ pub async fn login(conn: &Dbconn, handle: &str) -> Result<()> {
         .await
         .inspect_err(|_| eprintln!("Failed to generate authorization url"))?;
 
+    println!(
+        "\nIf the browser doesn't open automatically, open this URL:\n\n{}\n",
+        url
+    );
+
     let program_name = cfg_select! {
         target_os = "macos" => {
             "open"
@@ -158,18 +163,18 @@ pub async fn login(conn: &Dbconn, handle: &str) -> Result<()> {
             url
         )
     } else {
-        if let Ok(mut program) = Command::new(program_name).arg(&url).spawn() {
-            if program.wait().is_err() {
+        match Command::new(program_name).arg(&url).spawn() {
+            Ok(mut child) => {
+                drop(std::thread::spawn(move || {
+                    let _ = child.wait();
+                }));
+            }
+            Err(_) => {
                 println!(
-                    "Failed to open the url automatically, Please open the url in any browser: {}",
+                    "Failed to open the url automatically, Please open the url\n{} in any browser",
                     url
                 )
             }
-        } else {
-            println!(
-                "Failed to open the url automatically, Please open the url\n{} in any browser",
-                url
-            )
         }
     };
 
@@ -206,7 +211,7 @@ pub async fn login(conn: &Dbconn, handle: &str) -> Result<()> {
         };
 
         upsert_auth_data(&conn.common, &auth_data)?;
-        println!("LoggedIn successfully as {}", handle);
+        println!("LoggedIn successfully as {}\n", handle);
         Ok(())
     } else {
         Err(anyhow!(
