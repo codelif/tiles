@@ -157,26 +157,13 @@ pub async fn login(conn: &Dbconn, handle: &str) -> Result<()> {
 
     // adding this override due to  clippy not playing good w macro above
     #[allow(clippy::const_is_empty)]
-    if program_name.is_empty() {
-        println!(
-            "Failed to open the url automatically, Please open the url in any browser {}",
-            url
-        )
-    } else {
-        match Command::new(program_name).arg(&url).spawn() {
-            Ok(mut child) => {
-                drop(std::thread::spawn(move || {
-                    let _ = child.wait();
-                }));
-            }
-            Err(_) => {
-                println!(
-                    "Failed to open the url automatically, Please open the url\n{} in any browser",
-                    url
-                )
-            }
+    if !program_name.is_empty() {
+        if let Ok(mut child) = Command::new(program_name).arg(&url).spawn() {
+            drop(std::thread::spawn(move || {
+                let _ = child.wait();
+            }));
         }
-    };
+    }
 
     let (callback_tx, callback_rx) = oneshot::channel();
 
