@@ -22,8 +22,8 @@ use log::info;
 use reqwest::Client;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
-use std::{fmt::Debug, process::Command, sync::Arc, time::Duration};
-use tokio::sync::oneshot;
+use std::{fmt::Debug, sync::Arc, time::Duration};
+use tokio::{process::Command, sync::oneshot};
 
 use std::error::Error;
 
@@ -157,12 +157,13 @@ pub async fn login(conn: &Dbconn, handle: &str) -> Result<()> {
 
     // adding this override due to  clippy not playing good w macro above
     #[allow(clippy::const_is_empty)]
-    if !program_name.is_empty() {
-        if let Ok(mut child) = Command::new(program_name).arg(&url).spawn() {
-            drop(std::thread::spawn(move || {
-                let _ = child.wait();
-            }));
-        }
+    if !program_name.is_empty()
+        && let Ok(mut child) = Command::new(program_name).arg(&url).spawn()
+    {
+        #[allow(clippy::let_underscore_future)]
+        let _ = tokio::spawn(async move {
+            let _ = child.wait().await;
+        });
     }
 
     let (callback_tx, callback_rx) = oneshot::channel();
