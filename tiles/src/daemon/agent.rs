@@ -2,7 +2,7 @@
 
 use crate::{
     core::agent::{
-        pi::{self},
+        pi::{self, PiAgent, handle_graceful_exit},
         types::PiResponse,
     },
     daemon::{ApiResponse, AppError, AppState},
@@ -10,6 +10,7 @@ use crate::{
     utils::config::PY_PORT,
 };
 
+// use async_stream::stream;
 use axum::{
     Json, Router,
     extract::State,
@@ -17,14 +18,14 @@ use axum::{
     routing::{get, post},
 };
 use axum_macros::debug_handler;
+use futures_util::StreamExt;
 use serde::Deserialize;
 use serde_json::json;
 use std::convert::Infallible;
 use std::sync::Arc;
 use tokio::sync::mpsc::{self, Sender};
-use tokio_stream::StreamExt;
 use tokio_stream::wrappers::ReceiverStream;
-
+use tokio_util::sync::CancellationToken;
 #[derive(Deserialize)]
 struct PromptRequest {
     message: String,
@@ -35,11 +36,19 @@ struct SseEvent {
     data: String,
 }
 
+struct SseGuard {
+    pub token: CancellationToken,
+}
+
+impl Drop for SseGuard {
+    fn drop(&mut self) {
+        log::info!("Stream dropped, cancelling cancel_token");
+        self.token.cancel();
+    }
+}
 pub fn agent_router() -> Router<Arc<AppState>> {
     Router::new()
-        // TODO: start should be a POST request
         .route("/v1/tilekit/agent/start", get(start_agent))
-        // TODO: end_session should be a POST req
         .route("/v1/tilekit/agent/end_session", get(end_current_session))
         .route("/v1/tilekit/agent/state", get(agent_state))
         .route("/v1/tilekit/agent/prompt", post(process_chat_prompt))
@@ -109,9 +118,9 @@ async fn process_chat_prompt(
     Json(payload): Json<PromptRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     let t_state = state.clone();
-
     let (tx, rx) = mpsc::channel::<SseEvent>(32);
-
+    let cancel_token = CancellationToken::new();
+    let t_cancel = cancel_token.clone();
     let _handle = tokio::spawn(async move {
         let mut agent = t_state.agent.lock().await;
         let agent = if let Some(agent) = agent.as_mut() {
@@ -131,35 +140,30 @@ async fn process_chat_prompt(
             handle_pi_errors(err_str.to_owned(), &tx).await;
             return;
         }
-
-        while let Ok(Some(line)) = agent.reader.next_line().await {
-            let response = if let Ok(response) = serde_json::from_str::<PiResponse>(&line) {
-                response
-            } else {
-                let err_str = format!("Failed to parse pi response, response {:?}", &line);
-
-                handle_pi_errors(err_str.to_owned(), &tx).await;
-                return;
-            };
-
-            let sse_event = SseEvent {
-                event: response.get_type().to_owned(),
-                data: line,
-            };
-
-            let _ = tx.send(sse_event).await.map_err(|e| log::error!("{:?}", e));
-
-            match response {
-                PiResponse::AgentSettled => break,
-                _ => continue,
-            }
+        tokio::select! {
+                _ = t_cancel.cancelled() => {
+                    log::info!("Will cancel the agent process");
+                    let _ = handle_graceful_exit(&mut agent.writer).await;
+                    // To read the rest of stdout after aborting the current request
+                    let _ = read_from_pi(agent, &tx).await;
+                 },
+                _ = read_from_pi(agent, &tx) => ()
         }
     });
 
-    let sse_stream = ReceiverStream::new(rx)
+    let mut sse_stream = ReceiverStream::new(rx)
         .map(|msg| Ok::<_, Infallible>(Event::default().event(msg.event).data(msg.data)));
 
-    Ok(Sse::new(sse_stream))
+    let guarded_stream = async_stream::stream! {
+        let _guard = SseGuard{
+            token: cancel_token.clone()
+        };
+        while let Some(event) = sse_stream.next().await {
+            yield event;
+        }
+    };
+
+    Ok(Sse::new(guarded_stream))
 }
 
 async fn handle_pi_errors(err_str: String, tx: &Sender<SseEvent>) {
@@ -171,6 +175,32 @@ async fn handle_pi_errors(err_str: String, tx: &Sender<SseEvent>) {
     let _ = tx.send(event).await.map_err(|e| log::error!("{:?}", e));
 }
 
+async fn read_from_pi(agent: &mut PiAgent, tx: &Sender<SseEvent>) {
+    let mut last_event = String::from("");
+    while let Ok(Some(line)) = agent.reader.next_line().await {
+        let response = if let Ok(response) = serde_json::from_str::<PiResponse>(&line) {
+            response
+        } else {
+            let err_str = format!("Failed to parse pi response, response {:?}", &line);
+
+            handle_pi_errors(err_str.to_owned(), tx).await;
+            return;
+        };
+
+        let sse_event = SseEvent {
+            event: response.get_type().to_owned(),
+            data: line,
+        };
+        last_event = response.get_type().to_owned();
+        let _ = tx.send(sse_event).await.map_err(|e| log::error!("{:?}", e));
+
+        match response {
+            PiResponse::AgentSettled => break,
+            _ => continue,
+        }
+    }
+    log::info!("reading ended with last event {}", last_event);
+}
 #[cfg(test)]
 mod tests {
     use std::sync::Mutex;

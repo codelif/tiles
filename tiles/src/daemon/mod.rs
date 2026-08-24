@@ -8,7 +8,10 @@ use std::{
     time::Duration,
 };
 
-use crate::{core::agent::pi::PiAgent, daemon::agent::agent_router};
+use crate::{
+    core::agent::pi::PiAgent,
+    daemon::{agent::agent_router, server::server_router},
+};
 use anyhow::{Result, anyhow};
 use axum::{
     Json, Router,
@@ -34,6 +37,7 @@ use tokio::sync::oneshot::{self, Receiver, Sender};
 //     timeout::{self},
 // };
 pub mod agent;
+pub mod server;
 use crate::{
     core::{
         account::{atproto::AtCallbackParams, local::get_current_user},
@@ -88,6 +92,14 @@ impl<T: Serialize> ApiResponse<T> {
             status: "success".to_string(),
             data,
         })
+    }
+}
+
+pub struct ApiCleanupGuard;
+
+impl Drop for ApiCleanupGuard {
+    fn drop(&mut self) {
+        log::info!("Dropping the request")
     }
 }
 
@@ -221,6 +233,7 @@ pub async fn start_server(port: Option<u32>) -> Result<()> {
         .route("/remote-status", get(show_remote_status))
         .route("/connect-remote", get(connect_remote_inference))
         .merge(agent_router())
+        .merge(server_router())
         // .layer(service)
         .with_state(shared_state);
 

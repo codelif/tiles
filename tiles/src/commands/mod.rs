@@ -9,9 +9,9 @@ use tiles::core::account::local::{
     is_valid_delegation, save_root_account, set_nickname, unlink,
 };
 use tiles::core::network::link;
+use tiles::core::server::{ping, start_server_daemon, stop_server_daemon};
 use tiles::core::storage::db::Dbconn;
 use tiles::daemon::{ping as ping_daemon, stop_cmd};
-use tiles::repl::{start_server_daemon, stop_server_daemon};
 use tiles::utils::config::{
     ConfigProvider, DefaultProvider, InferenceConfig, get_inference_config, get_or_create_config,
     set_user_data_path, update_inference_config,
@@ -262,7 +262,7 @@ pub async fn stop_server() {
 }
 
 pub async fn uninstall_tiles(all: bool) -> Result<()> {
-    if tiles::repl::ping().await.is_ok() {
+    if ping().await.is_ok() {
         return Err(anyhow!(
             "Inference server is still running. Stop it with `tiles server stop` and try again."
         ));
