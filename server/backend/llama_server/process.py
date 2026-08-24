@@ -57,7 +57,9 @@ def _config_key(llama_config: dict[str, Any]) -> str:
     return json.dumps(llama_config, sort_keys=True, default=str)
 
 
-def build_llama_server_command(gguf_path: Path, llama_config: dict[str, Any]) -> list[str]:
+def build_llama_server_command(
+    gguf_path: Path, llama_config: dict[str, Any]
+) -> list[str]:
     """Build the llama-server argv from Tiles config.
 
     Only flags explicitly set in ``llama_config`` are forwarded; unset values
@@ -112,9 +114,10 @@ def build_llama_server_command(gguf_path: Path, llama_config: dict[str, Any]) ->
     # MTP speculative decoding: auto-enabled when the model ships an MTP
     # head, unless explicitly disabled. An explicit `mtp = true` with no
     # file on disk warns and runs without it.
+
     mtp_config = llama_config.get("mtp")
     mtp_path = find_mtp_gguf_file(gguf_path)
-    if mtp_config is False:
+    if not mtp_config:
         pass
     elif mtp_path is not None:
         cmd.extend(
@@ -256,13 +259,14 @@ def ensure_running(gguf_path: Path, llama_config: dict[str, Any]) -> None:
     """Start or restart llama-server for the given GGUF and config."""
     global _process, _loaded_gguf, _loaded_config_key
 
-    gguf_path = gguf_path.resolve()
+    gguf_path = Path(os.path.abspath(gguf_path))
+    resolved_gguf = gguf_path.resolve()
     key = _config_key(llama_config)
     with _ensure_lock:
         if (
             _process is not None
             and _process.poll() is None
-            and _loaded_gguf == gguf_path
+            and _loaded_gguf == resolved_gguf
             and _loaded_config_key == key
         ):
             if is_server_ready():
@@ -308,6 +312,6 @@ def ensure_running(gguf_path: Path, llama_config: dict[str, Any]) -> None:
         finally:
             stdout_log.close()
             stderr_log.close()
-        _loaded_gguf = gguf_path
+        _loaded_gguf = resolved_gguf
         _loaded_config_key = key
         wait_until_ready(_process)

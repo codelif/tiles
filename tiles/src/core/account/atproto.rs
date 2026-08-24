@@ -22,8 +22,8 @@ use log::info;
 use reqwest::Client;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
-use std::{fmt::Debug, process::Command, sync::Arc, time::Duration};
-use tokio::sync::oneshot;
+use std::{fmt::Debug, sync::Arc, time::Duration};
+use tokio::{process::Command, sync::oneshot};
 
 use std::error::Error;
 
@@ -135,6 +135,11 @@ pub async fn login(conn: &Dbconn, handle: &str) -> Result<()> {
         .await
         .inspect_err(|_| eprintln!("Failed to generate authorization url"))?;
 
+    println!(
+        "\nIf the browser doesn't open automatically, open this URL:\n\n{}\n",
+        url
+    );
+
     let program_name = cfg_select! {
         target_os = "macos" => {
             "open"
@@ -149,26 +154,13 @@ pub async fn login(conn: &Dbconn, handle: &str) -> Result<()> {
 
     // adding this override due to  clippy not playing good w macro above
     #[allow(clippy::const_is_empty)]
-    if program_name.is_empty() {
-        println!(
-            "Failed to open the url automatically, Please open the url in any browser {}",
-            url
-        )
-    } else {
-        if let Ok(mut program) = Command::new(program_name).arg(&url).spawn() {
-            if program.wait().is_err() {
-                println!(
-                    "Failed to open the url automatically, Please open the url in any browser: {}",
-                    url
-                )
-            }
-        } else {
-            println!(
-                "Failed to open the url automatically, Please open the url\n{} in any browser",
-                url
-            )
-        }
-    };
+    if !program_name.is_empty()
+        && let Ok(mut child) = Command::new(program_name).arg(&url).spawn()
+    {
+        tokio::spawn(async move {
+            let _ = child.wait().await;
+        });
+    }
 
     let (callback_tx, callback_rx) = oneshot::channel();
 
@@ -203,7 +195,7 @@ pub async fn login(conn: &Dbconn, handle: &str) -> Result<()> {
         };
 
         upsert_auth_data(&conn.common, &auth_data)?;
-        println!("LoggedIn successfully as {}", handle);
+        println!("Logged in successfully as @{}\n", handle);
         Ok(())
     } else {
         Err(anyhow!(
@@ -223,7 +215,7 @@ pub fn logout(conn: &Dbconn) -> Result<()> {
             ..auth_user
         };
         upsert_auth_data(&conn.common, &logout_user)?;
-        println!("Loggedout successfully as {}", key);
+        println!("Logged out successfully as @{}", key);
     } else {
         println!("No user logged in. Please log in using tiles at login <handle>.")
     }
