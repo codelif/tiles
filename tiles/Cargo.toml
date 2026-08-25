@@ -49,7 +49,7 @@ iroh-mdns-address-lookup = "0.4.0"
 tempfile = "3"
 
 [target.'cfg(unix)'.dependencies]
-nix = { version = "0.29", features = ["user", "process"] }
+nix = { version = "0.29", features = ["fs", "user", "process"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 dbus-secret-service-keyring-store = { version = "1.0.0", features = ["crypto-rust"] }
