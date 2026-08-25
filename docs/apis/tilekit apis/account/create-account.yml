@@ -1,16 +1,16 @@
 info:
-  name: send-prompt
+  name: create-account
   type: http
-  seq: 2
+  seq: 1
 
 http:
   method: POST
-  url: "{{tilekit_base_url}}/agent/prompt"
+  url: "{{tilekit_base_url}}/account/create"
   body:
     type: json
     data: |-
       {
-        "message": "capital of USA?"
+        "nickname": "yo"
       }
   auth: inherit
 

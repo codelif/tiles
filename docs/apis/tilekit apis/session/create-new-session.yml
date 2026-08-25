@@ -1,17 +1,11 @@
 info:
-  name: send-prompt
+  name: create-new-session
   type: http
-  seq: 2
+  seq: 1
 
 http:
   method: POST
-  url: "{{tilekit_base_url}}/agent/prompt"
-  body:
-    type: json
-    data: |-
-      {
-        "message": "capital of USA?"
-      }
+  url: "{{tilekit_base_url}}/session/new"
   auth: inherit
 
 settings:

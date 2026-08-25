@@ -1,16 +1,16 @@
 info:
-  name: send-prompt
+  name: get-account-status
   type: http
   seq: 2
 
 http:
-  method: POST
-  url: "{{tilekit_base_url}}/agent/prompt"
+  method: GET
+  url: "{{tilekit_base_url}}/account/status"
   body:
     type: json
     data: |-
       {
-        "message": "capital of USA?"
+        "nickname": 'yo'
       }
   auth: inherit
 

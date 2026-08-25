@@ -10,7 +10,10 @@ use std::{
 
 use crate::{
     core::agent::pi::PiAgent,
-    daemon::{agent::agent_router, server::server_router},
+    daemon::{
+        account::account_router, agent::agent_router, server::server_router,
+        session::session_router,
+    },
 };
 use anyhow::{Result, anyhow};
 use axum::{
@@ -32,12 +35,12 @@ use std::fs::OpenOptions;
 use std::sync::Mutex;
 use tokio::sync::Mutex as AsyncMutex;
 use tokio::sync::oneshot::{self, Receiver, Sender};
-// use tower::{
-//     // BoxError,
-//     timeout::{self},
-// };
+
+pub mod account;
 pub mod agent;
 pub mod server;
+pub mod session;
+
 use crate::{
     core::{
         account::{atproto::AtCallbackParams, local::get_current_user},
@@ -59,16 +62,22 @@ pub struct AppState {
 
 #[derive(Debug)]
 pub enum AppError {
-    ModelFileNotFound(String),
+    NotFound(String),
     InternalServerError(String),
     RequestTimeout,
+    BadRequest(String),
+    AlreadyExists(String),
+    CannotProcess(String),
 }
 impl IntoResponse for AppError {
     fn into_response(self) -> axum::response::Response {
         let (status, reason) = match self {
-            Self::ModelFileNotFound(e) => (StatusCode::NOT_FOUND, e),
+            Self::NotFound(e) => (StatusCode::NOT_FOUND, e),
             Self::InternalServerError(e) => (StatusCode::INTERNAL_SERVER_ERROR, e),
             Self::RequestTimeout => (StatusCode::REQUEST_TIMEOUT, "request timedout".to_string()),
+            Self::BadRequest(e) => (StatusCode::BAD_REQUEST, e),
+            Self::AlreadyExists(e) => (StatusCode::CONFLICT, e),
+            Self::CannotProcess(e) => (StatusCode::UNPROCESSABLE_ENTITY, e),
         };
 
         let body = Json(json!({
@@ -80,7 +89,7 @@ impl IntoResponse for AppError {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 pub struct ApiResponse<T> {
     status: String,
     data: T,
@@ -234,6 +243,8 @@ pub async fn start_server(port: Option<u32>) -> Result<()> {
         .route("/connect-remote", get(connect_remote_inference))
         .merge(agent_router())
         .merge(server_router())
+        .merge(account_router())
+        .merge(session_router())
         // .layer(service)
         .with_state(shared_state);
 

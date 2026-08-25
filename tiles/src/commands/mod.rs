@@ -68,7 +68,7 @@ pub async fn run_setup_for_ftue(_run_args: &RunArgs) -> Result<()> {
     config_provider.get_or_create_config_dir()?;
     config_provider.get_or_create_data_dir()?;
 
-    let root_config = get_or_create_config()?;
+    let root_config = get_or_create_config(DefaultProvider)?;
     let root_user_details = get_root_user_details(&root_config)?;
     println!("{}", FTUE_ASCII_ART.blue());
     println!("{} {}", FTUE_VERSION_TITLE, env!("CARGO_PKG_VERSION"));
@@ -292,7 +292,7 @@ pub fn set_inference_config_to_daemon(is_background: bool) -> Result<()> {
 }
 /// Runs the account command with the args being passed.
 pub async fn run_account_commands(account_args: AccountArgs) -> Result<()> {
-    let config = get_or_create_config()?;
+    let config = get_or_create_config(DefaultProvider)?;
     let root_user_details = get_root_user_details(&config)?;
     match account_args.command {
         Some(AccountCommands::Create { nickname }) => {

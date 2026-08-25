@@ -55,15 +55,7 @@ pub fn agent_router() -> Router<Arc<AppState>> {
 }
 
 async fn start_agent(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse, AppError> {
-    let modelfile_path =
-        get_default_modelfile().map_err(|e| AppError::ModelFileNotFound(e.to_string()))?;
-    let default_modelfile = tilekit::modelfile::parse_from_file(&modelfile_path.to_string_lossy())
-        .map_err(|e| AppError::InternalServerError(e.to_string()))?;
-
-    let modelname =
-        model_spec(&default_modelfile).map_err(|e| AppError::InternalServerError(e.to_string()))?;
-
-    let system_prompt = default_modelfile.system.clone().unwrap_or("".to_owned());
+    let (modelname, system_prompt) = get_agent_start_params()?;
 
     let mut agent = state.agent.lock().await;
     if agent.is_some() {
@@ -76,6 +68,19 @@ async fn start_agent(State(state): State<Arc<AppState>>) -> Result<impl IntoResp
         *agent = Some(pi_agent);
         Ok(ApiResponse::success(json!({"message": "started agent"})))
     }
+}
+
+pub fn get_agent_start_params() -> Result<(String, String), AppError> {
+    let modelfile_path = get_default_modelfile().map_err(|e| AppError::NotFound(e.to_string()))?;
+    let default_modelfile = tilekit::modelfile::parse_from_file(&modelfile_path.to_string_lossy())
+        .map_err(|e| AppError::InternalServerError(e.to_string()))?;
+
+    let modelname =
+        model_spec(&default_modelfile).map_err(|e| AppError::InternalServerError(e.to_string()))?;
+
+    let system_prompt = default_modelfile.system.clone().unwrap_or("".to_owned());
+
+    Ok((modelname, system_prompt))
 }
 
 #[debug_handler]
@@ -96,7 +101,7 @@ async fn end_current_session(
 }
 
 // TODO: Could we have explicity tell in return type we are sending
-// GetStateData?
+// GetStateData - derive serialize for GetStateData?
 async fn agent_state(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse, AppError> {
     let mut agent = state.agent.lock().await;
     let agent = agent.as_mut().ok_or(AppError::InternalServerError(
