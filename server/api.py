@@ -39,11 +39,10 @@ async def start_model(request: StartRequest):
     logger.info(f"{runtime.backend}")
     # get_or_load_model can block for minutes while the model loads; run it in a
     # worker thread so the FastAPI event loop stays responsive to other requests.
-    await asyncio.to_thread(
+    runner = await asyncio.to_thread(
         runtime.backend.get_or_load_model, request.model, request.model_cache_path
     )
-    return {"message": "Model loaded"}
-
+    return {"message": "Model loaded", "warnings": getattr(runner, "warnings", [])}
 
 @app.exception_handler(HTTPException)
 async def validation_exception_handler(request: Request, exc: HTTPException):

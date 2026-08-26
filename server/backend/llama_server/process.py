@@ -26,6 +26,27 @@ _loaded_gguf: Path | None = None
 _loaded_config_key: str | None = None
 # Serializes ensure_running so concurrent requests can't double-start the server.
 _ensure_lock = threading.Lock()
+# Warnings recorded while starting/restarting llama-server (e.g. MTP
+# requested but no MTP GGUF on disk). ensure_running drains them inside
+# _ensure_lock and returns them to its caller so the CLI can surface
+# them to the user.
+_startup_warnings: list[str] = []
+
+
+def _record_warning(message: str, *args: Any) -> None:
+    logger.warning(message, *args)
+    _startup_warnings.append(message % args if args else message)
+
+
+def take_warnings() -> list[str]:
+    """Return and clear the collected startup warnings.
+
+    Only safe to call while holding _ensure_lock (ensure_running does);
+    a bare call could race a concurrent spawn's recording.
+    """
+    warnings = list(_startup_warnings)
+    _startup_warnings.clear()
+    return warnings
 
 
 def resolve_llama_server_binary() -> str:
@@ -111,30 +132,29 @@ def build_llama_server_command(
     if no_mmap is True:
         cmd.append("--no-mmap")
 
-    # MTP speculative decoding: auto-enabled when the model ships an MTP
-    # head, unless explicitly disabled. An explicit `mtp = true` with no
-    # file on disk warns and runs without it.
-
+    # MTP speculative decoding: opt-in. Enabled only when `mtp = true` is
+    # set in config.toml (or passed via `tiles run --mtp`); the presence
+    # of an MTP head GGUF on disk alone does not enable it. `mtp = true`
+    # with no file on disk warns and runs without it.
     mtp_config = llama_config.get("mtp")
-    mtp_path = find_mtp_gguf_file(gguf_path)
-    if not mtp_config:
-        pass
-    elif mtp_path is not None:
-        cmd.extend(
-            [
-                "--spec-type",
-                "draft-mtp",
-                "--spec-draft-model",
-                str(mtp_path),
-            ]
-        )
-        logger.info("MTP speculative decoding enabled with %s", mtp_path)
-    elif mtp_config is True:
-        logger.warning(
-            "MTP enabled but no MTP GGUF found next to %s. "
-            "Re-run model download or set mtp = false in config.",
-            gguf_path,
-        )
+    if mtp_config is True:
+        mtp_path = find_mtp_gguf_file(gguf_path)
+        if mtp_path is not None:
+            cmd.extend(
+                [
+                    "--spec-type",
+                    "draft-mtp",
+                    "--spec-draft-model",
+                    str(mtp_path),
+                ]
+            )
+            logger.info("MTP speculative decoding enabled with %s", mtp_path)
+        else:
+            _record_warning(
+                "MTP enabled but no MTP GGUF found next to %s. "
+                "Re-run model download or set mtp = false in config.",
+                gguf_path,
+            )
 
     return cmd
 
@@ -255,14 +275,20 @@ def stop() -> None:
         proc.wait(timeout=5)
 
 
-def ensure_running(gguf_path: Path, llama_config: dict[str, Any]) -> None:
-    """Start or restart llama-server for the given GGUF and config."""
+def ensure_running(gguf_path: Path, llama_config: dict[str, Any]) -> list[str]:
+    """Start or restart llama-server for the given GGUF and config.
+    Returns the warnings recorded during this call's spawn (e.g. MTP
+    requested but no head GGUF found).
+    """
     global _process, _loaded_gguf, _loaded_config_key
 
     gguf_path = Path(os.path.abspath(gguf_path))
     resolved_gguf = gguf_path.resolve()
     key = _config_key(llama_config)
     with _ensure_lock:
+        # Fresh call: drop warnings from any previous spawn so callers only
+        # ever see warnings from this invocation.
+        _startup_warnings.clear()
         if (
             _process is not None
             and _process.poll() is None
@@ -270,9 +296,9 @@ def ensure_running(gguf_path: Path, llama_config: dict[str, Any]) -> None:
             and _loaded_config_key == key
         ):
             if is_server_ready():
-                return
+                return []
             wait_until_ready(_process)
-            return
+            return []
 
         stop()
 
@@ -315,3 +341,4 @@ def ensure_running(gguf_path: Path, llama_config: dict[str, Any]) -> None:
         _loaded_gguf = resolved_gguf
         _loaded_config_key = key
         wait_until_ready(_process)
+        return take_warnings()
