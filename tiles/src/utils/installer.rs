@@ -40,7 +40,7 @@ pub struct UpdateInfo {
 struct UpdateInstallLayout {
     install_dir: PathBuf,
     lib_dir: PathBuf,
-    is_system: bool,
+    is_system_path: bool,
 }
 
 fn resolve_update_install_layout(
@@ -54,7 +54,7 @@ fn resolve_update_install_layout(
         return Ok(UpdateInstallLayout {
             install_dir: portable_dir.to_path_buf(),
             lib_dir: portable_dir.to_path_buf(),
-            is_system: false,
+            is_system_path: false,
         });
     }
 
@@ -62,7 +62,7 @@ fn resolve_update_install_layout(
         return Ok(UpdateInstallLayout {
             install_dir: PathBuf::from(SYSTEM_BIN_DIR),
             lib_dir: PathBuf::from(SYSTEM_LIB_DIR),
-            is_system: true,
+            is_system_path: true,
         });
     }
 
@@ -73,7 +73,7 @@ fn resolve_update_install_layout(
         return Ok(UpdateInstallLayout {
             install_dir: install_dir.to_path_buf(),
             lib_dir: user_lib_dir.to_path_buf(),
-            is_system: false,
+            is_system_path: false,
         });
     }
 
@@ -87,15 +87,15 @@ fn nearest_existing_ancestor(path: &Path) -> Option<&Path> {
     path.ancestors().find(|ancestor| ancestor.exists())
 }
 
-fn destination_is_writable(path: &Path) -> bool {
+fn is_destination_writable(path: &Path) -> bool {
     nearest_existing_ancestor(path).is_some_and(|ancestor| {
         ancestor.is_dir() && access(ancestor, AccessFlags::W_OK | AccessFlags::X_OK).is_ok()
     })
 }
 
-fn update_needs_elevation(
+fn resolve_update_elevation(
     layout: &UpdateInstallLayout,
-    is_writable: impl Fn(&Path) -> bool,
+    check_writable: impl Fn(&Path) -> bool,
 ) -> Result<bool> {
     let mut destinations = vec![layout.install_dir.as_path()];
     if layout.lib_dir != layout.install_dir {
@@ -104,12 +104,12 @@ fn update_needs_elevation(
 
     let unwritable = destinations
         .into_iter()
-        .filter(|path| !is_writable(path))
+        .filter(|path| !check_writable(path))
         .collect::<Vec<_>>();
     if unwritable.is_empty() {
         return Ok(false);
     }
-    if layout.is_system {
+    if layout.is_system_path {
         return Ok(true);
     }
 
@@ -143,7 +143,7 @@ pub async fn try_update(update_info: Option<UpdateInfo>) -> Result<String> {
             &provider.get_user_bin_path()?,
             &provider.get_data_dir()?,
         )?;
-        let needs_elevation = update_needs_elevation(&layout, destination_is_writable)?;
+        let needs_elevation = resolve_update_elevation(&layout, is_destination_writable)?;
         let mut curl_process = Command::new("curl")
             .arg("-fsSL")
             .arg("https://tiles.run/install.sh")
@@ -266,7 +266,7 @@ mod tests {
 
         assert_eq!(layout.install_dir, Path::new(SYSTEM_BIN_DIR));
         assert_eq!(layout.lib_dir, Path::new(SYSTEM_LIB_DIR));
-        assert!(layout.is_system);
+        assert!(layout.is_system_path);
     }
 
     #[test]
@@ -277,7 +277,7 @@ mod tests {
 
         assert_eq!(layout.install_dir, Path::new("/home/user/.local/bin"));
         assert_eq!(layout.lib_dir, user_lib);
-        assert!(!layout.is_system);
+        assert!(!layout.is_system_path);
     }
 
     #[test]
@@ -296,7 +296,7 @@ mod tests {
 
         assert_eq!(layout.install_dir, root.path());
         assert_eq!(layout.lib_dir, root.path());
-        assert!(!layout.is_system);
+        assert!(!layout.is_system_path);
     }
 
     #[test]
@@ -315,24 +315,24 @@ mod tests {
         let system_layout = UpdateInstallLayout {
             install_dir: PathBuf::from(SYSTEM_BIN_DIR),
             lib_dir: PathBuf::from(SYSTEM_LIB_DIR),
-            is_system: true,
+            is_system_path: true,
         };
-        assert!(!update_needs_elevation(&system_layout, |_| true).unwrap());
-        assert!(update_needs_elevation(&system_layout, |_| false).unwrap());
+        assert!(!resolve_update_elevation(&system_layout, |_| true).unwrap());
+        assert!(resolve_update_elevation(&system_layout, |_| false).unwrap());
 
         for layout in [
             UpdateInstallLayout {
                 install_dir: PathBuf::from("/home/user/.local/bin"),
                 lib_dir: PathBuf::from("/home/user/.local/share/tiles"),
-                is_system: false,
+                is_system_path: false,
             },
             UpdateInstallLayout {
                 install_dir: PathBuf::from("/opt/portable-tiles"),
                 lib_dir: PathBuf::from("/opt/portable-tiles"),
-                is_system: false,
+                is_system_path: false,
             },
         ] {
-            let error = update_needs_elevation(&layout, |_| false).unwrap_err();
+            let error = resolve_update_elevation(&layout, |_| false).unwrap_err();
             assert!(error.to_string().contains("will not use sudo"));
         }
     }
@@ -343,7 +343,7 @@ mod tests {
         let destination = root.path().join("missing/nested/directory");
 
         assert_eq!(nearest_existing_ancestor(&destination), Some(root.path()));
-        assert!(destination_is_writable(&destination));
+        assert!(is_destination_writable(&destination));
     }
 
     #[tokio::test]
