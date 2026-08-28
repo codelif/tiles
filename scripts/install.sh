@@ -30,6 +30,8 @@ VERSION="0.4.18"
 DEV="false"
 NIGHTLY="false"
 BACKEND="auto"
+INSTALL_DIR_OVERRIDE=""
+LIB_DIR_OVERRIDE=""
 
 log() { echo -e "\033[1;36m$*\033[0m"; }
 err() { echo -e "\033[1;31m$*\033[0m" >&2; exit 1; }
@@ -38,13 +40,15 @@ warn() {
 }
 
 usage() {
-  echo "Usage: curl -LsSf https://www.tiles.run/install.sh | sh -s -- [--nightly] [--backend BACKEND]"
-  echo "   or: scripts/install.sh [--dev] [--nightly] [--backend BACKEND]"
+  echo "Usage: curl -LsSf https://www.tiles.run/install.sh | sh -s -- [OPTIONS]"
+  echo "   or: scripts/install.sh [OPTIONS]"
   echo ""
-  echo "  --dev       Install from a local dist/*.tar.gz instead of GitHub"
-  echo "  --nightly   Install the latest nightly GitHub release"
-  echo "              (e.g. tiles-v0.4.17-x86_64-linux-cuda.tar.gz)"
-  echo "  --backend   Linux inference backend: auto (default), cuda, or vulkan"
+  echo "  --dev                Install from a local dist/*.tar.gz instead of GitHub"
+  echo "  --nightly            Install the latest nightly GitHub release"
+  echo "                       (e.g. tiles-v0.4.17-x86_64-linux-cuda.tar.gz)"
+  echo "  --backend BACKEND    Linux inference backend: auto (default), cuda, or vulkan"
+  echo "  --install-dir PATH   Override the binary installation directory"
+  echo "  --lib-dir PATH       Override the runtime installation directory"
 }
 
 # Resolve the newest GitHub nightly release that has a tarball for this platform.
@@ -105,6 +109,18 @@ while [[ $# -gt 0 ]]; do
     --backend)
       [[ $# -ge 2 ]] || err "--backend requires a value."
       BACKEND="$2"
+      shift
+      ;;
+    --install-dir)
+      [[ $# -ge 2 ]] || err "--install-dir requires a value."
+      [[ -n "$2" ]] || err "--install-dir requires a non-empty value."
+      INSTALL_DIR_OVERRIDE="$2"
+      shift
+      ;;
+    --lib-dir)
+      [[ $# -ge 2 ]] || err "--lib-dir requires a value."
+      [[ -n "$2" ]] || err "--lib-dir requires a non-empty value."
+      LIB_DIR_OVERRIDE="$2"
       shift
       ;;
     -h|--help)
@@ -185,6 +201,9 @@ else
   INSTALL_DIR="/usr/local/bin"
   LIB_DIR="/usr/local/share/tiles"
 fi
+
+[[ -n "${INSTALL_DIR_OVERRIDE}" ]] && INSTALL_DIR="${INSTALL_DIR_OVERRIDE}"
+[[ -n "${LIB_DIR_OVERRIDE}" ]] && LIB_DIR="${LIB_DIR_OVERRIDE}"
 
 SERVER_DIR="${LIB_DIR}/server"         # Python server folder
 MODELFILE_DIR="${LIB_DIR}/modelfiles"  # Modelfile server folder

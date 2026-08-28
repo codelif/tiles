@@ -8,7 +8,7 @@ Tilekit apis are developed to be used by other developers also if they want to i
 
 - These apis are standard REST apis under scope `/v1/tilekit/`
 
-**NOTE: We use bruno for local api testing and documentation. Open bruno from `/docs/apis` folder
+**NOTE: We use bruno for local api testing and documentation. Open bruno from `/docs/apis` folder**
 
 
 - There are mainly 3 groups of apis
@@ -60,6 +60,13 @@ APIs need to manage user's accounts. Both local and ATproto.
 - POST /account/create - create a new local account if not there. Need for onboarding
 - GET /account/status - Current status of accounts
 - POST /account/set-nickname - Update nicknam
+
+#### Current flow for Streaming assistant
+
+- Acquiring the agent.
+  - Use `/session/new` which will create an agent or reuse the current one and return the session Id
+  - Use `/agent/prompt` - For agent communication
+
 
 ATproto apis coming soon...
 
