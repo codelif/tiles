@@ -1,15 +1,19 @@
-# Tilekit APIs (draft)
+# Tilekit APIs
 
 This defines how clients can be integrated with Tiles. Examples of clients are GUIs for Tiles, local AI apps which needs a collaboration layer etc.
 
 ## Tilekit apis
 
-Tilekit apis are developed to be used by other developers also, if they want to integrate tiles or use any features of Tiles. These are different from "Internal apis" which is kind of tailor made for Tiles official webUI for the plumbing purposes, which might come under tilekit later.
+Tilekit apis are developed to be used by other developers also if they want to integrate tiles or use any features of Tiles. These are different from "Internal apis" which is kind of tailor made for Tiles official webUI for the plumbing purposes, which might come under tilekit later.
 
-- These apis are standard REST apis under scope /v1/tilekit/
+- These apis are standard REST apis under scope `/v1/tilekit/`
+
+**NOTE: We use bruno for local api testing and documentation. Open bruno from `/docs/apis` folder
+
+
 - There are mainly 3 groups of apis
   - server apis (/v1/tilekit/server) - For communication with the inference server (thus managing the llama server too)
-  - Agent apis (/v1/tilekit/agent\`) - For communication with the agent harness (Pi)
+  - Agent apis (/v1/tilekit/agent`) - For communication with the agent harness (Pi)
   - session apis (/v1/tilekit/session) - For dealing with session specific stuff for ex: fetching a session details, resume a session etc.. (These are mainly the features we have in repl at the moment).
 
 ### Server apis
@@ -33,18 +37,20 @@ Agent apis are there, but these will be abstracted by sessions api too. So consi
       "message": "create a todo for today"
     }
     ```
-  - The response of this API will SSE events as the clients will be streaming the response and the type of event & data will be following Pi's types. More will be documented here
+  - The response of this API will SSE events as the clients will be streaming the response and the type of event & data will be following Pi's types.
+
+  - The events will follow Pi events as [here](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/rpc.md#events).
 
 ### Session APIs
 
 Sessions apis are supposed to be used for regular activities around chatting with the assistant. This also abstract agent related stuff maximum.
 
 - POST /session/new - Creates a new session. Returns a sessionId. This will start a Pi agent if its not already there.
-- POST session/prompt - Returns the response of the Agent as SSE events. This is same as /agent/prompt, but maybe we more jazz.
 - POST /session/chat - Save a chat in Tiles internal DB.
 - GET /session/chats/\<id> - Fetches chats for a session
-- GET /session/list - List metadata about all the sessions
-- GET /session/resume?id=\<session\_id> - Resume a session
+- GET /session/{session-id} - Fetch details of a session
+- GET /session/list - List details about all the sessions
+- GET /session/resume?id=\<session\_id> - Resume a session (phase 2)
 - GET /session/search - Search something across sessions (phase 2)
 
 ### Account APIs
@@ -53,7 +59,7 @@ APIs need to manage user's accounts. Both local and ATproto.
 
 - POST /account/create - create a new local account if not there. Need for onboarding
 - GET /account/status - Current status of accounts
-- POST /account/set-nickname - Update nickname
+- POST /account/set-nickname - Update nicknam
 
 ATproto apis coming soon...
 

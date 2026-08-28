@@ -7,7 +7,7 @@ use crate::{
     },
     daemon::{ApiResponse, AppError, AppState},
     repl::{get_default_modelfile, model_spec},
-    utils::config::PY_PORT,
+    utils::config::{ConfigProvider, DefaultProvider, PY_PORT},
 };
 
 // use async_stream::stream;
@@ -55,7 +55,7 @@ pub fn agent_router() -> Router<Arc<AppState>> {
 }
 
 async fn start_agent(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse, AppError> {
-    let (modelname, system_prompt) = get_agent_start_params()?;
+    let (modelname, system_prompt) = get_agent_start_params(DefaultProvider)?;
 
     let mut agent = state.agent.lock().await;
     if agent.is_some() {
@@ -70,8 +70,10 @@ async fn start_agent(State(state): State<Arc<AppState>>) -> Result<impl IntoResp
     }
 }
 
-pub fn get_agent_start_params() -> Result<(String, String), AppError> {
-    let modelfile_path = get_default_modelfile().map_err(|e| AppError::NotFound(e.to_string()))?;
+pub fn get_agent_start_params(provider: impl ConfigProvider) -> Result<(String, String), AppError> {
+    let modelfile_path =
+        get_default_modelfile(provider).map_err(|e| AppError::NotFound(e.to_string()))?;
+
     let default_modelfile = tilekit::modelfile::parse_from_file(&modelfile_path.to_string_lossy())
         .map_err(|e| AppError::InternalServerError(e.to_string()))?;
 

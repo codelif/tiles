@@ -118,13 +118,13 @@ pub async fn run(run_args: RunArgs, db_conn: &Dbconn) -> Result<()> {
                 return Ok(());
             }
         };
-        let default_modelfile = get_default_modelfile()
+        let default_modelfile = get_default_modelfile(DefaultProvider)
             .ok()
             .and_then(|path| tilekit::modelfile::parse_from_file(path.to_str()?).ok())
             .unwrap_or_else(|| modelfile.clone());
         (modelfile, default_modelfile)
     } else {
-        let default_modelfile_path = get_default_modelfile()?;
+        let default_modelfile_path = get_default_modelfile(DefaultProvider)?;
         let default_modelfile = match tilekit::modelfile::parse_from_file(
             default_modelfile_path
                 .to_str()
@@ -628,10 +628,8 @@ async fn wait_until_server_is_up() {
     }
 }
 
-pub fn get_default_modelfile() -> Result<PathBuf> {
-    let path = DefaultProvider
-        .get_lib_dir()?
-        .join("modelfiles/gemma-4-12b-gguf");
+pub fn get_default_modelfile(provider: impl ConfigProvider) -> Result<PathBuf> {
+    let path = provider.get_lib_dir()?.join("modelfiles/gemma-4-12b-gguf");
     Ok(path)
 }
 
@@ -808,7 +806,7 @@ async fn process_share_session(
 }
 
 fn show_session_info(db_conn: &Dbconn) -> Result<()> {
-    let sessions = fetch_sessions(&db_conn.chat)?;
+    let sessions = fetch_sessions(&db_conn.chat, None)?;
 
     let mut count = 0;
     for session in sessions {
@@ -1302,7 +1300,8 @@ mod tests {
 
     #[test]
     fn default_modelfile_uses_platform_default() {
-        let path = get_default_modelfile().expect("default modelfile should resolve");
+        let path =
+            get_default_modelfile(DefaultProvider).expect("default modelfile should resolve");
         assert!(path.ends_with("modelfiles/gemma-4-12b-gguf"));
     }
 

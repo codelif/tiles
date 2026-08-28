@@ -10,7 +10,7 @@ http:
     type: json
     data: |-
       {
-        "message": "capital of USA?"
+        "message": "How many states are there in India?"
       }
   auth: inherit
 

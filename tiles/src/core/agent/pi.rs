@@ -104,8 +104,8 @@ impl PiWriter {
         let payload_str = format!(
             "{}\n",
             serde_json::to_string(&payload_json).map_err(|e| {
-                log::error!("{}", e.to_string());
-                anyhow!("Error sending command to Pi due to {}", e.to_string())
+                log::error!("{}", e);
+                anyhow!("Error sending command to Pi due to {}", e)
             })?
         );
         self.stdin
@@ -113,12 +113,12 @@ impl PiWriter {
             .await
             .context("Failed to send to Pi's stdin")
             .map_err(|e| {
-                log::error!("{}", e.to_string());
-                anyhow!("Error sending command to Pi due to {}", e.to_string())
+                log::error!("{}", e);
+                anyhow!("Error sending command to Pi due to {}", e)
             })?;
         self.stdin.flush().await.map_err(|e| {
-            log::error!("{}", e.to_string());
-            anyhow!("Error sending command to Pi due to {}", e.to_string())
+            log::error!("{}", e);
+            anyhow!("Error sending command to Pi due to {}", e)
         })
     }
 }

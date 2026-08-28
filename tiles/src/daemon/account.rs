@@ -81,7 +81,7 @@ async fn do_create_account(
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
 
     use crate::{
         daemon::account::{CreateAccount, do_create_account, get_account_status},
@@ -95,8 +95,8 @@ mod tests {
     use tempfile::tempdir;
 
     #[derive(Debug, Clone)]
-    struct MockProvider {
-        tmp_path: PathBuf,
+    pub struct MockProvider {
+        pub tmp_path: PathBuf,
     }
 
     impl ConfigProvider for MockProvider {
