@@ -1,0 +1,57 @@
+/* text alphas are macOS labelColor / secondaryLabelColor / tertiaryLabelColor
+   component metrics land with their components, not here */
+
+:root {
+  /* ── Geometry ─────────────────────────────────────────── */
+  --panel-width: 380px;
+  /* must equal CORNER_RADIUS in panel.rs, a mismatch shows as a doubled corner */
+  --radius-panel: 17px;
+
+  /* ── Type ─────────────────────────────────────────────── */
+  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+  --fs-title: 15px;
+  --fs-status: 12px;
+  --fs-row: 13px;
+  --fs-small: 11px;
+  --fw-semibold: 600;
+
+  /* ── Colour · light ───────────────────────────────────── */
+  /* TODO: pull from NSColor.controlAccentColor on NSSystemColorsDidChangeNotification */
+  --accent: #0a7aff;
+
+  --text-primary: rgba(0, 0, 0, 0.9);
+  --text-secondary: rgba(0, 0, 0, 0.58);
+  --text-tertiary: rgba(0, 0, 0, 0.36);
+
+  --separator: rgba(0, 0, 0, 0.12);
+  --row-highlight: rgba(0, 0, 0, 0.075);
+  --fill-subtle: rgba(0, 0, 0, 0.05);
+
+  --status-green: #34c759;
+  --status-amber: #ff9f0a;
+  --status-off: rgba(0, 0, 0, 0.25);
+
+  /* the page paints its own surface, nothing shows through */
+  --surface: #ececee;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --accent: #0a84ff;
+
+    --text-primary: rgba(255, 255, 255, 0.95);
+    --text-secondary: rgba(255, 255, 255, 0.64);
+    --text-tertiary: rgba(255, 255, 255, 0.42);
+
+    --separator: rgba(255, 255, 255, 0.15);
+    --row-highlight: rgba(255, 255, 255, 0.13);
+    --fill-subtle: rgba(255, 255, 255, 0.08);
+
+    --status-green: #30d158;
+    --status-amber: #ff9f0a;
+    --status-off: rgba(255, 255, 255, 0.28);
+
+    --surface: #232326;
+  }
+}
