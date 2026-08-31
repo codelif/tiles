@@ -8,7 +8,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use crate::settings;
+use crate::{inference, settings};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -201,13 +201,14 @@ fn start(app: &AppHandle) {
     }
 }
 
+/// everything the daemon serves hangs off one loopback port
+pub fn url(path: &str) -> String {
+    format!("http://127.0.0.1:{PORT}{path}")
+}
+
 /// `GET /` answers with the daemon's version, so one request covers both questions
 async fn ping(client: &reqwest::Client) -> Option<String> {
-    let res = client
-        .get(format!("http://127.0.0.1:{PORT}/"))
-        .send()
-        .await
-        .ok()?;
+    let res = client.get(url("/")).send().await.ok()?;
     Some(res.text().await.ok()?.trim().to_owned())
 }
 
@@ -256,8 +257,8 @@ async fn supervise(app: AppHandle) {
     };
 
     loop {
-        let starting = matches!(current(&app), Health::Starting);
-        tokio::time::sleep(if starting { POLL_STARTING } else { POLL_UP }).await;
+        let settling = matches!(current(&app), Health::Starting) || inference::is_settling(&app);
+        tokio::time::sleep(if settling { POLL_STARTING } else { POLL_UP }).await;
 
         // the quit sequence owns the daemon past this point, and its confirm
         // poll would race this one
@@ -273,6 +274,7 @@ async fn supervise(app: AppHandle) {
                     reason: format!("daemon exited with {status}"),
                 },
             );
+            inference::unknown(&app);
             starting_since = None;
             continue;
         }
@@ -281,6 +283,7 @@ async fn supervise(app: AppHandle) {
             Some(version) => {
                 set(&app, Health::Up { version });
                 starting_since = None;
+                inference::poll(&app, &client).await;
             }
             // a daemon started by hand while we were down gets adopted on the
             // next tick, so a dead one is only ever reported, never restarted
@@ -292,6 +295,7 @@ async fn supervise(app: AppHandle) {
                         reason: "not running".into(),
                     },
                 );
+                inference::unknown(&app);
                 starting_since = None;
             }
         }
@@ -321,12 +325,11 @@ pub async fn quit(app: AppHandle) {
         .timeout(PING_TIMEOUT)
         .build()
         .expect("a client with only a timeout set always builds");
-    let base = format!("http://127.0.0.1:{PORT}");
 
     // first, the daemon is the only thing that knows the inference server's pid
     // and that server is setsid'd, so it outlives everything otherwise
     match client
-        .get(format!("{base}/v1/tilekit/server/stop"))
+        .get(url("/v1/tilekit/server/stop"))
         .timeout(INFERENCE_STOP_TIMEOUT)
         .send()
         .await
@@ -339,10 +342,7 @@ pub async fn quit(app: AppHandle) {
     }
 
     // stop signals and returns without waiting, so the only way to know is to ask
-    if let Ok(res) = client
-        .get(format!("{base}/v1/tilekit/server/ping"))
-        .send()
-        .await
+    if let Ok(res) = client.get(url("/v1/tilekit/server/ping")).send().await
         && res.status().is_success()
     {
         eprintln!("[daemon] inference still up after stop, leaving it running");
@@ -351,7 +351,7 @@ pub async fn quit(app: AppHandle) {
     // exactly once, a second call unwraps a taken oneshot and panics the daemon.
     // a dropped connection here is the graceful shutdown, not a failure
     let _ = client
-        .get(format!("{base}/shutdown"))
+        .get(url("/shutdown"))
         .timeout(SHUTDOWN_TIMEOUT)
         .send()
         .await;

@@ -32,6 +32,14 @@
   --status-amber: #ff9f0a;
   --status-off: rgba(0, 0, 0, 0.25);
 
+  --track-off: rgba(120, 120, 128, 0.16);
+  --track-rim: rgba(0, 0, 0, 0.07);
+  /* sampled from the native switch, the knob tints when the track goes accent */
+  --knob: #daecff;
+  --knob-off: #ffffff;
+  --knob-shadow:
+    0 0.5px 1px rgba(0, 0, 0, 0.22), 0 1px 3px rgba(0, 0, 0, 0.12);
+
   /* the page paints its own surface, nothing shows through */
   --surface: #ececee;
 }
@@ -51,6 +59,11 @@
     --status-green: #30d158;
     --status-amber: #ff9f0a;
     --status-off: rgba(255, 255, 255, 0.28);
+
+    --track-off: rgba(120, 120, 128, 0.32);
+    --track-rim: rgba(255, 255, 255, 0.08);
+    --knob-shadow:
+      0 0.5px 1px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.25);
 
     --surface: #232326;
   }
