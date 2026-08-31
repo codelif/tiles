@@ -8,6 +8,8 @@
     label?: string;
     size?: "regular" | "large" | "identity";
     dimmed?: boolean;
+    /** the row that leads somewhere, among rows that do not */
+    accent?: boolean;
     leading?: Snippet;
     trailing?: Snippet;
     onselect?: () => void;
@@ -19,6 +21,7 @@
     label,
     size = "regular",
     dimmed = false,
+    accent = false,
     leading,
     trailing,
     onselect,
@@ -31,6 +34,7 @@
   class="row"
   data-size={size}
   data-dimmed={dimmed}
+  data-accent={accent}
   data-selectable={onselect !== undefined}
   role={onselect ? "menuitem" : undefined}
   onclick={onselect}
@@ -101,6 +105,10 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .row[data-accent="true"] .row__title {
+    color: var(--accent);
   }
 
   .row__label {

@@ -7,6 +7,7 @@
   import { connect } from "./state.svelte";
   import AccountView from "./views/AccountView.svelte";
   import RootView from "./views/RootView.svelte";
+  import SessionsView from "./views/SessionsView.svelte";
 
   let root: HTMLDivElement;
 
@@ -57,6 +58,8 @@
     {#snippet view(id: ViewId)}
       {#if id === "account"}
         <AccountView />
+      {:else if id === "sessions"}
+        <SessionsView />
       {:else}
         <RootView />
       {/if}

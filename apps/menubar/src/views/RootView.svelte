@@ -5,8 +5,13 @@
   import Chevron from "../lib/Chevron.svelte";
   import Hairline from "../lib/Hairline.svelte";
   import Row from "../lib/Row.svelte";
+  import SectionLabel from "../lib/SectionLabel.svelte";
+  import SessionList from "../lib/SessionList.svelte";
   import { nav } from "../nav.svelte";
-  import { account, health, inference, truncateDid } from "../state.svelte";
+  import { account, health, inference, sessions, truncateDid } from "../state.svelte";
+
+  /** how many fit under the account row before the panel gets tall */
+  const PREVIEW = 3;
 
   let pending = $state(false);
 
@@ -43,6 +48,10 @@
         return { name: "?", title: "—", sub: "" };
     }
   });
+
+  const recent = $derived(sessions.value.state === "ready" ? sessions.value.sessions : []);
+  // pushing would show exactly what is already on screen
+  const hasMore = $derived(recent.length > PREVIEW);
 
   async function toggle() {
     if (!reachable || pending) return;
@@ -99,7 +108,40 @@
   {/snippet}
 </Row>
 
+<Hairline />
+
+<div class="section">
+  <SectionLabel text="Sessions" />
+
+  {#if recent.length > 0}
+    <SessionList sessions={recent.slice(0, PREVIEW)} />
+
+    {#if hasMore}
+      <Row title="All sessions" accent onselect={() => nav.push("sessions")}>
+        {#snippet trailing()}
+          <span class="count">{recent.length}</span>
+          <Chevron />
+        {/snippet}
+      </Row>
+    {/if}
+  {:else if sessions.value.state === "ready"}
+    <Row size="large" title="No sessions yet" sub="Start one with tiles run" dimmed />
+  {:else}
+    <Row size="large" title="—" dimmed />
+  {/if}
+</div>
+
 <style>
+  .section {
+    padding: 2px 0 4px;
+  }
+
+  .count {
+    flex: none;
+    font-size: var(--fs-small);
+    color: var(--text-tertiary);
+  }
+
   /* the switch is the one control that has to read as AppKit rather than web */
   .toggle {
     --toggle-w: 54px;

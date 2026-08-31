@@ -1,4 +1,4 @@
-export type ViewId = "root" | "account";
+export type ViewId = "root" | "account" | "sessions";
 
 /** views are pushed onto the root, never replacing it */
 class Nav {

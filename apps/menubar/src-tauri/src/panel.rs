@@ -2,7 +2,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use crate::tray;
+use crate::{sessions, tray};
 use tauri::{AppHandle, Manager};
 use tauri_nspanel::objc2::msg_send;
 use tauri_nspanel::objc2::rc::Retained;
@@ -254,6 +254,11 @@ pub fn show(app: &AppHandle) {
         panel.show_and_make_key();
         tray::set_highlighted(app, true);
     }
+
+    // the list is about to be looked at, and this is the only thing that asks
+    // for it, see sessions::refresh
+    let handle = app.clone();
+    tauri::async_runtime::spawn(async move { sessions::refresh(&handle).await });
 }
 
 pub fn hide(app: &AppHandle) {

@@ -14,15 +14,19 @@ export type Account =
   | { state: "none" }
   | { state: "local"; did: string; nickname: string };
 
+export type Session = { id: string; name: string; createdAt: number };
+export type Sessions = { state: "unknown" } | { state: "ready"; sessions: Session[] };
+
 export const health = $state<{ value: Health }>({ value: { state: "starting" } });
 export const inference = $state<{ value: Inference }>({
   value: { power: "unknown", model: null },
 });
 export const account = $state<{ value: Account }>({ value: { state: "unknown" } });
+export const sessions = $state<{ value: Sessions }>({ value: { state: "unknown" } });
 
 /**
  * events only fire on a change, so every state has to be asked for once as
- * well. returns the teardown for all three listeners
+ * well. returns the teardown for all four listeners
  */
 export function connect(): () => void {
   const read = <T>(command: string, apply: (value: T) => void) => {
@@ -32,11 +36,13 @@ export function connect(): () => void {
   read<Health>("daemon_health", (v) => (health.value = v));
   read<Inference>("inference_state", (v) => (inference.value = v));
   read<Account>("account_state", (v) => (account.value = v));
+  read<Sessions>("sessions_state", (v) => (sessions.value = v));
 
   const listeners: Promise<UnlistenFn>[] = [
     listen<Health>("daemon://health", (e) => (health.value = e.payload)),
     listen<Inference>("inference://state", (e) => (inference.value = e.payload)),
     listen<Account>("account://state", (e) => (account.value = e.payload)),
+    listen<Sessions>("sessions://state", (e) => (sessions.value = e.payload)),
   ];
 
   return () => listeners.forEach((l) => void l.then((stop) => stop()));

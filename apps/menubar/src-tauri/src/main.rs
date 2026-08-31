@@ -3,6 +3,7 @@ mod clipboard;
 mod daemon;
 mod inference;
 mod panel;
+mod sessions;
 mod settings;
 mod tray;
 
@@ -27,7 +28,8 @@ fn main() {
             daemon::daemon_health,
             inference::inference_state,
             inference::inference_set,
-            account::account_state
+            account::account_state,
+            sessions::sessions_state
         ])
         .setup(|app| {
             // LSUIElement covers the launch window before this runs
@@ -37,9 +39,10 @@ fn main() {
             settings::init(app.handle());
             panel::init(app.handle())?;
             tray::init(app.handle())?;
-            // before the supervisor, its first tick already reports both
+            // before the supervisor, its first tick already reports all three
             inference::init(app.handle());
             account::init(app.handle());
+            sessions::init(app.handle());
             daemon::init(app.handle());
 
             panel::warm_up(app.handle());

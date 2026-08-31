@@ -8,7 +8,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use crate::{account, inference, settings};
+use crate::{account, inference, sessions, settings};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -232,10 +232,18 @@ fn set(app: &AppHandle, next: Health) {
     if *health == next {
         return;
     }
+    let came_up = matches!(next, Health::Up { .. });
     *health = next.clone();
     drop(health);
 
     let _ = app.emit(HEALTH_EVENT, next);
+
+    // sessions are read on demand, and this edge is the one time the list can
+    // go stale without the panel being open to ask
+    if came_up {
+        let app = app.clone();
+        tauri::async_runtime::spawn(async move { sessions::refresh(&app).await });
+    }
 }
 
 async fn supervise(app: AppHandle) {
@@ -276,6 +284,7 @@ async fn supervise(app: AppHandle) {
             );
             inference::unknown(&app);
             account::unknown(&app);
+            sessions::unknown(&app);
             starting_since = None;
             continue;
         }
@@ -299,6 +308,7 @@ async fn supervise(app: AppHandle) {
                 );
                 inference::unknown(&app);
                 account::unknown(&app);
+                sessions::unknown(&app);
                 starting_since = None;
             }
         }
