@@ -7,17 +7,17 @@ use std::time::Duration;
 
 use tauri::{AppHandle, Manager};
 use tauri_nspanel::objc2::rc::Retained;
-use tauri_nspanel::objc2::runtime::AnyObject;
+use tauri_nspanel::objc2::runtime::{AnyObject, Sel};
 use tauri_nspanel::objc2::{AnyThread, DefinedClass, MainThreadOnly, define_class, msg_send, sel};
 use tauri_nspanel::objc2_app_kit::{
-    NSAutoresizingMaskOptions, NSEvent, NSImage, NSMenu, NSMenuItem, NSStatusBar, NSStatusItem,
-    NSVariableStatusItemLength, NSView,
+    NSAutoresizingMaskOptions, NSControlStateValueOff, NSControlStateValueOn, NSEvent, NSImage,
+    NSMenu, NSMenuItem, NSStatusBar, NSStatusItem, NSVariableStatusItemLength, NSView,
 };
 use tauri_nspanel::objc2_foundation::{
     MainThreadMarker, NSData, NSObjectProtocol, NSPoint, NSSize, NSString,
 };
 
-use crate::panel;
+use crate::{panel, settings};
 
 /// alpha only, AppKit tints a template image for the current menu bar
 static ICON: &[u8] = include_bytes!("../icons/menubar-template.png");
@@ -28,6 +28,10 @@ const ICON_HEIGHT: f64 = 16.5;
 const MENU_GAP: f64 = 4.0;
 
 const PEEK_HOLD: Duration = Duration::from_millis(150);
+
+// the menu is built once, so the toggles are found by tag to be re-checked
+const TAG_AUTOSTART: isize = 1;
+const TAG_DAEMON_TIED: isize = 2;
 
 /// main thread only, where AppKit requires it and every caller below runs
 struct StatusItem(Retained<NSStatusItem>);
@@ -114,9 +118,29 @@ define_class!(
             let Some(menu) = app.try_state::<StatusMenu>() else {
                 return;
             };
+            // settings can move without the menu being open, so read them back
+            // rather than trusting the state left from last time
+            sync_checks(&app, &menu.0);
+
             let below = NSPoint::new(0.0, self.bounds().size.height + MENU_GAP);
             menu.0
                 .popUpMenuPositioningItem_atLocation_inView(None, below, Some(self));
+        }
+
+        #[unsafe(method(toggleAutostart:))]
+        fn toggle_autostart(&self, _sender: Option<&AnyObject>) {
+            let app = &self.ivars().app;
+            let on = !settings::get(app).autostart;
+            // only remember it if the login item actually moved
+            if settings::set_autostart(app, on) {
+                settings::update(app, |s| s.autostart = on);
+            }
+        }
+
+        #[unsafe(method(toggleDaemonTied:))]
+        fn toggle_daemon_tied(&self, _sender: Option<&AnyObject>) {
+            let app = &self.ivars().app;
+            settings::update(app, |s| s.daemon_tied = !s.daemon_tied);
         }
 
         #[unsafe(method(quit:))]
@@ -165,25 +189,67 @@ pub fn init(app: &AppHandle) -> tauri::Result<()> {
     button.addSubview(&target);
 
     app.manage(ClickState::default());
-    app.manage(StatusMenu(quit_menu(mtm, &target)));
+    app.manage(StatusMenu(build_menu(mtm, &target)));
     app.manage(StatusItem(item));
 
     Ok(())
 }
 
-fn quit_menu(mtm: MainThreadMarker, target: &StatusTarget) -> Retained<NSMenu> {
-    let menu = NSMenu::new(mtm);
-    let quit = unsafe {
+fn item(
+    mtm: MainThreadMarker,
+    target: &StatusTarget,
+    title: &str,
+    action: Sel,
+    key: &str,
+) -> Retained<NSMenuItem> {
+    let item = unsafe {
         NSMenuItem::initWithTitle_action_keyEquivalent(
             NSMenuItem::alloc(mtm),
-            &NSString::from_str("Quit Tiles"),
-            Some(sel!(quit:)),
-            &NSString::from_str("q"),
+            &NSString::from_str(title),
+            Some(action),
+            &NSString::from_str(key),
         )
     };
-    unsafe { quit.setTarget(Some(target)) };
-    menu.addItem(&quit);
+    unsafe { item.setTarget(Some(target)) };
+    item
+}
+
+fn build_menu(mtm: MainThreadMarker, target: &StatusTarget) -> Retained<NSMenu> {
+    let menu = NSMenu::new(mtm);
+
+    let autostart = item(mtm, target, "Start at Login", sel!(toggleAutostart:), "");
+    autostart.setTag(TAG_AUTOSTART);
+    menu.addItem(&autostart);
+
+    let tied = item(
+        mtm,
+        target,
+        "Quit Daemon on Exit",
+        sel!(toggleDaemonTied:),
+        "",
+    );
+    tied.setTag(TAG_DAEMON_TIED);
+    menu.addItem(&tied);
+
+    menu.addItem(&NSMenuItem::separatorItem(mtm));
+    menu.addItem(&item(mtm, target, "Quit Tiles", sel!(quit:), "q"));
     menu
+}
+
+fn sync_checks(app: &AppHandle, menu: &NSMenu) {
+    let settings = settings::get(app);
+    for (tag, on) in [
+        (TAG_AUTOSTART, settings.autostart),
+        (TAG_DAEMON_TIED, settings.daemon_tied),
+    ] {
+        if let Some(item) = menu.itemWithTag(tag) {
+            item.setState(if on {
+                NSControlStateValueOn
+            } else {
+                NSControlStateValueOff
+            });
+        }
+    }
 }
 
 /// the panel loses key before the click that caused it is delivered, so this
