@@ -8,7 +8,7 @@ use tauri_nspanel::objc2::msg_send;
 use tauri_nspanel::objc2::rc::Retained;
 use tauri_nspanel::objc2::runtime::AnyObject;
 use tauri_nspanel::objc2_app_kit::{NSAnimationContext, NSScreen};
-use tauri_nspanel::objc2_foundation::{MainThreadMarker, NSPoint, NSRect, NSString};
+use tauri_nspanel::objc2_foundation::{MainThreadMarker, NSPoint, NSRect, NSSize, NSString};
 use tauri_nspanel::{
     CollectionBehavior, ManagerExt, PanelHandle, PanelLevel, StyleMask, WebviewWindowExt,
 };
@@ -37,6 +37,13 @@ pub const LABEL: &str = "panel";
 const CORNER_RADIUS: f64 = 17.0;
 
 const EDGE_MARGIN: f64 = 8.0;
+
+/// the frontend reports a height every frame, and a panel shorter than one
+/// row means it measured mid-teardown
+const MIN_HEIGHT: f64 = 40.0;
+
+/// kept clear of the dock even when the content would fill the screen
+const SCREEN_MARGIN: f64 = 16.0;
 
 /// the icon's own click blurs the panel first, so without this it reopens
 /// instead of closing
@@ -346,4 +353,45 @@ pub fn hide_panel(app: AppHandle) {
 #[tauri::command]
 pub fn panel_ready(app: AppHandle) {
     finish_warm_up(&app);
+}
+
+/// from the frontend's ResizeObserver, one call per animation frame
+#[tauri::command]
+pub fn resize_panel(app: AppHandle, height: f64) {
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || set_height(&handle, height));
+}
+
+/// cocoa anchors frames bottom-left, so a taller frame set without moving the
+/// origin grows upwards and tears the panel off the menu bar
+fn set_height(app: &AppHandle, requested: f64) {
+    let Ok(panel) = app.get_webview_panel(LABEL) else {
+        return;
+    };
+
+    let ns_panel = panel.as_panel();
+    let frame = ns_panel.frame();
+
+    // visibleFrame stops under the menu bar and above the dock, Tauri's
+    // Monitor reports the whole screen
+    let ceiling = match ns_panel.screen() {
+        Some(screen) => (screen.visibleFrame().size.height - SCREEN_MARGIN).max(MIN_HEIGHT),
+        None => requested.max(MIN_HEIGHT),
+    };
+    let height = requested.clamp(MIN_HEIGHT, ceiling);
+
+    // the observer fires on every frame of the height transition, so equal
+    // heights must cost nothing
+    if (height - frame.size.height).abs() < 0.5 {
+        return;
+    }
+
+    let top = frame.origin.y + frame.size.height;
+    ns_panel.setFrame_display(
+        NSRect::new(
+            NSPoint::new(frame.origin.x, top - height),
+            NSSize::new(frame.size.width, height),
+        ),
+        true,
+    );
 }

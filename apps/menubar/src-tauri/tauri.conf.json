@@ -16,7 +16,7 @@
         "label": "panel",
         "url": "index.html",
         "width": 380,
-        "height": 240,
+        "height": 170,
         "decorations": false,
         "resizable": false,
         "skipTaskbar": true,

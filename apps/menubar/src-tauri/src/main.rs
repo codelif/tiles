@@ -1,3 +1,5 @@
+mod account;
+mod clipboard;
 mod daemon;
 mod inference;
 mod panel;
@@ -20,9 +22,12 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             panel::hide_panel,
             panel::panel_ready,
+            panel::resize_panel,
+            clipboard::copy_text,
             daemon::daemon_health,
             inference::inference_state,
-            inference::inference_set
+            inference::inference_set,
+            account::account_state
         ])
         .setup(|app| {
             // LSUIElement covers the launch window before this runs
@@ -32,8 +37,9 @@ fn main() {
             settings::init(app.handle());
             panel::init(app.handle())?;
             tray::init(app.handle())?;
-            // before the supervisor, its first tick already reports inference
+            // before the supervisor, its first tick already reports both
             inference::init(app.handle());
+            account::init(app.handle());
             daemon::init(app.handle());
 
             panel::warm_up(app.handle());

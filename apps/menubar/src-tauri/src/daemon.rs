@@ -8,7 +8,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use crate::{inference, settings};
+use crate::{account, inference, settings};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -275,6 +275,7 @@ async fn supervise(app: AppHandle) {
                 },
             );
             inference::unknown(&app);
+            account::unknown(&app);
             starting_since = None;
             continue;
         }
@@ -284,6 +285,7 @@ async fn supervise(app: AppHandle) {
                 set(&app, Health::Up { version });
                 starting_since = None;
                 inference::poll(&app, &client).await;
+                account::poll(&app, &client).await;
             }
             // a daemon started by hand while we were down gets adopted on the
             // next tick, so a dead one is only ever reported, never restarted
@@ -296,6 +298,7 @@ async fn supervise(app: AppHandle) {
                     },
                 );
                 inference::unknown(&app);
+                account::unknown(&app);
                 starting_since = None;
             }
         }

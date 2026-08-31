@@ -22,12 +22,4 @@ requestAnimationFrame(() => {
   requestAnimationFrame(() => tell("panel_ready"));
 });
 
-// keydown not keyup, the panel should be gone before the key comes back up
-window.addEventListener("keydown", (event) => {
-  if (event.key === "Escape") {
-    event.preventDefault();
-    tell("hide_panel");
-  }
-});
-
 window.addEventListener("contextmenu", (event) => event.preventDefault());

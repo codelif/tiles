@@ -7,6 +7,26 @@
   /* must equal CORNER_RADIUS in panel.rs, a mismatch shows as a doubled corner */
   --radius-panel: 17px;
 
+  /* the highlight is a rounded rect inset from the panel edge, not a full-bleed
+     wash, so it needs its own inset and a radius derived from the panel's */
+  --row-inset: 5px;
+  --row-inset-y: 1.5px;
+  --row-pad-x: 9px;
+  --radius-row: calc(var(--radius-panel) - var(--row-inset));
+  --content-pad-x: 14px;
+
+  --hairline: 0.5px;
+  --hairline-inset: var(--row-inset);
+
+  --h-row: 22px;
+  --h-row-lg: 40px;
+  /* label, name and did, three lines */
+  --h-identity: 56px;
+  --h-nav-header: 34px;
+
+  --dur-push: 180ms;
+  --ease-push: cubic-bezier(0.32, 0.72, 0, 1);
+
   /* ── Type ─────────────────────────────────────────────── */
   --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
   --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
@@ -27,6 +47,7 @@
   --separator: rgba(0, 0, 0, 0.12);
   --row-highlight: rgba(0, 0, 0, 0.075);
   --fill-subtle: rgba(0, 0, 0, 0.05);
+  --fill-strong: rgba(0, 0, 0, 0.08);
 
   --status-green: #34c759;
   --status-amber: #ff9f0a;
@@ -55,6 +76,7 @@
     --separator: rgba(255, 255, 255, 0.15);
     --row-highlight: rgba(255, 255, 255, 0.13);
     --fill-subtle: rgba(255, 255, 255, 0.08);
+    --fill-strong: rgba(255, 255, 255, 0.12);
 
     --status-green: #30d158;
     --status-amber: #ff9f0a;
@@ -66,5 +88,12 @@
       0 0.5px 1px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.25);
 
     --surface: #232326;
+  }
+}
+
+/* turns every push into a swap without a second code path */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-push: 0ms;
   }
 }
