@@ -5,11 +5,12 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
+use crate::settings;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
-
 
 const PORT: u16 = 1729;
 
@@ -19,6 +20,14 @@ const POLL_STARTING: Duration = Duration::from_millis(500);
 
 /// past this a daemon that never answered is called down
 const START_TIMEOUT: Duration = Duration::from_secs(20);
+
+const INFERENCE_STOP_TIMEOUT: Duration = Duration::from_secs(10);
+const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
+const CONFIRM_POLL: Duration = Duration::from_millis(250);
+const CONFIRM_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// a wedged daemon must not keep the app alive, quitting always ends
+pub const QUIT_DEADLINE: Duration = Duration::from_secs(25);
 
 pub const HEALTH_EVENT: &str = "daemon://health";
 
@@ -34,12 +43,14 @@ pub struct Daemon {
     health: Mutex<Health>,
     /// some only while we own the process, an adopted daemon is not ours to kill
     child: Mutex<Option<Child>>,
+    quitting: AtomicBool,
 }
 
 pub fn init(app: &AppHandle) {
     app.manage(Daemon {
         health: Mutex::new(Health::Starting),
         child: Mutex::new(None),
+        quitting: AtomicBool::new(false),
     });
 
     let app = app.clone();
@@ -248,6 +259,12 @@ async fn supervise(app: AppHandle) {
         let starting = matches!(current(&app), Health::Starting);
         tokio::time::sleep(if starting { POLL_STARTING } else { POLL_UP }).await;
 
+        // the quit sequence owns the daemon past this point, and its confirm
+        // poll would race this one
+        if app.state::<Daemon>().quitting.load(Ordering::SeqCst) {
+            return;
+        }
+
         // a child of ours exiting is definitive, so ask before paying for a request
         if let Some(status) = reap(&app) {
             set(
@@ -284,4 +301,75 @@ async fn supervise(app: AppHandle) {
 #[tauri::command]
 pub fn daemon_health(app: AppHandle) -> Health {
     current(&app)
+}
+
+/// true only on the first ask, and only when the daemon is ours to stop
+pub fn begin_quit(app: &AppHandle) -> bool {
+    if !settings::get(app).daemon_tied || matches!(current(app), Health::Down { .. }) {
+        return false;
+    }
+
+    app.state::<Daemon>()
+        .quitting
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_ok()
+}
+
+/// stop everything the daemon is holding up, then the daemon, see [`begin_quit`]
+pub async fn quit(app: AppHandle) {
+    let client = reqwest::Client::builder()
+        .timeout(PING_TIMEOUT)
+        .build()
+        .expect("a client with only a timeout set always builds");
+    let base = format!("http://127.0.0.1:{PORT}");
+
+    // first, the daemon is the only thing that knows the inference server's pid
+    // and that server is setsid'd, so it outlives everything otherwise
+    match client
+        .get(format!("{base}/v1/tilekit/server/stop"))
+        .timeout(INFERENCE_STOP_TIMEOUT)
+        .send()
+        .await
+    {
+        Ok(res) if !res.status().is_success() => {
+            eprintln!("[daemon] inference stop answered {}", res.status());
+        }
+        Err(err) => eprintln!("[daemon] inference stop failed: {err}"),
+        _ => {}
+    }
+
+    // stop signals and returns without waiting, so the only way to know is to ask
+    if let Ok(res) = client
+        .get(format!("{base}/v1/tilekit/server/ping"))
+        .send()
+        .await
+        && res.status().is_success()
+    {
+        eprintln!("[daemon] inference still up after stop, leaving it running");
+    }
+
+    // exactly once, a second call unwraps a taken oneshot and panics the daemon.
+    // a dropped connection here is the graceful shutdown, not a failure
+    let _ = client
+        .get(format!("{base}/shutdown"))
+        .timeout(SHUTDOWN_TIMEOUT)
+        .send()
+        .await;
+
+    let deadline = Instant::now() + CONFIRM_TIMEOUT;
+    while Instant::now() < deadline {
+        if reap(&app).is_some() || ping(&client).await.is_none() {
+            return;
+        }
+        tokio::time::sleep(CONFIRM_POLL).await;
+    }
+
+    // asking did not work, and only a child of ours can be killed
+    let child = app.state::<Daemon>().child.lock().unwrap().take();
+    if let Some(mut child) = child {
+        let _ = child.kill();
+        let _ = child.wait();
+    } else {
+        eprintln!("[daemon] adopted daemon ignored /shutdown, leaving it running");
+    }
 }

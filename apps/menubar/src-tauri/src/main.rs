@@ -48,6 +48,22 @@ fn main() {
                 panel::dismiss(app, mode);
             }
         })
-        .run(tauri::generate_context!())
-        .expect("failed to start the Tiles menu bar app");
+        .build(tauri::generate_context!())
+        .expect("failed to start the Tiles menu bar app")
+        .run(|app, event| {
+            // every exit path lands here, so the quit item stays a plain exit
+            if let tauri::RunEvent::ExitRequested { api, .. } = event
+                && daemon::begin_quit(app)
+            {
+                // read back with try_recv, so it has to be set before returning
+                api.prevent_exit();
+
+                let app = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = tokio::time::timeout(daemon::QUIT_DEADLINE, daemon::quit(app.clone()))
+                        .await;
+                    app.exit(0);
+                });
+            }
+        });
 }
