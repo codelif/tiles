@@ -3,6 +3,7 @@ mod clipboard;
 mod daemon;
 mod inference;
 mod panel;
+mod remote;
 mod sessions;
 mod settings;
 mod tray;
@@ -29,7 +30,9 @@ fn main() {
             inference::inference_state,
             inference::inference_set,
             account::account_state,
-            sessions::sessions_state
+            sessions::sessions_state,
+            remote::remote_state,
+            remote::remote_set
         ])
         .setup(|app| {
             // LSUIElement covers the launch window before this runs
@@ -43,6 +46,7 @@ fn main() {
             inference::init(app.handle());
             account::init(app.handle());
             sessions::init(app.handle());
+            remote::init(app.handle());
             daemon::init(app.handle());
 
             panel::warm_up(app.handle());

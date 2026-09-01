@@ -1,41 +1,22 @@
 <script lang="ts">
-  import { invoke } from "@tauri-apps/api/core";
   import { onDestroy } from "svelte";
 
   import Avatar from "../lib/Avatar.svelte";
   import Hairline from "../lib/Hairline.svelte";
   import Navbar from "../lib/Navbar.svelte";
   import Row from "../lib/Row.svelte";
+  import { Copier } from "../lib/copy.svelte";
   import { nav } from "../nav.svelte";
-  import { account, truncateDid } from "../state.svelte";
+  import { account, truncateMiddle } from "../state.svelte";
 
-  const COPIED_FOR = 1200;
+  const shortDid = (did: string) => truncateMiddle(did, 16, 6);
 
   // the view is only ever pushed from a local account, but the daemon can go
   // down while it is open
   const local = $derived(account.value.state === "local" ? account.value : null);
 
-  let copied = $state(false);
-  let timer = 0;
-
-  onDestroy(() => clearTimeout(timer));
-
-  async function copyDid() {
-    if (local === null) return;
-
-    try {
-      // the full did, the row only shows it truncated
-      await invoke("copy_text", { text: local.did });
-    } catch (err) {
-      // saying Copied when nothing reached the pasteboard is worse than silence
-      console.error("[account]", err);
-      return;
-    }
-
-    copied = true;
-    clearTimeout(timer);
-    timer = setTimeout(() => (copied = false), COPIED_FOR);
-  }
+  const copier = new Copier();
+  onDestroy(() => copier.dispose());
 </script>
 
 <Navbar title="Account" onback={() => nav.pop()} />
@@ -44,7 +25,7 @@
 
 <Row
   title={local?.nickname ?? "No account"}
-  sub={local ? truncateDid(local.did) : ""}
+  sub={local ? shortDid(local.did) : ""}
   size="large"
   dimmed={local === null}
 >
@@ -62,12 +43,17 @@
     {/snippet}
   </Row>
 
-  <Row title="DID" dimmed={local === null} onselect={local ? copyDid : undefined}>
+  <!-- the full did, the row only shows it truncated -->
+  <Row
+    title="DID"
+    dimmed={local === null}
+    onselect={local ? () => copier.copy(local.did) : undefined}
+  >
     {#snippet trailing()}
-      {#if copied}
+      {#if copier.copied}
         <span class="value">Copied</span>
       {:else}
-        <span class="value value--mono">{local ? truncateDid(local.did) : "—"}</span>
+        <span class="value value--mono">{local ? shortDid(local.did) : "—"}</span>
       {/if}
     {/snippet}
   </Row>

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
+  import { onDestroy } from "svelte";
 
   import Avatar from "../lib/Avatar.svelte";
   import Chevron from "../lib/Chevron.svelte";
@@ -7,13 +8,16 @@
   import Row from "../lib/Row.svelte";
   import SectionLabel from "../lib/SectionLabel.svelte";
   import SessionList from "../lib/SessionList.svelte";
+  import Toggle from "../lib/Toggle.svelte";
+  import { Copier } from "../lib/copy.svelte";
   import { nav } from "../nav.svelte";
-  import { account, health, inference, sessions, truncateDid } from "../state.svelte";
+  import { account, health, inference, remote, sessions, truncateMiddle } from "../state.svelte";
 
   /** how many fit under the account row before the panel gets tall */
   const PREVIEW = 3;
 
-  let pending = $state(false);
+  let inferencePending = $state(false);
+  let sharePending = $state(false);
 
   const label = $derived.by(() => {
     switch (health.value.state) {
@@ -39,7 +43,7 @@
         return {
           name: account.value.nickname,
           title: account.value.nickname,
-          sub: truncateDid(account.value.did),
+          sub: truncateMiddle(account.value.did, 16, 6),
         };
       case "none":
         return { name: "?", title: "No account yet", sub: "Run tiles account create" };
@@ -53,16 +57,49 @@
   // pushing would show exactly what is already on screen
   const hasMore = $derived(recent.length > PREVIEW);
 
-  async function toggle() {
-    if (!reachable || pending) return;
+  // the proxy forwards straight to the local server, so a ticket handed out
+  // with inference down answers nothing
+  const canShare = $derived(inference.value.power === "on");
+  const sharing = $derived(remote.value.state === "sharing" ? remote.value : null);
+  const shareSub = $derived.by(() => {
+    switch (remote.value.state) {
+      // still shared, and the only way to stop it is this row
+      case "sharing":
+        return canShare ? "Reachable by peers" : "Sharing, inference is off";
+      case "off":
+        return canShare ? "Off" : "Start inference first";
+      case "unknown":
+        return "—";
+    }
+  });
 
-    pending = true;
+  const copier = new Copier();
+  onDestroy(() => copier.dispose());
+
+  async function share() {
+    // turning it off has to stay reachable even once inference has gone
+    if (sharePending || (!canShare && sharing === null)) return;
+
+    sharePending = true;
+    try {
+      await invoke("remote_set", { on: sharing === null });
+    } catch (err) {
+      console.error("[remote]", err);
+    } finally {
+      sharePending = false;
+    }
+  }
+
+  async function toggle() {
+    if (!reachable || inferencePending) return;
+
+    inferencePending = true;
     try {
       await invoke("inference_set", { on: !on });
     } catch (err) {
       console.error("[inference]", err);
     } finally {
-      pending = false;
+      inferencePending = false;
     }
   }
 </script>
@@ -76,17 +113,12 @@
 
 <Row title="Inference" sub={model} size="large" dimmed={!reachable}>
   {#snippet trailing()}
-    <button
-      class="toggle"
-      role="switch"
-      aria-checked={on}
-      aria-label="Inference server"
-      data-on={on}
-      disabled={!reachable || pending}
-      onclick={toggle}
-    >
-      <span class="toggle__knob"></span>
-    </button>
+    <Toggle
+      {on}
+      disabled={!reachable || inferencePending}
+      label="Inference server"
+      onchange={toggle}
+    />
   {/snippet}
 </Row>
 
@@ -131,56 +163,62 @@
   {/if}
 </div>
 
+<Hairline />
+
+<div class="section">
+  <SectionLabel text="Remote inference" />
+
+  <Row
+    size="large"
+    title="Share inference"
+    sub={shareSub}
+    dimmed={remote.value.state === "unknown" || (!canShare && sharing === null)}
+  >
+    {#snippet trailing()}
+      <Toggle
+        on={sharing !== null}
+        disabled={sharePending || (!canShare && sharing === null)}
+        label="Share inference"
+        onchange={share}
+      />
+    {/snippet}
+  </Row>
+
+  {#if sharing}
+    <!-- the full ticket, the row only shows it truncated -->
+    <Row title="Ticket" onselect={() => copier.copy(sharing.ticket)}>
+      {#snippet trailing()}
+        {#if copier.copied}
+          <span class="value">Copied</span>
+        {:else}
+          <span class="value value--mono">{truncateMiddle(sharing.ticket, 10, 6)}</span>
+        {/if}
+      {/snippet}
+    </Row>
+  {/if}
+</div>
+
 <style>
   .section {
     padding: 2px 0 4px;
   }
 
-  .count {
+  .count,
+  .value {
     flex: none;
     font-size: var(--fs-small);
     color: var(--text-tertiary);
   }
 
-  /* the switch is the one control that has to read as AppKit rather than web */
-  .toggle {
-    --toggle-w: 54px;
-    --toggle-h: 24px;
-    --knob-w: 32px;
-    --knob-h: 20px;
-    --dur-fade: 120ms;
-
-    position: relative;
-    flex: none;
-    width: var(--toggle-w);
-    height: var(--toggle-h);
-    border: none;
-    border-radius: calc(var(--toggle-h) / 2);
-    background: var(--track-off);
-    box-shadow: inset 0 0 0 0.5px var(--track-rim);
-    transition: background var(--dur-fade) ease-out;
+  .value {
+    max-width: 55%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
-  .toggle[data-on="true"] {
-    background: var(--accent);
-    box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.06);
-  }
-
-  .toggle__knob {
-    position: absolute;
-    top: 2px;
-    left: 2px;
-    width: var(--knob-w);
-    height: var(--knob-h);
-    border-radius: calc(var(--knob-h) / 2);
-    background: var(--knob-off);
-    box-shadow: var(--knob-shadow);
-    transition: transform var(--dur-fade) var(--ease-push);
-  }
-
-  .toggle[data-on="true"] .toggle__knob {
-    transform: translateX(calc(var(--toggle-w) - var(--knob-w) - 4px));
-    background: var(--knob);
+  .value--mono {
+    font-family: var(--font-mono);
   }
 
   .status {
@@ -209,12 +247,5 @@
   .status__label {
     font-size: var(--fs-status);
     color: var(--text-secondary);
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .toggle,
-    .toggle__knob {
-      transition: none;
-    }
   }
 </style>
