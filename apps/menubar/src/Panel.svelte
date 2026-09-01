@@ -3,9 +3,11 @@
   import { onMount } from "svelte";
 
   import Stack from "./lib/Stack.svelte";
+  import { focus } from "./focus.svelte";
   import { nav, type ViewId } from "./nav.svelte";
   import { connect } from "./state.svelte";
   import AccountView from "./views/AccountView.svelte";
+  import ModelView from "./views/ModelView.svelte";
   import RootView from "./views/RootView.svelte";
   import SessionsView from "./views/SessionsView.svelte";
 
@@ -38,15 +40,35 @@
     };
   });
 
+  // a push leaves both views registered until the animation ends
+  $effect(() => {
+    void nav.top;
+    focus.reset();
+  });
+
   // keydown not keyup, the panel should be gone before the key comes back up
   function onkeydown(event: KeyboardEvent) {
-    if (event.key !== "Escape") return;
-    event.preventDefault();
-
-    if (nav.depth > 0) {
-      nav.pop();
-    } else {
-      void invoke("hide_panel").catch(() => {});
+    switch (event.key) {
+      case "Escape":
+        event.preventDefault();
+        if (nav.depth > 0) {
+          nav.pop();
+        } else {
+          void invoke("hide_panel").catch(() => {});
+        }
+        return;
+      case "ArrowDown":
+        event.preventDefault();
+        focus.move(1);
+        return;
+      case "ArrowUp":
+        event.preventDefault();
+        focus.move(-1);
+        return;
+      case "Enter":
+        event.preventDefault();
+        focus.activate();
+        return;
     }
   }
 </script>
@@ -60,6 +82,8 @@
         <AccountView />
       {:else if id === "sessions"}
         <SessionsView />
+      {:else if id === "model"}
+        <ModelView />
       {:else}
         <RootView />
       {/if}
@@ -70,8 +94,13 @@
 <style>
   .panel {
     width: 100%;
-    padding: 10px 0;
+    /* no top padding, the masthead floods to the panel's own edge */
+    padding-bottom: 4px;
     border-radius: var(--radius-panel);
-    background: var(--surface);
+    /* the yellow masthead is a rect, the corners have to clip it */
+    overflow: hidden;
+    /* black on a dark desktop needs an edge of its own */
+    box-shadow: inset 0 0 0 var(--hairline) var(--rule);
+    background: var(--void);
   }
 </style>

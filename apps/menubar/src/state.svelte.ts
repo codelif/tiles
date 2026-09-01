@@ -7,7 +7,20 @@ export type Health =
   | { state: "up"; version: string };
 
 export type Power = "unknown" | "off" | "starting" | "on";
-export type Inference = { power: Power; model: string | null };
+
+/** the `[llama]` table, every flag optional in the daemon too */
+export type Llama = {
+  contextLength: number | null;
+  gpuLayers: number | null;
+  offloadKqv: boolean | null;
+  batchSize: number | null;
+  mtp: boolean | null;
+  nCpuMoe: number | null;
+  flashAttn: boolean | null;
+  noMmap: boolean | null;
+};
+
+export type Inference = { power: Power; model: string | null; llama: Llama | null };
 
 export type Account =
   | { state: "unknown" }
@@ -24,7 +37,7 @@ export type Remote =
 
 export const health = $state<{ value: Health }>({ value: { state: "starting" } });
 export const inference = $state<{ value: Inference }>({
-  value: { power: "unknown", model: null },
+  value: { power: "unknown", model: null, llama: null },
 });
 export const account = $state<{ value: Account }>({ value: { state: "unknown" } });
 export const sessions = $state<{ value: Sessions }>({ value: { state: "unknown" } });

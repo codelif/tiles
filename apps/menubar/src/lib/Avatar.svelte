@@ -1,7 +1,11 @@
 <script lang="ts">
-  let { nickname, size = 32 }: { nickname: string; size?: number } = $props();
+  interface Props {
+    nickname: string;
+    size?: number;
+  }
 
-  // no image to load, the daemon stores a did and a name and nothing else
+  let { nickname, size = 22 }: Props = $props();
+
   const initials = $derived(
     nickname
       .split(/[.\-\s_]+/)
@@ -12,7 +16,8 @@
   );
 </script>
 
-<div class="avatar" style="width: {size}px; height: {size}px; font-size: {Math.round(size * 0.375)}px">
+<!-- square and cut, so it sits in the same family as the provider marks -->
+<div class="avatar" style="--size: {size}px; --fs: {Math.round(size * 0.4)}px">
   {initials}
 </div>
 
@@ -22,10 +27,21 @@
     align-items: center;
     justify-content: center;
     flex: none;
-    border-radius: 50%;
-    background: var(--fill-strong);
-    color: var(--text-secondary);
-    font-weight: var(--fw-semibold);
+    width: var(--size);
+    height: var(--size);
+    clip-path: polygon(
+      0 0,
+      calc(100% - var(--cut)) 0,
+      100% var(--cut),
+      100% 100%,
+      0 100%
+    );
+    background: var(--steel);
+    color: var(--row-mark, var(--ash));
+    font-family: var(--font-mono);
+    font-size: var(--fs);
+    font-weight: 500;
     letter-spacing: 0.02em;
+    transition: color var(--dur-state) ease-out;
   }
 </style>

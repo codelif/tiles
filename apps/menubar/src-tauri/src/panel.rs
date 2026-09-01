@@ -34,7 +34,7 @@ use class::TilesPanel;
 pub const LABEL: &str = "panel";
 
 /// must equal `--radius-panel` in tokens.css, both clip the same edge
-const CORNER_RADIUS: f64 = 17.0;
+const CORNER_RADIUS: f64 = 10.0;
 
 const EDGE_MARGIN: f64 = 8.0;
 

@@ -1,3 +1,4 @@
+@import "./fonts.css";
 @import "./tokens.css";
 
 * {
@@ -19,16 +20,16 @@ body,
   /* not 100%, the panel reports its content height and the window follows */
   height: auto;
   /* the window is clear, so the page owns the surface */
-  background: var(--surface);
+  background: var(--void);
   overflow: hidden;
 }
 
 body {
   font-family: var(--font-ui);
-  font-size: var(--fs-row);
-  color: var(--text-primary);
+  font-size: var(--fs-title);
+  color: var(--bone);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
-  /* sits beside real AppKit type, synthesised faces do not match */
+  /* geist ships the weights it needs, a synthesised bold is not one of them */
   font-synthesis: none;
 }

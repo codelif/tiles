@@ -107,7 +107,7 @@
      than letting both render through each other */
   .view {
     width: 100%;
-    background: var(--surface);
+    background: var(--void);
   }
 
   .view[data-anim] {

@@ -30,11 +30,26 @@ pub enum Power {
     On,
 }
 
+/// the `[llama]` table, the flags the runtime was launched with
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Llama {
+    pub context_length: Option<u32>,
+    pub gpu_layers: Option<i32>,
+    pub offload_kqv: Option<bool>,
+    pub batch_size: Option<u32>,
+    pub mtp: Option<bool>,
+    pub n_cpu_moe: Option<u32>,
+    pub flash_attn: Option<bool>,
+    pub no_mmap: Option<bool>,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct State {
     pub power: Power,
     /// `[model] current`, what the daemon is configured for
     pub model: Option<String>,
+    pub llama: Option<Llama>,
 }
 
 struct Inference {
@@ -54,6 +69,7 @@ pub fn init(app: &AppHandle) {
         state: Mutex::new(State {
             power: Power::Unknown,
             model: None,
+            llama: None,
         }),
         starting_since: Mutex::new(None),
         desired: Mutex::new(None),
@@ -127,13 +143,25 @@ pub async fn poll(app: &AppHandle, client: &reqwest::Client) {
         *app.state::<Inference>().starting_since.lock().unwrap() = None;
     }
 
-    let model = match current(app).model {
-        known @ Some(_) => known,
-        // read once, the spec only changes when someone runs the cli
-        None => model_name(client).await,
+    // /config is a config-file read with no db and no keychain behind it, so it
+    // is cheap enough to re-read rather than cache and go stale after a cli
+    // `model use`
+    let (model, llama) = match config(client).await {
+        Some(read) => read,
+        None => {
+            let held = current(app);
+            (held.model, held.llama)
+        }
     };
 
-    set(app, State { power, model });
+    set(
+        app,
+        State {
+            power,
+            model,
+            llama,
+        },
+    );
     reconcile(app, client, power).await;
 }
 
@@ -162,15 +190,44 @@ async fn reconcile(app: &AppHandle, client: &reqwest::Client, power: Power) {
     let _ = request(app, client, on).await;
 }
 
-/// the config blob carries the user's did, so only this field crosses into the
-/// webview
-async fn model_name(client: &reqwest::Client) -> Option<String> {
+/// the config blob also carries the user's did and data paths, so only these two
+/// branches cross into the webview
+async fn config(client: &reqwest::Client) -> Option<(Option<String>, Option<Llama>)> {
     let res = client.get(daemon::url("/config")).send().await.ok()?;
+    if !res.status().is_success() {
+        return None;
+    }
     // reqwest is built without its json feature, serde_json is already here
-    let config: serde_json::Value = serde_json::from_str(&res.text().await.ok()?).ok()?;
-    let spec = config.get("model")?.get("current")?.as_str()?;
+    let body: serde_json::Value = serde_json::from_str(&res.text().await.ok()?).ok()?;
+
+    Some((model_spec(&body), llama(&body)))
+}
+
+fn model_spec(body: &serde_json::Value) -> Option<String> {
+    let spec = body.get("model")?.get("current")?.as_str()?;
 
     (!spec.is_empty()).then(|| spec.to_owned())
+}
+
+/// every field is optional in the daemon too, an absent flag means its default
+fn llama(body: &serde_json::Value) -> Option<Llama> {
+    let table = body.get("llama")?;
+    let int = |key: &str| table.get(key).and_then(|v| v.as_u64()).map(|v| v as u32);
+    let flag = |key: &str| table.get(key).and_then(|v| v.as_bool());
+
+    Some(Llama {
+        context_length: int("context_length"),
+        gpu_layers: table
+            .get("gpu_layers")
+            .and_then(|v| v.as_i64())
+            .map(|v| v as i32),
+        offload_kqv: flag("offload_kqv"),
+        batch_size: int("batch_size"),
+        mtp: flag("mtp"),
+        n_cpu_moe: int("n_cpu_moe"),
+        flash_attn: flag("flash_attn"),
+        no_mmap: flag("no_mmap"),
+    })
 }
 
 async fn request(app: &AppHandle, client: &reqwest::Client, on: bool) -> Result<(), String> {

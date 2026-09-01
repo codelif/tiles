@@ -1,7 +1,12 @@
 <script lang="ts">
   import Chevron from "./Chevron.svelte";
 
-  let { title, onback }: { title: string; onback: () => void } = $props();
+  interface Props {
+    title: string;
+    onback: () => void;
+  }
+
+  let { title, onback }: Props = $props();
 </script>
 
 <div class="navbar">
@@ -15,29 +20,29 @@
   .navbar {
     display: flex;
     align-items: center;
-    gap: 6px;
-    height: var(--h-nav-header);
-    padding: 0 calc(var(--row-inset) + 4px);
+    gap: 8px;
+    height: var(--h-nav);
+    padding: 0 var(--pad-x);
   }
 
   .navbar__back {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 26px;
-    height: 26px;
+    flex: none;
+    width: 20px;
+    height: 20px;
     border: none;
-    border-radius: 8px;
     background: transparent;
   }
 
   .navbar__back:hover {
-    background: var(--row-highlight);
+    color: var(--signal);
   }
 
   .navbar__title {
-    font-size: var(--fs-row);
-    font-weight: var(--fw-semibold);
-    color: var(--text-primary);
+    font-size: var(--fs-title);
+    font-weight: 500;
+    color: var(--bone);
   }
 </style>

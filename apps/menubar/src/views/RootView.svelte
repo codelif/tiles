@@ -4,38 +4,55 @@
 
   import Avatar from "../lib/Avatar.svelte";
   import Chevron from "../lib/Chevron.svelte";
-  import Hairline from "../lib/Hairline.svelte";
+  import Chip from "../lib/Chip.svelte";
+  import Masthead, { type Mode } from "../lib/Masthead.svelte";
+  import ProviderMark from "../lib/ProviderMark.svelte";
   import Row from "../lib/Row.svelte";
-  import SectionLabel from "../lib/SectionLabel.svelte";
+  import Switch from "../lib/Switch.svelte";
   import SessionList from "../lib/SessionList.svelte";
-  import Toggle from "../lib/Toggle.svelte";
+  import Zone from "../lib/Zone.svelte";
   import { Copier } from "../lib/copy.svelte";
+  import { contextLabel, describe } from "../lib/model";
   import { nav } from "../nav.svelte";
   import { account, health, inference, remote, sessions, truncateMiddle } from "../state.svelte";
 
-  /** how many fit under the account row before the panel gets tall */
+  /** how many fit under the masthead before the panel gets tall */
   const PREVIEW = 3;
+
+  const copier = new Copier();
+  onDestroy(() => copier.dispose());
 
   let inferencePending = $state(false);
   let sharePending = $state(false);
 
-  const label = $derived.by(() => {
-    switch (health.value.state) {
-      case "up":
-        return `Daemon running · ${health.value.version}`;
-      case "starting":
-        return "Starting…";
-      case "down":
-        return health.value.reason.charAt(0).toUpperCase() + health.value.reason.slice(1);
-    }
+  const power = $derived(inference.value.power);
+  const on = $derived(power === "on" || power === "starting");
+
+  const mode = $derived.by<Mode>(() => {
+    if (health.value.state === "down") return "down";
+    if (health.value.state === "starting") return "connecting";
+    if (power === "starting") return "starting";
+    return power === "on" ? "running" : "idle";
   });
 
-  // starting counts as on, the switch shows where it is heading
-  const on = $derived(inference.value.power === "on" || inference.value.power === "starting");
-  const reachable = $derived(inference.value.power !== "unknown");
+  const status = $derived.by(() => {
+    if (health.value.state === "down") return health.value.reason;
+    if (health.value.state === "starting") return "Connecting";
 
-  // the spec is org-qualified and the org is noise at 380px
-  const model = $derived(inference.value.model?.split("/").at(-1) ?? "No model configured");
+    const version = health.value.version;
+    if (power === "starting") return `Starting · ${version}`;
+    return power === "on" ? `Running · ${version}` : `Idle · ${version}`;
+  });
+
+  const model = $derived(inference.value.model ? describe(inference.value.model) : null);
+  const modelSub = $derived.by(() => {
+    const parts: string[] = [];
+    const context = inference.value.llama?.contextLength;
+    if (context) parts.push(`${contextLabel(context)} context`);
+    if (model?.format) parts.push(model.format);
+
+    return parts.join(" · ");
+  });
 
   const identity = $derived.by(() => {
     switch (account.value.state) {
@@ -47,7 +64,6 @@
         };
       case "none":
         return { name: "?", title: "No account yet", sub: "Run tiles account create" };
-      // nothing to report rather than nothing to report yet
       case "unknown":
         return { name: "?", title: "—", sub: "" };
     }
@@ -59,7 +75,7 @@
 
   // the proxy forwards straight to the local server, so a ticket handed out
   // with inference down answers nothing
-  const canShare = $derived(inference.value.power === "on");
+  const canShare = $derived(power === "on");
   const sharing = $derived(remote.value.state === "sharing" ? remote.value : null);
   const shareSub = $derived.by(() => {
     switch (remote.value.state) {
@@ -73,26 +89,8 @@
     }
   });
 
-  const copier = new Copier();
-  onDestroy(() => copier.dispose());
-
-  async function share() {
-    // turning it off has to stay reachable even once inference has gone
-    if (sharePending || (!canShare && sharing === null)) return;
-
-    sharePending = true;
-    try {
-      await invoke("remote_set", { on: sharing === null });
-    } catch (err) {
-      console.error("[remote]", err);
-    } finally {
-      sharePending = false;
-    }
-  }
-
   async function toggle() {
-    if (!reachable || inferencePending) return;
-
+    if (inferencePending || health.value.state !== "up") return;
     inferencePending = true;
     try {
       await invoke("inference_set", { on: !on });
@@ -102,150 +100,111 @@
       inferencePending = false;
     }
   }
+
+  async function share() {
+    // turning it off has to stay reachable even once inference has gone
+    if (sharePending || (!canShare && sharing === null)) return;
+    sharePending = true;
+    try {
+      await invoke("remote_set", { on: sharing === null });
+    } catch (err) {
+      console.error("[remote]", err);
+    } finally {
+      sharePending = false;
+    }
+  }
 </script>
 
-<div class="status">
-  <span class="dot" data-state={health.value.state}></span>
-  <span class="status__label">{label}</span>
-</div>
+<Masthead
+  {mode}
+  {status}
+  {on}
+  disabled={health.value.state !== "up"}
+  ontoggle={toggle}
+/>
 
-<Hairline />
+<Zone label="Model">
+  {#if model}
+    <Row
+      size="large"
+      title={model.name}
+      sub={modelSub}
+      submono
+      onselect={() => nav.push("model")}
+    >
+      {#snippet leading()}
+        <ProviderMark provider={model.provider} />
+      {/snippet}
+      {#snippet trailing()}
+        {#if model.quant}<Chip text={model.quant} />{/if}
+        <Chevron />
+      {/snippet}
+    </Row>
+  {:else}
+    <Row size="large" title="No model configured" sub="Run tiles model use" dimmed>
+      {#snippet leading()}
+        <ProviderMark provider="generic" />
+      {/snippet}
+    </Row>
+  {/if}
+</Zone>
 
-<Row title="Inference" sub={model} size="large" dimmed={!reachable}>
-  {#snippet trailing()}
-    <Toggle
-      {on}
-      disabled={!reachable || inferencePending}
-      label="Inference server"
-      onchange={toggle}
-    />
-  {/snippet}
-</Row>
-
-<Hairline />
-
-<Row
-  label="Local identity"
-  title={identity.title}
-  sub={identity.sub}
-  size="identity"
-  dimmed={account.value.state === "unknown"}
-  onselect={account.value.state === "local" ? () => nav.push("account") : undefined}
->
-  {#snippet leading()}
-    <Avatar nickname={identity.name} />
-  {/snippet}
-  {#snippet trailing()}
-    {#if account.value.state === "local"}<Chevron />{/if}
-  {/snippet}
-</Row>
-
-<Hairline />
-
-<div class="section">
-  <SectionLabel text="Sessions" />
-
+<Zone label="Sessions">
   {#if recent.length > 0}
     <SessionList sessions={recent.slice(0, PREVIEW)} />
-
     {#if hasMore}
-      <Row title="All sessions" accent onselect={() => nav.push("sessions")}>
+      <Row title="All sessions" tone="signal" onselect={() => nav.push("sessions")}>
         {#snippet trailing()}
-          <span class="count">{recent.length}</span>
+          <Chip text={String(recent.length)} />
           <Chevron />
         {/snippet}
       </Row>
     {/if}
-  {:else if sessions.value.state === "ready"}
-    <Row size="large" title="No sessions yet" sub="Start one with tiles run" dimmed />
   {:else}
-    <Row size="large" title="—" dimmed />
+    <Row title={sessions.value.state === "ready" ? "No chats yet" : "—"} dimmed />
   {/if}
-</div>
+</Zone>
 
-<Hairline />
-
-<div class="section">
-  <SectionLabel text="Remote inference" />
-
+<Zone label="Account">
   <Row
     size="large"
-    title="Share inference"
-    sub={shareSub}
-    dimmed={remote.value.state === "unknown" || (!canShare && sharing === null)}
+    title={identity.title}
+    sub={identity.sub}
+    submono={account.value.state === "local"}
+    dimmed={account.value.state !== "local"}
+    onselect={account.value.state === "local" ? () => nav.push("account") : undefined}
   >
+    {#snippet leading()}
+      <Avatar nickname={identity.name} />
+    {/snippet}
     {#snippet trailing()}
-      <Toggle
+      {#if account.value.state === "local"}<Chevron />{/if}
+    {/snippet}
+  </Row>
+</Zone>
+
+<Zone label="Remote">
+  <Row title="Share inference" sub={shareSub} dimmed={remote.value.state === "unknown"}>
+    {#snippet trailing()}
+      <Switch
         on={sharing !== null}
-        disabled={sharePending || (!canShare && sharing === null)}
+        disabled={!canShare && sharing === null}
+        pending={sharePending}
         label="Share inference"
         onchange={share}
       />
     {/snippet}
   </Row>
-
   {#if sharing}
-    <!-- the full ticket, the row only shows it truncated -->
-    <Row title="Ticket" onselect={() => copier.copy(sharing.ticket)}>
+    <Row
+      key="Ticket"
+      mono
+      title={truncateMiddle(sharing.ticket, 14, 7)}
+      onselect={() => copier.copy(sharing.ticket)}
+    >
       {#snippet trailing()}
-        {#if copier.copied}
-          <span class="value">Copied</span>
-        {:else}
-          <span class="value value--mono">{truncateMiddle(sharing.ticket, 10, 6)}</span>
-        {/if}
+        <Chip text={copier.copied ? "Copied" : "Copy"} tone={copier.copied ? "signal" : "default"} />
       {/snippet}
     </Row>
   {/if}
-</div>
-
-<style>
-  .section {
-    padding: 2px 0 4px;
-  }
-
-  .count,
-  .value {
-    flex: none;
-    font-size: var(--fs-small);
-    color: var(--text-tertiary);
-  }
-
-  .value {
-    max-width: 55%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .value--mono {
-    font-family: var(--font-mono);
-  }
-
-  .status {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 2px var(--content-pad-x);
-  }
-
-  .dot {
-    flex: none;
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: var(--status-off);
-  }
-
-  .dot[data-state="up"] {
-    background: var(--status-green);
-  }
-
-  .dot[data-state="starting"] {
-    background: var(--status-amber);
-  }
-
-  .status__label {
-    font-size: var(--fs-status);
-    color: var(--text-secondary);
-  }
-</style>
+</Zone>
