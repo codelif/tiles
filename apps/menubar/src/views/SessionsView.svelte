@@ -9,7 +9,7 @@
   const all = $derived(sessions.value.state === "ready" ? sessions.value.sessions : []);
 </script>
 
-<Navbar title="Sessions" onback={() => nav.pop()} />
+<Navbar title="Chats" onback={() => nav.pop()} />
 
 <Zone label="Recent">
   {#if all.length > 0}

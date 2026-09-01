@@ -5,6 +5,8 @@
   import Avatar from "../lib/Avatar.svelte";
   import Chevron from "../lib/Chevron.svelte";
   import Chip from "../lib/Chip.svelte";
+  import CopyMark from "../lib/CopyMark.svelte";
+  import Footer from "../lib/Footer.svelte";
   import Masthead, { type Mode } from "../lib/Masthead.svelte";
   import ProviderMark from "../lib/ProviderMark.svelte";
   import Row from "../lib/Row.svelte";
@@ -35,13 +37,16 @@
     return power === "on" ? "running" : "idle";
   });
 
-  const status = $derived.by(() => {
-    if (health.value.state === "down") return health.value.reason;
-    if (health.value.state === "starting") return "Connecting";
-
-    const version = health.value.version;
-    if (power === "starting") return `Starting · ${version}`;
-    return power === "on" ? `Running · ${version}` : `Idle · ${version}`;
+  // the masthead is the state, so the footer only carries what it cannot say
+  const note = $derived.by(() => {
+    switch (health.value.state) {
+      case "down":
+        return health.value.reason;
+      case "starting":
+        return "Connecting";
+      case "up":
+        return health.value.version;
+    }
   });
 
   const model = $derived(inference.value.model ? describe(inference.value.model) : null);
@@ -115,13 +120,25 @@
   }
 </script>
 
-<Masthead
-  {mode}
-  {status}
-  {on}
-  disabled={health.value.state !== "up"}
-  ontoggle={toggle}
-/>
+<Masthead {mode} {on} disabled={health.value.state !== "up"} ontoggle={toggle} />
+
+<Zone label="Account">
+  <Row
+    size="large"
+    title={identity.title}
+    sub={identity.sub}
+    submono={account.value.state === "local"}
+    dimmed={account.value.state !== "local"}
+    onselect={account.value.state === "local" ? () => nav.push("account") : undefined}
+  >
+    {#snippet leading()}
+      <Avatar nickname={identity.name} />
+    {/snippet}
+    {#snippet trailing()}
+      {#if account.value.state === "local"}<Chevron />{/if}
+    {/snippet}
+  </Row>
+</Zone>
 
 <Zone label="Model">
   {#if model}
@@ -149,11 +166,11 @@
   {/if}
 </Zone>
 
-<Zone label="Sessions">
+<Zone label="Chats">
   {#if recent.length > 0}
     <SessionList sessions={recent.slice(0, PREVIEW)} />
     {#if hasMore}
-      <Row title="All sessions" tone="signal" onselect={() => nav.push("sessions")}>
+      <Row title="All chats" tone="signal" onselect={() => nav.push("sessions")}>
         {#snippet trailing()}
           <Chip text={String(recent.length)} />
           <Chevron />
@@ -165,32 +182,14 @@
   {/if}
 </Zone>
 
-<Zone label="Account">
-  <Row
-    size="large"
-    title={identity.title}
-    sub={identity.sub}
-    submono={account.value.state === "local"}
-    dimmed={account.value.state !== "local"}
-    onselect={account.value.state === "local" ? () => nav.push("account") : undefined}
-  >
-    {#snippet leading()}
-      <Avatar nickname={identity.name} />
-    {/snippet}
-    {#snippet trailing()}
-      {#if account.value.state === "local"}<Chevron />{/if}
-    {/snippet}
-  </Row>
-</Zone>
-
-<Zone label="Remote">
-  <Row title="Share inference" sub={shareSub} dimmed={remote.value.state === "unknown"}>
+<Zone>
+  <Row title="Remote inference" sub={shareSub} dimmed={remote.value.state === "unknown"}>
     {#snippet trailing()}
       <Switch
         on={sharing !== null}
         disabled={!canShare && sharing === null}
         pending={sharePending}
-        label="Share inference"
+        label="Remote inference"
         onchange={share}
       />
     {/snippet}
@@ -199,12 +198,14 @@
     <Row
       key="Ticket"
       mono
-      title={truncateMiddle(sharing.ticket, 14, 7)}
+      title={truncateMiddle(sharing.ticket, 20, 8)}
       onselect={() => copier.copy(sharing.ticket)}
     >
-      {#snippet trailing()}
-        <Chip text={copier.copied ? "Copied" : "Copy"} tone={copier.copied ? "signal" : "default"} />
+      {#snippet inline()}
+        <CopyMark copied={copier.copied} />
       {/snippet}
     </Row>
   {/if}
 </Zone>
+
+<Footer {note} alert={health.value.state === "down"} />

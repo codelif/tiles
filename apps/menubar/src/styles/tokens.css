@@ -46,8 +46,8 @@
   --signal: #f7ff61;
   --void: #000000;
   --bone: #ffffff;
-  --ash: #a1a1aa;
-  --slate: #63636d;
+  --ash: #d4d4d8;
+  --slate: #8f8f9a;
   --steel: #18181b;
   --rule: rgba(255, 255, 255, 0.1);
   /* the daemon being down, and nothing else. yellow already means live */

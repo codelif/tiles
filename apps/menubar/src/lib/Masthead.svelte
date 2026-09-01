@@ -5,53 +5,38 @@
 
 <script lang="ts">
   import Chip from "./Chip.svelte";
-  import LlamaCpp from "./LlamaCpp.svelte";
   import Mark from "./Mark.svelte";
   import Switch from "./Switch.svelte";
 
   interface Props {
     mode: Mode;
-    status: string;
     on: boolean;
     disabled: boolean;
     ontoggle: () => void;
   }
 
-  let { mode, status, on, disabled, ontoggle }: Props = $props();
+  let { mode, on, disabled, ontoggle }: Props = $props();
 
   const running = $derived(mode === "running");
 </script>
 
 <header class="masthead" data-mode={mode}>
-  <div class="masthead__head">
-    <span class="masthead__brand">
-      <span class="masthead__glyph"><Mark size={24} /></span>
-      <span class="masthead__word">Tiles</span>
-    </span>
-    <span class="masthead__badge"><Chip text="alpha" size="small" /></span>
-    <div class="masthead__controls">
-      {#if running}<LlamaCpp />{/if}
-      <Switch
-        {on}
-        {disabled}
-        invert={running}
-        label="Inference"
-        onchange={ontoggle}
-      />
-    </div>
-  </div>
-  <span class="masthead__status">{status}</span>
+  <span class="masthead__brand">
+    <span class="masthead__glyph"><Mark size={30} /></span>
+    <span class="masthead__word">Tiles</span>
+  </span>
+  <span class="masthead__badge"><Chip text="alpha" size="small" /></span>
+  <Switch {on} {disabled} invert={running} label="Inference" onchange={ontoggle} />
 </header>
 
 <style>
   .masthead {
     position: relative;
     display: flex;
-    flex-direction: column;
-    justify-content: center;
-    gap: 3px;
+    align-items: center;
+    gap: 8px;
     min-height: var(--h-masthead);
-    padding: 9px var(--pad-x) 10px;
+    padding: 0 var(--pad-x);
     background: var(--void);
     color: var(--bone);
     transition:
@@ -77,12 +62,6 @@
     bottom: 0;
     width: var(--rail-w);
     background: var(--alert);
-  }
-
-  .masthead__head {
-    display: flex;
-    align-items: center;
-    gap: 8px;
   }
 
   /* the site sets the mark about twice the wordmark's cap height and keeps the
@@ -122,26 +101,6 @@
   .masthead[data-mode="running"] .masthead__badge :global(.chip) {
     background: rgba(0, 0, 0, 0.12);
     color: rgba(0, 0, 0, 0.6);
-  }
-
-  .masthead__controls {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-
-  .masthead__status {
-    font-size: var(--fs-body);
-    color: var(--ash);
-    transition: color var(--dur-state) ease-out;
-  }
-
-  .masthead[data-mode="running"] .masthead__status {
-    color: rgba(0, 0, 0, 0.62);
-  }
-
-  .masthead[data-mode="down"] .masthead__status {
-    color: var(--alert);
   }
 
   /* something is in flight and the daemon will not say how far along */

@@ -15,6 +15,8 @@
     /** the sub is an identifier or a reading, not prose */
     submono?: boolean;
     leading?: Snippet;
+    /** rides the title rather than the row's right edge */
+    inline?: Snippet;
     trailing?: Snippet;
     onselect?: () => void;
   }
@@ -29,6 +31,7 @@
     mono = false,
     submono = false,
     leading,
+    inline,
     trailing,
     onselect,
   }: Props = $props();
@@ -64,7 +67,10 @@
   {@render leading?.()}
   {#if key}<span class="row__key">{key}</span>{/if}
   <div class="row__main">
-    {#if title}<span class="row__title" class:row__title--mono={mono}>{title}</span>{/if}
+    <span class="row__line">
+      {#if title}<span class="row__title" class:row__title--mono={mono}>{title}</span>{/if}
+      {@render inline?.()}
+    </span>
     {#if sub}<span class="row__sub" class:row__sub--mono={submono}>{sub}</span>{/if}
   </div>
   {@render trailing?.()}
@@ -128,6 +134,13 @@
     gap: 2px;
     min-width: 0;
     flex: 1;
+  }
+
+  .row__line {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
   }
 
   .row__title,

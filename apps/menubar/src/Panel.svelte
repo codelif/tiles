@@ -94,8 +94,6 @@
 <style>
   .panel {
     width: 100%;
-    /* no top padding, the masthead floods to the panel's own edge */
-    padding-bottom: 4px;
     border-radius: var(--radius-panel);
     /* the yellow masthead is a rect, the corners have to clip it */
     overflow: hidden;

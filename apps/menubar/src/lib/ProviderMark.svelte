@@ -39,8 +39,8 @@
       0 100%
     );
     background: var(--steel);
-    color: var(--row-mark, var(--ash));
-    transition: color var(--dur-state) ease-out;
+    /* the provider is a fact about the model, not a reading of focus */
+    color: var(--signal);
   }
 
   .provider :global(svg) {

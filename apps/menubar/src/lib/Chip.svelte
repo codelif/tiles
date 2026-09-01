@@ -1,14 +1,13 @@
 <script lang="ts">
   interface Props {
     text: string;
-    tone?: "default" | "signal";
     size?: "regular" | "small";
   }
 
-  let { text, tone = "default", size = "regular" }: Props = $props();
+  let { text, size = "regular" }: Props = $props();
 </script>
 
-<span class="chip" data-tone={tone} data-size={size}>{text}</span>
+<span class="chip" data-size={size}>{text}</span>
 
 <style>
   /* the one cut echoing the logo's shear, chips only and never rows */
@@ -35,10 +34,5 @@
   .chip[data-size="small"] {
     padding: 2px 4px;
     font-size: 9px;
-  }
-
-  .chip[data-tone="signal"] {
-    background: var(--signal);
-    color: var(--void);
   }
 </style>

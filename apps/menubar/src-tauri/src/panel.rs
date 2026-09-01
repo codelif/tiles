@@ -354,6 +354,13 @@ pub fn hide_panel(app: AppHandle) {
     hide(&app);
 }
 
+/// the tray menu's Quit and the footer's are the same exit, both land in
+/// `ExitRequested` and the daemon's quit sequence
+#[tauri::command]
+pub fn quit_app(app: AppHandle) {
+    app.exit(0);
+}
+
 /// frontend reporting it has painted a frame, see [`warm_up`]
 #[tauri::command]
 pub fn panel_ready(app: AppHandle) {

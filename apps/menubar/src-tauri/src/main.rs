@@ -3,6 +3,7 @@ mod clipboard;
 mod daemon;
 mod inference;
 mod panel;
+mod paths;
 mod remote;
 mod sessions;
 mod settings;
@@ -25,6 +26,9 @@ fn main() {
             panel::hide_panel,
             panel::panel_ready,
             panel::resize_panel,
+            panel::quit_app,
+            paths::data_dir,
+            paths::reveal_path,
             clipboard::copy_text,
             daemon::daemon_health,
             inference::inference_state,

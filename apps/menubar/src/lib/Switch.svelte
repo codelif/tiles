@@ -4,7 +4,7 @@
     disabled?: boolean;
     /** a request is out and the daemon has not answered yet */
     pending?: boolean;
-    /** the ground behind it is yellow, so the track has to be the dark half */
+    /** the ground behind it is yellow, so the plate has to be the dark half */
     invert?: boolean;
     label: string;
     onchange: () => void;
@@ -20,6 +20,8 @@
   }: Props = $props();
 </script>
 
+<!-- three plain rects skewed as one, rather than three clip-paths: the slant
+     then cannot drift between the plate and the block riding inside it -->
 <button
   class="switch"
   role="switch"
@@ -32,68 +34,128 @@
   {disabled}
   onclick={onchange}
 >
-  <span class="switch__knob"></span>
-  {#if pending}
-    <!-- the masthead sweeps a light along its edge, a switch runs the same
-         light around its border. one pattern for "asked, not answered" -->
-    <span class="switch__halo"></span>
-  {/if}
+  <span class="switch__ring">
+    <!-- the masthead sweeps a light along its edge, the ring runs the same
+         light around itself. one pattern for "asked, not answered" -->
+    {#if pending}<span class="switch__spin"></span>{/if}
+    <span class="switch__fill">
+      <span class="switch__knob"></span>
+    </span>
+  </span>
 </button>
 
 <style>
   .switch {
-    --track-w: 40px;
-    --track-h: 20px;
-    --knob: 16px;
+    /* the shear is the logo's, 8 over 22 */
+    --slant: -20deg;
+    --plate-w: 38px;
+    --plate-h: 22px;
+    --overhang: 4px;
+    --ring: 1px;
+    --gap: 2px;
+    --knob-w: 15px;
+    --travel: 17px;
+    /* a filter would composite into its own buffer and leave a visible
+       rectangle on the panel's black, so the glow is the plate's own shadow */
+    --glow: 0 0 0 rgba(247, 255, 97, 0);
 
     position: relative;
     flex: none;
-    width: var(--track-w);
-    height: var(--track-h);
+    width: calc(var(--plate-w) + var(--overhang) * 2);
+    height: var(--plate-h);
     border: none;
-    border-radius: 2px;
-    background: var(--steel);
-    box-shadow: inset 0 0 0 1px var(--rule);
+    background: none;
+  }
+
+  .switch__ring {
+    position: absolute;
+    inset: 0 var(--overhang);
+    overflow: hidden;
+    background: rgba(255, 255, 255, 0.16);
+    /* overflow clips the children, never the element's own shadow */
+    box-shadow: var(--glow);
+    transform: skewX(var(--slant));
     transition:
       background var(--dur-state) ease-out,
       box-shadow var(--dur-state) ease-out;
   }
 
+  .switch__fill {
+    position: absolute;
+    inset: var(--ring);
+    background: var(--steel);
+    transition: background var(--dur-state) ease-out;
+  }
+
+  /* inset on all four sides, so the plate reads as a frame the block sits in */
   .switch__knob {
     position: absolute;
-    top: 2px;
-    left: 2px;
-    width: var(--knob);
-    height: var(--knob);
-    border-radius: 1px;
+    top: var(--gap);
+    bottom: var(--gap);
+    left: var(--gap);
+    width: var(--knob-w);
     background: var(--slate);
     transition:
       transform var(--dur-state) var(--ease-push),
       background var(--dur-state) ease-out;
   }
 
-  .switch[data-on="true"] {
+  .switch[data-on="true"] .switch__ring,
+  .switch[data-on="true"] .switch__fill {
     background: var(--signal);
-    box-shadow: none;
   }
 
   .switch[data-on="true"] .switch__knob {
-    transform: translateX(calc(var(--track-w) - var(--knob) - 4px));
+    transform: translateX(var(--travel));
     background: var(--void);
   }
 
-  .switch[data-invert="true"] {
+  .switch[data-on="true"] {
+    --glow:
+      0 0 10px rgba(247, 255, 97, 0.65),
+      0 0 20px rgba(247, 255, 97, 0.3);
+  }
+
+  /* it has to read as a button before it is pressed, not only after */
+  .switch:hover:not(:disabled) {
+    --glow: 0 0 8px rgba(247, 255, 97, 0.4);
+  }
+
+  .switch[data-on="true"]:hover:not(:disabled) {
+    --glow:
+      0 0 13px rgba(247, 255, 97, 0.8),
+      0 0 24px rgba(247, 255, 97, 0.4);
+  }
+
+  .switch[data-invert="true"] .switch__ring {
+    background: rgba(0, 0, 0, 0.35);
+  }
+
+  .switch[data-invert="true"] .switch__fill {
     background: rgba(0, 0, 0, 0.14);
-    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.22);
   }
 
-  .switch[data-invert="true"][data-on="true"] {
+  .switch[data-invert="true"] .switch__knob {
+    background: rgba(0, 0, 0, 0.35);
+  }
+
+  .switch[data-invert="true"][data-on="true"] .switch__ring,
+  .switch[data-invert="true"][data-on="true"] .switch__fill {
     background: var(--void);
-    box-shadow: none;
   }
 
   .switch[data-invert="true"][data-on="true"] .switch__knob {
     background: var(--signal);
+  }
+
+  /* yellow on yellow is nothing, so on that ground the plate throws a dark
+     halo instead. same affordance, the only colour the ground leaves */
+  .switch[data-invert="true"] {
+    --glow: 0 0 10px rgba(0, 0, 0, 0.35);
+  }
+
+  .switch[data-invert="true"]:hover:not(:disabled) {
+    --glow: 0 0 14px rgba(0, 0, 0, 0.5);
   }
 
   .switch:disabled {
@@ -103,38 +165,26 @@
   /* the fill does not claim the new state until the daemon confirms it, which
      is also what makes the light legible */
   .switch[data-pending="true"] {
+    --glow: 0 0 0 rgba(247, 255, 97, 0);
+  }
+
+  .switch[data-pending="true"] .switch__ring,
+  .switch[data-pending="true"] .switch__fill {
     background: var(--steel);
-    box-shadow: inset 0 0 0 1px var(--rule);
   }
 
   .switch[data-pending="true"] .switch__knob {
+    transform: none;
     background: var(--slate);
   }
 
-  /* a ring cut out of a spinning cone, so the light hugs the corners too */
-  .switch__halo {
-    position: absolute;
-    inset: -1px;
-    padding: 1.5px;
-    border-radius: 3px;
-    overflow: hidden;
-    pointer-events: none;
-    -webkit-mask:
-      linear-gradient(#000 0 0) content-box,
-      linear-gradient(#000 0 0);
-    mask:
-      linear-gradient(#000 0 0) content-box,
-      linear-gradient(#000 0 0);
-    -webkit-mask-composite: xor;
-    mask-composite: exclude;
-  }
-
-  .switch__halo::before {
-    content: "";
+  /* the ring is the hairline the fill leaves uncovered, so a cone spinning
+     under the fill lights that hairline and nothing else */
+  .switch__spin {
     position: absolute;
     top: 50%;
     left: 50%;
-    width: 150%;
+    width: 200%;
     aspect-ratio: 1;
     translate: -50% -50%;
     background: conic-gradient(
@@ -143,24 +193,24 @@
       var(--signal) 0.82turn,
       transparent 0.95turn 1turn
     );
-    filter: blur(0.5px);
-    animation: halo 1.2s linear infinite;
+    animation: spin 1.2s linear infinite;
   }
 
-  @keyframes halo {
+  @keyframes spin {
     to {
       rotate: 1turn;
     }
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .switch,
+    .switch__ring,
+    .switch__fill,
     .switch__knob {
       transition: none;
     }
 
     /* a still ring says the same thing without the travel */
-    .switch__halo::before {
+    .switch__spin {
       animation: none;
       background: var(--signal);
       opacity: 0.45;
