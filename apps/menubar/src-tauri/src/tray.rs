@@ -19,10 +19,19 @@ use tauri_nspanel::objc2_foundation::{
 
 use crate::{panel, settings};
 
-/// alpha only, AppKit tints a template image for the current menu bar
-static ICON: &[u8] = include_bytes!("../icons/menubar-template.png");
+/// vector, so it stays sharp at any menu bar height and display scale. alpha
+/// only, AppKit tints a template image for the current menu bar
+static ICON: &[u8] = include_bytes!("../icons/menubar-template.pdf");
 
-const ICON_HEIGHT: f64 = 16.5;
+/// the mark is wider than it is tall, and a square box would draw it small
+/// beside the system's items. 12:11 is the pdf's own box, anything else squashes
+const ICON_WIDTH: f64 = 16.0;
+const ICON_HEIGHT: f64 = ICON_WIDTH * 11.0 / 12.0;
+
+/// the mark carries the same reading the panel's does, at full strength only
+/// while inference is up
+const ICON_ALPHA_LIVE: f64 = 1.0;
+const ICON_ALPHA_IDLE: f64 = 0.5;
 
 /// gap between the status item and its right-click menu
 const MENU_GAP: f64 = 4.0;
@@ -175,10 +184,11 @@ pub fn init(app: &AppHandle) -> tauri::Result<()> {
     let button = item.button(mtm).expect("a status item always has a button");
 
     let data = NSData::with_bytes(ICON);
-    let image = NSImage::initWithData(NSImage::alloc(), &data).expect("the icon is a valid PNG");
+    let image = NSImage::initWithData(NSImage::alloc(), &data).expect("the icon is a valid PDF");
     image.setTemplate(true);
-    image.setSize(NSSize::new(ICON_HEIGHT, ICON_HEIGHT));
+    image.setSize(NSSize::new(ICON_WIDTH, ICON_HEIGHT));
     button.setImage(Some(&image));
+    button.setAlphaValue(ICON_ALPHA_IDLE);
 
     // takes the button's mouse events, so it never runs its own press highlight
     let target = StatusTarget::new(mtm, app.clone());
@@ -271,6 +281,20 @@ pub fn pointer_over_item(app: &AppHandle) -> bool {
         && at.x <= frame.origin.x + frame.size.width
         && at.y >= frame.origin.y
         && at.y <= frame.origin.y + frame.size.height
+}
+
+/// main thread only, so callers off it go through `run_on_main_thread`
+pub fn set_live(app: &AppHandle, live: bool) {
+    let (Some(item), Some(mtm)) = (app.try_state::<StatusItem>(), MainThreadMarker::new()) else {
+        return;
+    };
+    if let Some(button) = item.0.button(mtm) {
+        button.setAlphaValue(if live {
+            ICON_ALPHA_LIVE
+        } else {
+            ICON_ALPHA_IDLE
+        });
+    }
 }
 
 /// the pill AppKit draws behind an active status item

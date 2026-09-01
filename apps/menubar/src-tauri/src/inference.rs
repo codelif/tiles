@@ -4,7 +4,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use crate::daemon;
+use crate::{daemon, tray};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -72,10 +72,15 @@ fn set(app: &AppHandle, next: State) {
     if *state == next {
         return;
     }
+    let power = next.power;
     *state = next.clone();
     drop(state);
 
     let _ = app.emit(STATE_EVENT, next);
+
+    // the status item dims with the panel's mark, and AppKit wants the main thread
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || tray::set_live(&handle, power == Power::On));
 }
 
 fn set_power(app: &AppHandle, power: Power) {
