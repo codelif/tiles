@@ -17,7 +17,8 @@
 
   --h-row: 26px;
   --h-row-lg: 38px;
-  --h-masthead: 54px;
+  /* the same bar the nav is, the flood is what makes it the masthead */
+  --h-masthead: 36px;
   --h-nav: 36px;
 
   /* the chamfer, one cut on every chip */
@@ -31,7 +32,6 @@
   --font-ui: "Geist", -apple-system, BlinkMacSystemFont, sans-serif;
   --font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
 
-  --fs-display: 17px;
   --fs-title: 13px;
   --fs-body: 12px;
   --fs-label: 11px;
@@ -44,11 +44,12 @@
 
   /* ── Colour ───────────────────────────────────────────── */
   --signal: #f7ff61;
-  --void: #000000;
+  /* the ground and the ink on the accent are the same colour */
+  --void: #111111;
   --bone: #ffffff;
   --ash: #d4d4d8;
   --slate: #8f8f9a;
-  --steel: #18181b;
+  --steel: #1d1d1d;
   --rule: rgba(255, 255, 255, 0.1);
   /* the daemon being down, and nothing else. yellow already means live */
   --alert: #ff5f52;

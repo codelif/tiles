@@ -1,10 +1,12 @@
-//! the general pasteboard, reached directly rather than through a plugin
+//! the general pasteboard
+
+//! not using tauri-plugin-clipboard-manager, since that is bloated
+//! and overkill for a simple text copy
 
 use tauri_nspanel::objc2_app_kit::{NSPasteboard, NSPasteboardTypeString};
 use tauri_nspanel::objc2_foundation::NSString;
 
-/// not navigator.clipboard, a release build serves over tauri:// and whether
-/// that counts as a secure context is not worth betting a copy button on.
+
 /// NSPasteboard is not main-thread-only, so this can answer with the write's
 /// own result instead of a dispatch that has not run yet
 #[tauri::command]

@@ -29,18 +29,20 @@
   const home = $derived(dataDir?.replace(/^\/Users\/[^/]+/, "~") ?? "—");
 </script>
 
-<Navbar title="Account" onback={() => nav.pop()} />
+<Navbar title="Tiles Account" onback={() => nav.pop()} />
 
 <!-- no label, an avatar beside a name does not need one told -->
 <Zone>
-  <Row size="large" title={local?.nickname ?? "—"} sub="Local account" dimmed={local === null}>
+  <Row size="large" title={local?.nickname ?? "—"} dimmed={local === null}>
     {#snippet leading()}
       <Avatar nickname={local?.nickname ?? "?"} size={26} />
     {/snippet}
   </Row>
+  <!-- the sub said what the name was, this says what the account is -->
+  <p class="note">This Tiles account is generated and saved locally</p>
 </Zone>
 
-<Zone label="Decentralised ID">
+<Zone label="Decentralized ID">
   <Row
     mono
     title={local ? truncateMiddle(local.did, 30, 10) : "—"}
@@ -65,3 +67,13 @@
     {/snippet}
   </Row>
 </Zone>
+
+<style>
+  /* the grey the row's sub used to carry, on its own line under the whole row */
+  .note {
+    padding: 2px var(--pad-x) 2px;
+    color: var(--slate);
+    font-size: var(--fs-body);
+    line-height: 1.35;
+  }
+</style>

@@ -24,11 +24,21 @@
   const copier = new Copier();
   onDestroy(() => copier.dispose());
 
-  let inferencePending = $state(false);
   let sharePending = $state(false);
+  /** what the share was asked for, worn until the daemon reports the same */
+  let wanted = $state<boolean | null>(null);
+  /** the call itself, which is the only window a second click is swallowed in */
+  let inflight = $state(false);
+  /** what the daemon was last asked for, held until the power state gets there */
+  let request = $state<"on" | "off" | null>(null);
+  // plain, not state: the effect below writes it, and depending on its own
+  // write would make it run itself a second time
+  let sawStarting = false;
 
   const power = $derived(inference.value.power);
-  const on = $derived(power === "on" || power === "starting");
+  // starting is not on, or the switch flips before the light has run
+  const on = $derived(power === "on");
+  const busy = $derived(inflight || request !== null || power === "starting");
 
   const mode = $derived.by<Mode>(() => {
     if (health.value.state === "down") return "down";
@@ -82,47 +92,85 @@
   // with inference down answers nothing
   const canShare = $derived(power === "on");
   const sharing = $derived(remote.value.state === "sharing" ? remote.value : null);
-  const shareSub = $derived.by(() => {
-    switch (remote.value.state) {
-      // still shared, and the only way to stop it is this row
-      case "sharing":
-        return canShare ? "Reachable by peers" : "Sharing, inference is off";
-      case "off":
-        return canShare ? "Off" : "Start inference first";
-      case "unknown":
-        return "—";
+
+  // plain, not state: the effect below writes it, and depending on its own
+  // write would make it run itself a second time
+  let unshared = false;
+
+  // the request stands until the power state gets where it was going, or settles
+  // somewhere else because the load failed
+  $effect(() => {
+    if (request === null) return;
+    if (health.value.state !== "up") {
+      request = null;
+      return;
+    }
+    if (power === "starting") {
+      sawStarting = true;
+      return;
+    }
+    if (power === request || (sawStarting && (power === "on" || power === "off"))) {
+      request = null;
     }
   });
 
   async function toggle() {
-    if (inferencePending || health.value.state !== "up") return;
-    inferencePending = true;
+    if (inflight || health.value.state !== "up") return;
+    // a click while the daemon is still working reverses the request rather
+    // than being swallowed, so the switch is never stuck waiting
+    const next = (request ?? (on ? "on" : "off")) === "on" ? "off" : "on";
+    request = next;
+    sawStarting = false;
+    inflight = true;
     try {
-      await invoke("inference_set", { on: !on });
+      await invoke("inference_set", { on: next === "on" });
     } catch (err) {
       console.error("[inference]", err);
+      request = null;
     } finally {
-      inferencePending = false;
+      inflight = false;
     }
   }
 
+  // inference going down takes the share with it, rather than leaving a ticket
+  // pointing at an engine that is not there. only on a confirmed off, never on
+  // the unknown the panel opens with
+  $effect(() => {
+    if (power === "on") {
+      unshared = false;
+      return;
+    }
+    if (power !== "off" || sharing === null || sharePending || unshared) return;
+    unshared = true;
+    void share();
+  });
+
+  $effect(() => {
+    if (wanted === null || remote.value.state === "unknown") return;
+    if ((sharing !== null) === wanted) wanted = null;
+  });
+
   async function share() {
-    // turning it off has to stay reachable even once inference has gone
     if (sharePending || (!canShare && sharing === null)) return;
+    // the switch flips on the click and the ticket line comes with it, rather
+    // than the row sitting still while the daemon mints one
+    const next = sharing === null;
+    wanted = next;
     sharePending = true;
     try {
-      await invoke("remote_set", { on: sharing === null });
+      await invoke("remote_set", { on: next });
     } catch (err) {
       console.error("[remote]", err);
+      wanted = null;
     } finally {
       sharePending = false;
     }
   }
 </script>
 
-<Masthead {mode} {on} disabled={health.value.state !== "up"} ontoggle={toggle} />
+<Masthead {mode} {on} pending={busy} disabled={health.value.state !== "up"} ontoggle={toggle} />
 
-<Zone label="Account">
+<Zone label="Tiles Account">
   <Row
     size="large"
     title={identity.title}
@@ -140,14 +188,15 @@
   </Row>
 </Zone>
 
-<Zone label="Model">
+<Zone label="Model" dimmed={!canShare}>
   {#if model}
     <Row
       size="large"
       title={model.name}
       sub={modelSub}
       submono
-      onselect={() => nav.push("model")}
+      dimmed={!canShare}
+      onselect={canShare ? () => nav.push("model") : undefined}
     >
       {#snippet leading()}
         <ProviderMark provider={model.provider} />
@@ -182,19 +231,20 @@
   {/if}
 </Zone>
 
-<Zone>
-  <Row title="Remote inference" sub={shareSub} dimmed={remote.value.state === "unknown"}>
+<Zone label="Share your compute" dimmed={!canShare}>
+  <Row title="Remote inference" dimmed={!canShare || remote.value.state === "unknown"}>
     {#snippet trailing()}
       <Switch
-        on={sharing !== null}
-        disabled={!canShare && sharing === null}
-        pending={sharePending}
+        on={canShare && (wanted ?? sharing !== null)}
+        disabled={!canShare}
+        size="small"
+        glow={false}
         label="Remote inference"
         onchange={share}
       />
     {/snippet}
   </Row>
-  {#if sharing}
+  {#if canShare && sharing}
     <Row
       key="Ticket"
       mono
@@ -205,7 +255,40 @@
         <CopyMark copied={copier.copied} />
       {/snippet}
     </Row>
+  {:else if canShare && wanted === true}
+    <Row key="Ticket">
+      {#snippet inline()}
+        <span class="ticket-skeleton" aria-label="Minting a ticket"></span>
+      {/snippet}
+    </Row>
   {/if}
 </Zone>
 
 <Footer {note} alert={health.value.state === "down"} />
+
+<style>
+  /* the ticket's own line, at the width the truncated one lands on */
+  .ticket-skeleton {
+    width: 186px;
+    height: 11px;
+    background: var(--slate);
+    animation: ticket-pulse 1.4s ease-in-out infinite;
+  }
+
+  @keyframes ticket-pulse {
+    0%,
+    100% {
+      opacity: 0.35;
+    }
+    50% {
+      opacity: 0.75;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .ticket-skeleton {
+      opacity: 0.5;
+      animation: none;
+    }
+  }
+</style>

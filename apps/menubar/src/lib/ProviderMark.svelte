@@ -33,9 +33,9 @@
     height: var(--size);
     clip-path: polygon(
       0 0,
-      calc(100% - var(--cut)) 0,
-      100% var(--cut),
-      100% 100%,
+      100% 0,
+      100% calc(100% - var(--cut)),
+      calc(100% - var(--cut)) 100%,
       0 100%
     );
     background: var(--steel);

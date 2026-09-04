@@ -20,12 +20,24 @@
 
 <style>
   .footer {
+    position: relative;
     display: flex;
     align-items: center;
     gap: 8px;
     height: var(--h-nav);
     padding: 0 var(--pad-x);
-    border-top: var(--hairline) solid var(--rule);
+  }
+
+  /* stops either side of the panel's ring rather than crossing it, so the
+     joint is one hairline and not two stacked */
+  .footer::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: var(--hairline);
+    right: var(--hairline);
+    height: var(--hairline);
+    background: var(--rule);
   }
 
   .footer__note {
@@ -48,9 +60,9 @@
     flex: none;
     clip-path: polygon(
       0 0,
-      calc(100% - var(--cut)) 0,
-      100% var(--cut),
-      100% 100%,
+      100% 0,
+      100% calc(100% - var(--cut)),
+      calc(100% - var(--cut)) 100%,
       0 100%
     );
     padding: 4px 9px;
