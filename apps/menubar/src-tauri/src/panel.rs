@@ -121,15 +121,15 @@ fn round_corners(panel: &PanelHandle<tauri::Wry>) {
     let content_view = panel.content_view();
 
     unsafe {
-        let _: () = tauri_nspanel::objc2::msg_send![&*content_view, setWantsLayer: true];
+        let _: () = msg_send![&*content_view, setWantsLayer: true];
 
-        let layer: Retained<AnyObject> = tauri_nspanel::objc2::msg_send![&*content_view, layer];
-        let _: () = tauri_nspanel::objc2::msg_send![&*layer, setCornerRadius: CORNER_RADIUS];
-        let _: () = tauri_nspanel::objc2::msg_send![&*layer, setMasksToBounds: true];
+        let layer: Retained<AnyObject> = msg_send![&*content_view, layer];
+        let _: () = msg_send![&*layer, setCornerRadius: CORNER_RADIUS];
+        let _: () = msg_send![&*layer, setMasksToBounds: true];
 
         // kCACornerCurveContinuous
         let continuous = NSString::from_str("continuous");
-        let _: () = tauri_nspanel::objc2::msg_send![&*layer, setCornerCurve: &*continuous];
+        let _: () = msg_send![&*layer, setCornerCurve: &*continuous];
     }
 }
 
@@ -354,11 +354,11 @@ pub fn hide_panel(app: AppHandle) {
     hide(&app);
 }
 
-/// the tray menu's Quit and the footer's are the same exit, both land in
-/// `ExitRequested` and the daemon's quit sequence
+/// the tray menu's Quit and the footer's are the same ask, and the daemon runs
+/// the whole teardown from there
 #[tauri::command]
 pub fn quit_app(app: AppHandle) {
-    app.exit(0);
+    crate::daemon::quit(&app);
 }
 
 /// frontend reporting it has painted a frame, see [`warm_up`]

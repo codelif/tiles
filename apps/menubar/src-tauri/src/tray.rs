@@ -10,14 +10,14 @@ use tauri_nspanel::objc2::rc::Retained;
 use tauri_nspanel::objc2::runtime::{AnyObject, Sel};
 use tauri_nspanel::objc2::{AnyThread, DefinedClass, MainThreadOnly, define_class, msg_send, sel};
 use tauri_nspanel::objc2_app_kit::{
-    NSAutoresizingMaskOptions, NSControlStateValueOff, NSControlStateValueOn, NSEvent, NSImage,
-    NSMenu, NSMenuItem, NSStatusBar, NSStatusItem, NSVariableStatusItemLength, NSView,
+    NSAutoresizingMaskOptions, NSEvent, NSImage, NSMenu, NSMenuItem, NSStatusBar, NSStatusItem,
+    NSVariableStatusItemLength, NSView,
 };
 use tauri_nspanel::objc2_foundation::{
     MainThreadMarker, NSData, NSObjectProtocol, NSPoint, NSSize, NSString,
 };
 
-use crate::{panel, settings};
+use crate::{daemon, panel};
 
 /// vector, so it stays sharp at any menu bar height and display scale. alpha
 /// only, AppKit tints a template image for the current menu bar
@@ -39,8 +39,6 @@ const MENU_GAP: f64 = 4.0;
 const PEEK_HOLD: Duration = Duration::from_millis(150);
 
 // the menu is built once, so the toggles are found by tag to be re-checked
-const TAG_AUTOSTART: isize = 1;
-const TAG_DAEMON_TIED: isize = 2;
 
 /// main thread only, where AppKit requires it and every caller below runs
 struct StatusItem(Retained<NSStatusItem>);
@@ -127,35 +125,15 @@ define_class!(
             let Some(menu) = app.try_state::<StatusMenu>() else {
                 return;
             };
-            // settings can move without the menu being open, so read them back
-            // rather than trusting the state left from last time
-            sync_checks(&app, &menu.0);
 
             let below = NSPoint::new(0.0, self.bounds().size.height + MENU_GAP);
             menu.0
                 .popUpMenuPositioningItem_atLocation_inView(None, below, Some(self));
         }
 
-        #[unsafe(method(toggleAutostart:))]
-        fn toggle_autostart(&self, _sender: Option<&AnyObject>) {
-            let app = &self.ivars().app;
-            let on = !settings::get(app).autostart;
-            // only remember it if the login item actually moved
-            if settings::set_autostart(app, on) {
-                settings::update(app, |s| s.autostart = on);
-            }
-        }
-
-        #[unsafe(method(toggleDaemonTied:))]
-        fn toggle_daemon_tied(&self, _sender: Option<&AnyObject>) {
-            let app = &self.ivars().app;
-            settings::update(app, |s| s.daemon_tied = !s.daemon_tied);
-        }
-
         #[unsafe(method(quit:))]
         fn quit(&self, _sender: Option<&AnyObject>) {
-            // TODO: stop the daemon here once the app owns one
-            self.ivars().app.exit(0);
+            daemon::quit(&self.ivars().app);
         }
     }
 );
@@ -227,39 +205,9 @@ fn item(
 fn build_menu(mtm: MainThreadMarker, target: &StatusTarget) -> Retained<NSMenu> {
     let menu = NSMenu::new(mtm);
 
-    let autostart = item(mtm, target, "Start at Login", sel!(toggleAutostart:), "");
-    autostart.setTag(TAG_AUTOSTART);
-    menu.addItem(&autostart);
-
-    let tied = item(
-        mtm,
-        target,
-        "Quit Daemon on Exit",
-        sel!(toggleDaemonTied:),
-        "",
-    );
-    tied.setTag(TAG_DAEMON_TIED);
-    menu.addItem(&tied);
-
-    menu.addItem(&NSMenuItem::separatorItem(mtm));
+    // start at login belongs to `tiles service` now, and quit is unconditional
     menu.addItem(&item(mtm, target, "Quit Tiles", sel!(quit:), "q"));
     menu
-}
-
-fn sync_checks(app: &AppHandle, menu: &NSMenu) {
-    let settings = settings::get(app);
-    for (tag, on) in [
-        (TAG_AUTOSTART, settings.autostart),
-        (TAG_DAEMON_TIED, settings.daemon_tied),
-    ] {
-        if let Some(item) = menu.itemWithTag(tag) {
-            item.setState(if on {
-                NSControlStateValueOn
-            } else {
-                NSControlStateValueOff
-            });
-        }
-    }
 }
 
 /// the panel loses key before the click that caused it is delivered, so this

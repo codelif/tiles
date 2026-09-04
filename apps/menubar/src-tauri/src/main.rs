@@ -2,15 +2,14 @@ mod account;
 mod clipboard;
 mod daemon;
 mod inference;
+mod lifeline;
 mod panel;
 mod paths;
 mod remote;
 mod sessions;
-mod settings;
 mod tray;
 
 use tauri::{ActivationPolicy, Manager, WindowEvent};
-use tauri_plugin_autostart::MacosLauncher;
 
 fn main() {
     tauri::Builder::default()
@@ -18,10 +17,6 @@ fn main() {
         // status item of its own. nothing to focus, so the callback is empty
         .plugin(tauri_plugin_single_instance::init(|_app, _argv, _cwd| {}))
         .plugin(tauri_nspanel::init())
-        .plugin(tauri_plugin_autostart::init(
-            MacosLauncher::LaunchAgent,
-            None,
-        ))
         .invoke_handler(tauri::generate_handler![
             panel::hide_panel,
             panel::panel_ready,
@@ -42,11 +37,11 @@ fn main() {
             // LSUIElement covers the launch window before this runs
             app.set_activation_policy(ActivationPolicy::Accessory);
 
-            // before the tray, its menu reads the toggles
-            settings::init(app.handle());
+            // first, so a daemon that dies mid-setup still takes us with it
+            lifeline::init(app.handle());
             panel::init(app.handle())?;
             tray::init(app.handle())?;
-            // before the supervisor, its first tick already reports all three
+            // before the watcher, its first tick already reports all three
             inference::init(app.handle());
             account::init(app.handle());
             sessions::init(app.handle());
@@ -70,22 +65,6 @@ fn main() {
                 panel::dismiss(app, mode);
             }
         })
-        .build(tauri::generate_context!())
-        .expect("failed to start the Tiles menu bar app")
-        .run(|app, event| {
-            // every exit path lands here, so the quit item stays a plain exit
-            if let tauri::RunEvent::ExitRequested { api, .. } = event
-                && daemon::begin_quit(app)
-            {
-                // read back with try_recv, so it has to be set before returning
-                api.prevent_exit();
-
-                let app = app.clone();
-                tauri::async_runtime::spawn(async move {
-                    let _ = tokio::time::timeout(daemon::QUIT_DEADLINE, daemon::quit(app.clone()))
-                        .await;
-                    app.exit(0);
-                });
-            }
-        });
+        .run(tauri::generate_context!())
+        .expect("failed to start the Tiles menu bar app");
 }

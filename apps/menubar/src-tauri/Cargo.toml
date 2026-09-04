@@ -12,7 +12,6 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2.11", features = [] }
 tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", rev = "c9ec2130422200f0863b23dfdad02b133a529b07" }
-tauri-plugin-autostart = "2"
 tauri-plugin-single-instance = "2"
 
 # the daemon is plain http on loopback, a TLS backend would be dead weight
