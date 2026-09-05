@@ -164,6 +164,8 @@ const DEFAULT_PORT: u32 = 1729;
 /// the inference server is the slowest thing in a shutdown, and the only one
 /// that can hang it
 const INFERENCE_STOP_TIMEOUT: Duration = Duration::from_secs(10);
+const DAEMON_STOP_TIMEOUT: Duration = Duration::from_secs(20);
+const DAEMON_STOP_POLL: Duration = Duration::from_millis(250);
 pub async fn start_cmd(port: Option<u32>) -> Result<()> {
     start_daemon(port).await
 }
@@ -430,14 +432,33 @@ async fn get_config(State(_state): State<Arc<AppState>>) -> Result<String, Statu
 }
 
 async fn stop_server(port: Option<u32>) -> Result<()> {
+    stop_server_with_timeout(port, DAEMON_STOP_TIMEOUT).await
+}
+
+async fn stop_server_with_timeout(port: Option<u32>, timeout: Duration) -> Result<()> {
+    tokio::time::timeout(timeout, stop_server_and_wait(port))
+        .await
+        .map_err(|_| anyhow!("Timed out waiting for Tiles daemon to stop"))?
+}
+
+async fn stop_server_and_wait(port: Option<u32>) -> Result<()> {
     let dyn_port = get_port(port);
     let client = Client::new();
     let addr = format!("http://127.0.0.1:{}/shutdown", dyn_port);
-    let res = client.get(addr).send().await;
+    client
+        .get(addr)
+        .send()
+        .await
+        .map_err(|err| anyhow!("Daemon shutdown failed due to {err:?}"))?
+        .error_for_status()
+        .map_err(|err| anyhow!("Daemon shutdown failed due to {err:?}"))?;
 
-    match res {
-        Err(err) => Err(anyhow!("Daemon shutdown failed due to {:?}", err)),
-        _ => Ok(()),
+    let addr = format!("http://127.0.0.1:{dyn_port}");
+    loop {
+        if client.get(&addr).send().await.is_err() {
+            return Ok(());
+        }
+        tokio::time::sleep(DAEMON_STOP_POLL).await;
     }
 }
 pub async fn ping(port: Option<u32>) -> anyhow::Result<String> {
@@ -651,10 +672,15 @@ pub async fn connect_remote(ticket: &str) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use anyhow::Result;
+    use axum::{Router, http::StatusCode, routing::get};
     use serial_test::serial;
 
-    use crate::daemon::{ping, start_server, stop_server, wait_until_server_is_up};
+    use crate::daemon::{
+        ping, start_server, stop_server, stop_server_with_timeout, wait_until_server_is_up,
+    };
 
     #[tokio::test]
     #[serial]
@@ -665,6 +691,47 @@ mod tests {
         wait_until_server_is_up(None).await?;
         assert!(ping(None).await.is_ok());
 
-        stop_server(None).await
+        stop_server(None).await?;
+        assert!(ping(None).await.is_err());
+        Ok(())
+    }
+
+    async fn serve(app: Router) -> Result<(u32, tokio::task::JoinHandle<()>)> {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let port = listener.local_addr()?.port() as u32;
+        let task = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        Ok((port, task))
+    }
+
+    #[tokio::test]
+    async fn stop_rejects_an_unsuccessful_response() -> Result<()> {
+        let app = Router::new().route(
+            "/shutdown",
+            get(|| async { StatusCode::INTERNAL_SERVER_ERROR }),
+        );
+        let (port, task) = serve(app).await?;
+
+        let result = stop_server_with_timeout(Some(port), Duration::from_secs(1)).await;
+        task.abort();
+
+        assert!(result.is_err());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn stop_times_out_while_the_server_remains_reachable() -> Result<()> {
+        let app = Router::new()
+            .route("/", get(|| async { "up" }))
+            .route("/shutdown", get(|| async {}));
+        let (port, task) = serve(app).await?;
+
+        let result = stop_server_with_timeout(Some(port), Duration::from_millis(100)).await;
+        task.abort();
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Timed out"));
+        Ok(())
     }
 }
