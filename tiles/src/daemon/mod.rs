@@ -329,6 +329,7 @@ fn listen_for_signals(state: Arc<AppState>) {
 /// because it is setsid'd and outlives the rest otherwise
 pub async fn shutdown_all(state: Arc<AppState>) {
     info!("Daemon server shutting down");
+    ui::begin_stop(&state.ui);
     // its ping has no timeout of its own, and a wedged server must not hold the
     // shutdown open forever
     match tokio::time::timeout(

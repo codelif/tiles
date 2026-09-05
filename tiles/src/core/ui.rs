@@ -25,6 +25,7 @@ const BUNDLE_EXEC: &str = "Tiles.app/Contents/MacOS/tiles-menubar";
 /// Set on the child so it knows to watch the lifeline. A hand-launched app has
 /// no parent to outlive and leaves the watcher dormant
 const SUPERVISED: &str = "TILES_MENUBAR_SUPERVISED";
+const SUPERVISED_ARG: &str = "--tiles-daemon-supervised";
 
 const MIN_BACKOFF: Duration = Duration::from_secs(1);
 const MAX_BACKOFF: Duration = Duration::from_secs(30);
@@ -102,6 +103,7 @@ fn spawn(bin: &PathBuf) -> Result<tokio::process::Child> {
     // deliberately no setsid, unlike the inference server and the agent. this
     // child is meant to be reachable, not detached
     Command::new(bin)
+        .arg(SUPERVISED_ARG)
         .env(SUPERVISED, "1")
         .stdin(Stdio::piped())
         .stdout(Stdio::from(out))
@@ -168,12 +170,9 @@ pub fn start(ui: Arc<Ui>) {
                 break;
             }
 
-            // a clean exit is either the user quitting or a second copy standing
-            // down for the one already running, and neither wants relaunching
             match status {
                 Ok(status) if status.success() => {
-                    log::info!("Menu bar app exited cleanly, not relaunching");
-                    break;
+                    log::info!("Menu bar app exited cleanly, relaunching")
                 }
                 Ok(status) => log::warn!("Menu bar app died with {status}, relaunching"),
                 Err(err) => log::warn!("Lost track of the menu bar app: {err:?}, relaunching"),
@@ -182,7 +181,10 @@ pub fn start(ui: Arc<Ui>) {
             if started.elapsed() >= SETTLED {
                 backoff = MIN_BACKOFF;
             }
-            tokio::time::sleep(backoff).await;
+            tokio::select! {
+                _ = tokio::time::sleep(backoff) => {}
+                _ = ui.stop.notified() => break,
+            }
             backoff = (backoff * 2).min(MAX_BACKOFF);
         }
 
@@ -191,12 +193,20 @@ pub fn start(ui: Arc<Ui>) {
     });
 }
 
+/// Mark shutdown before slower daemon teardown begins so no exited child is
+/// relaunched in the meantime.
+pub fn begin_stop(ui: &Arc<Ui>) {
+    if !ui.stopping.swap(true, Ordering::SeqCst) && ui.running.load(Ordering::SeqCst) {
+        ui.stop.notify_one();
+    }
+}
+
 /// Returns once the app is gone, or once it has had long enough to be
 pub async fn stop(ui: &Arc<Ui>) {
-    if ui.stopping.swap(true, Ordering::SeqCst) || !ui.running.load(Ordering::SeqCst) {
+    begin_stop(ui);
+    if !ui.running.load(Ordering::SeqCst) {
         return;
     }
-    ui.stop.notify_one();
     if tokio::time::timeout(STOP_DEADLINE, ui.done.notified())
         .await
         .is_err()

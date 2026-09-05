@@ -162,15 +162,25 @@ pub fn uninstall() -> Result<()> {
     require_macos()?;
 
     let path = plist_path()?;
+    unload()?;
     if !path.exists() {
         println!("Service is not installed");
         return Ok(());
     }
 
-    let _ = launchctl(&["bootout", &target()]);
     std::fs::remove_file(&path).with_context(|| format!("Failed to remove {}", path.display()))?;
 
     println!("Service uninstalled");
+    Ok(())
+}
+
+/// Remove the job from launchd if it is loaded, including partial installs
+/// where the plist has already disappeared.
+pub(crate) fn unload() -> Result<()> {
+    require_macos()?;
+    if launchctl(&["print", &target()])?.status.success() {
+        launchctl_checked(&["bootout", &target()])?;
+    }
     Ok(())
 }
 

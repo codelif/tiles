@@ -14,8 +14,12 @@ use tauri::{ActivationPolicy, Manager, WindowEvent};
 fn main() {
     tauri::Builder::default()
         // has to be registered first, so a second copy exits before it builds a
-        // status item of its own. nothing to focus, so the callback is empty
-        .plugin(tauri_plugin_single_instance::init(|_app, _argv, _cwd| {}))
+        // status item of its own. a daemon-owned copy displaces a manual one
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            if lifeline::should_yield_to(&argv) {
+                app.exit(0);
+            }
+        }))
         .plugin(tauri_nspanel::init())
         .invoke_handler(tauri::generate_handler![
             panel::hide_panel,
