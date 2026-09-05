@@ -6,7 +6,6 @@
 use tauri_nspanel::objc2_app_kit::{NSPasteboard, NSPasteboardTypeString};
 use tauri_nspanel::objc2_foundation::NSString;
 
-
 /// NSPasteboard is not main-thread-only, so this can answer with the write's
 /// own result instead of a dispatch that has not run yet
 #[tauri::command]

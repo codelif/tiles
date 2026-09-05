@@ -66,6 +66,13 @@
         focus.move(-1);
         return;
       case "Enter":
+        if (
+          event.defaultPrevented ||
+          (event.target instanceof Element &&
+            event.target.closest("button, a, input, select, textarea, [contenteditable='true']"))
+        ) {
+          return;
+        }
         event.preventDefault();
         focus.activate();
         return;

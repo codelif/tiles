@@ -48,25 +48,51 @@ export const remote = $state<{ value: Remote }>({ value: { state: "unknown" } })
  * well. returns the teardown for all five listeners
  */
 export function connect(): () => void {
-  const read = <T>(command: string, apply: (value: T) => void) => {
-    void invoke<T>(command).then(apply).catch(() => {});
+  let connected = true;
+
+  const sync = <T>(event: string, command: string, apply: (value: T) => void) => {
+    let generation = 0;
+    return listen<T>(event, ({ payload }) => {
+      generation += 1;
+      if (connected) apply(payload);
+    })
+      .then((unlisten) => {
+        if (!connected) {
+          unlisten();
+          return () => {};
+        }
+
+        const snapshotGeneration = generation;
+        void invoke<T>(command)
+          .then((value) => {
+            if (connected && generation === snapshotGeneration) apply(value);
+          })
+          .catch(() => {});
+        return unlisten;
+      })
+      .catch(() => {
+        // A snapshot is still useful if event registration itself failed.
+        if (connected) {
+          void invoke<T>(command)
+            .then((value) => connected && apply(value))
+            .catch(() => {});
+        }
+        return () => {};
+      });
   };
 
-  read<Health>("daemon_health", (v) => (health.value = v));
-  read<Inference>("inference_state", (v) => (inference.value = v));
-  read<Account>("account_state", (v) => (account.value = v));
-  read<Sessions>("sessions_state", (v) => (sessions.value = v));
-  read<Remote>("remote_state", (v) => (remote.value = v));
-
   const listeners: Promise<UnlistenFn>[] = [
-    listen<Health>("daemon://health", (e) => (health.value = e.payload)),
-    listen<Inference>("inference://state", (e) => (inference.value = e.payload)),
-    listen<Account>("account://state", (e) => (account.value = e.payload)),
-    listen<Sessions>("sessions://state", (e) => (sessions.value = e.payload)),
-    listen<Remote>("remote://state", (e) => (remote.value = e.payload)),
+    sync<Health>("daemon://health", "daemon_health", (v) => (health.value = v)),
+    sync<Inference>("inference://state", "inference_state", (v) => (inference.value = v)),
+    sync<Account>("account://state", "account_state", (v) => (account.value = v)),
+    sync<Sessions>("sessions://state", "sessions_state", (v) => (sessions.value = v)),
+    sync<Remote>("remote://state", "remote_state", (v) => (remote.value = v)),
   ];
 
-  return () => listeners.forEach((l) => void l.then((stop) => stop()));
+  return () => {
+    connected = false;
+    listeners.forEach((listener) => void listener.then((unlisten) => unlisten()));
+  };
 }
 
 /** both ends carry the meaning, the middle is a base32 blur at 380px */
