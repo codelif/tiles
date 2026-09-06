@@ -240,8 +240,10 @@ mod tests {
     use super::*;
 
     /// launchd refuses a malformed plist without saying so, and the template is
-    /// hand-written, so the parse is the thing worth checking
+    /// hand-written, so the parse is the thing worth checking. plutil ships with
+    /// the os, and ci runs the suite on linux
     #[test]
+    #[cfg(target_os = "macos")]
     fn plist_is_well_formed() {
         let dir = tempfile::tempdir().expect("a temp dir");
         let path = dir.path().join("agent.plist");
