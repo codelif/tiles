@@ -151,7 +151,11 @@ impl StatusTarget {
             return;
         };
         let frame = window.frame();
-        panel::set_tray_center_x(&self.ivars().app, frame.origin.x + frame.size.width / 2.0);
+        panel::set_tray_center(
+            &self.ivars().app,
+            frame.origin.x + frame.size.width / 2.0,
+            frame.origin.y + frame.size.height / 2.0,
+        );
     }
 }
 

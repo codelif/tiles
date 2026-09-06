@@ -59,8 +59,9 @@ const WARMUP_ALPHA: f64 = 0.0;
 
 #[derive(Default)]
 pub struct PanelState {
-    // centre x of the status item, in points
-    tray_center_x: Mutex<Option<f64>>,
+    // centre of the status item, in points. x places the panel, y picks the
+    // display, which stacked screens share an x range and need
+    tray_center: Mutex<Option<(f64, f64)>>,
     last_hidden: Mutex<Option<Instant>>,
     // true while launch warm-up owns visibility
     warming: Mutex<bool>,
@@ -77,9 +78,9 @@ pub enum Dismiss {
     Fade,
 }
 
-pub fn set_tray_center_x(app: &AppHandle, x: f64) {
+pub fn set_tray_center(app: &AppHandle, x: f64, y: f64) {
     if let Some(state) = app.try_state::<PanelState>() {
-        *state.tray_center_x.lock().unwrap() = Some(x);
+        *state.tray_center.lock().unwrap() = Some((x, y));
     }
 }
 
@@ -190,15 +191,21 @@ fn finish_warm_up(app: &AppHandle) -> bool {
     true
 }
 
-/// keyed off the tray x, NSPanel::screen() reports where the window already is
-fn visible_frame_for(tray_center_x: Option<f64>) -> Option<NSRect> {
+/// keyed off the tray point, NSPanel::screen() reports where the window already is
+fn visible_frame_for(tray_center: Option<(f64, f64)>) -> Option<NSRect> {
     let mtm = MainThreadMarker::new()?;
 
-    if let Some(x) = tray_center_x {
+    // both axes, else two screens stacked vertically match on x alone and the
+    // panel opens on whichever one the list happens to hold first
+    if let Some((x, y)) = tray_center {
         let screens = NSScreen::screens(mtm);
         for screen in screens.iter() {
             let frame = screen.frame();
-            if x >= frame.origin.x && x < frame.origin.x + frame.size.width {
+            if x >= frame.origin.x
+                && x < frame.origin.x + frame.size.width
+                && y >= frame.origin.y
+                && y < frame.origin.y + frame.size.height
+            {
                 return Some(screen.visibleFrame());
             }
         }
@@ -213,11 +220,11 @@ fn place(app: &AppHandle) {
         return;
     };
 
-    let tray_center_x = app
+    let tray_center = app
         .try_state::<PanelState>()
-        .and_then(|state| *state.tray_center_x.lock().unwrap());
+        .and_then(|state| *state.tray_center.lock().unwrap());
 
-    let Some(visible) = visible_frame_for(tray_center_x) else {
+    let Some(visible) = visible_frame_for(tray_center) else {
         return;
     };
 
@@ -227,8 +234,8 @@ fn place(app: &AppHandle) {
 
     let min_x = visible.origin.x + EDGE_MARGIN;
     let max_x = (visible.origin.x + visible.size.width - size.width - EDGE_MARGIN).max(min_x);
-    let x = match tray_center_x {
-        Some(center) => (center - size.width / 2.0).clamp(min_x, max_x),
+    let x = match tray_center {
+        Some((center, _)) => (center - size.width / 2.0).clamp(min_x, max_x),
         // no tray rect yet, sit where status items live
         None => max_x,
     };
