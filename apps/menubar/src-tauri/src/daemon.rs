@@ -50,6 +50,10 @@ pub fn url(path: &str) -> String {
 /// `GET /` answers with the daemon's version, so one request covers both questions
 async fn ping(client: &reqwest::Client) -> Option<String> {
     let res = client.get(url("/")).send().await.ok()?;
+    // reqwest only errors on transport, so an error page would pass for a version
+    if !res.status().is_success() {
+        return None;
+    }
     Some(res.text().await.ok()?.trim().to_owned())
 }
 

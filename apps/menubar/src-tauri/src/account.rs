@@ -74,9 +74,13 @@ async fn fetch(client: &reqwest::Client) -> State {
         return State::Unknown;
     };
 
-    // 404 is the answer for an empty identity, not a failure
-    if !res.status().is_success() {
+    // 404 is the answer for an empty identity, every other failure is the
+    // daemon saying nothing, which is not the same as saying there is no account
+    if res.status() == reqwest::StatusCode::NOT_FOUND {
         return State::None;
+    }
+    if !res.status().is_success() {
+        return State::Unknown;
     }
 
     match res.text().await {
