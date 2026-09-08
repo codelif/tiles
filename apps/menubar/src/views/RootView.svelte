@@ -7,6 +7,7 @@
   import Chip from "../lib/Chip.svelte";
   import CopyMark from "../lib/CopyMark.svelte";
   import Footer from "../lib/Footer.svelte";
+  import HandleField from "../lib/HandleField.svelte";
   import Masthead, { type Mode } from "../lib/Masthead.svelte";
   import ProviderMark from "../lib/ProviderMark.svelte";
   import Row from "../lib/Row.svelte";
@@ -16,7 +17,15 @@
   import { Copier } from "../lib/copy.svelte";
   import { contextLabel, describe } from "../lib/model";
   import { nav } from "../nav.svelte";
-  import { account, health, inference, remote, sessions, truncateMiddle } from "../state.svelte";
+  import {
+    account,
+    atproto,
+    health,
+    inference,
+    remote,
+    sessions,
+    truncateMiddle,
+  } from "../state.svelte";
 
   /** how many fit under the masthead before the panel gets tall */
   const PREVIEW = 3;
@@ -83,6 +92,50 @@
         return { name: "?", title: "—", sub: "" };
     }
   });
+
+  const atmosphere = $derived.by(() => {
+    switch (atproto.value.state) {
+      case "session":
+        return {
+          name: atproto.value.handle,
+          title: `@${atproto.value.handle}`,
+          sub: truncateMiddle(atproto.value.did, 16, 6),
+        };
+      case "pending":
+        return {
+          name: atproto.value.handle,
+          title: `@${atproto.value.handle}`,
+          sub: "Waiting for your browser",
+        };
+      default:
+        return { name: "?", title: "Not connected", sub: "" };
+    }
+  });
+
+  const signedOut = $derived(atproto.value.state === "none");
+  const signingIn = $derived(atproto.value.state === "pending");
+
+  let drawer = $state(false);
+  let signInError = $state<string | null>(null);
+
+  $effect(() => {
+    if (atproto.value.state === "session") drawer = false;
+  });
+
+  function askForHandle() {
+    drawer = !drawer;
+    if (!drawer) signInError = null;
+  }
+
+  async function signIn(handle: string) {
+    signInError = null;
+    try {
+      await invoke("atproto_login", { handle });
+      drawer = false;
+    } catch (err) {
+      signInError = String(err);
+    }
+  }
 
   const recent = $derived(sessions.value.state === "ready" ? sessions.value.sessions : []);
   // pushing would show exactly what is already on screen
@@ -170,7 +223,8 @@
 
 <Masthead {mode} {on} pending={busy} disabled={health.value.state !== "up"} ontoggle={toggle} />
 
-<Zone label="Tiles Account">
+<Zone label="Accounts">
+  <h3 class="account">Tiles</h3>
   <Row
     size="large"
     title={identity.title}
@@ -186,6 +240,39 @@
       {#if account.value.state === "local"}<Chevron />{/if}
     {/snippet}
   </Row>
+
+  <h3 class="account">Atmosphere</h3>
+  <Row
+    size="large"
+    title={atmosphere.title}
+    sub={atmosphere.sub}
+    submono={atproto.value.state === "session"}
+    dimmed={atproto.value.state === "unknown"}
+    onselect={signedOut ? askForHandle : undefined}
+  >
+    {#snippet leading()}
+      <Avatar nickname={atmosphere.name} />
+    {/snippet}
+    {#snippet trailing()}
+      {#if signedOut}
+        <span class="signin" data-open={drawer}>Sign in</span>
+      {/if}
+    {/snippet}
+  </Row>
+
+  <div class="drawer" data-open={drawer || signingIn}>
+    <div class="drawer__clip" inert={!drawer && !signingIn}>
+      <div class="drawer__body">
+        <HandleField
+          open={drawer && !signingIn}
+          pending={signingIn}
+          onsubmit={signIn}
+          oncancel={() => (drawer = false)}
+        />
+        {#if signInError}<p class="drawer__error">{signInError}</p>{/if}
+      </div>
+    </div>
+  </div>
 </Zone>
 
 <Zone label="Model" dimmed={!canShare}>
@@ -267,6 +354,73 @@
 <Footer {note} alert={health.value.state === "down"} />
 
 <style>
+  .account {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin-bottom: 5px;
+    padding: 0 var(--pad-x);
+    color: var(--slate);
+    font-size: var(--fs-chip);
+    font-weight: 500;
+    letter-spacing: var(--tracking-chip);
+    opacity: 0.8;
+  }
+
+  .account::after {
+    content: "";
+    flex: 1;
+    height: var(--hairline);
+    background: var(--rule);
+  }
+
+  .account:not(:first-of-type) {
+    margin-top: 9px;
+  }
+
+  .signin {
+    flex: none;
+    clip-path: polygon(0 0, 100% 0, 100% calc(100% - 3px), calc(100% - 3px) 100%, 0 100%);
+    padding: 3px 7px;
+    background: var(--steel);
+    color: var(--row-mark, var(--ash));
+    font-size: var(--fs-label);
+    font-weight: 500;
+    transition:
+      background var(--dur-state) ease-out,
+      color var(--dur-state) ease-out;
+  }
+
+  .signin[data-open="true"] {
+    background: var(--signal);
+    color: var(--void);
+  }
+
+  .drawer {
+    display: grid;
+    grid-template-rows: 0fr;
+    transition: grid-template-rows var(--dur-push) var(--ease-push);
+  }
+
+  .drawer[data-open="true"] {
+    grid-template-rows: 1fr;
+  }
+
+  .drawer__clip {
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .drawer__body {
+    padding: 3px var(--pad-x) 5px;
+  }
+
+  .drawer__error {
+    padding-top: 5px;
+    color: var(--alert);
+    font-size: var(--fs-label);
+  }
+
   /* the ticket's own line, at the width the truncated one lands on */
   .ticket-skeleton {
     width: 186px;

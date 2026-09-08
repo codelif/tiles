@@ -13,6 +13,14 @@
   outline: none;
 }
 
+input {
+  font: inherit;
+  color: inherit;
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+}
+
 html,
 body,
 #app {
