@@ -15,7 +15,15 @@
   const copier = new Copier();
   onDestroy(() => copier.dispose());
 
-  const local = $derived(account.value.state === "local" ? account.value : null);
+  let held = $state(account.value.state === "local" ? account.value : null);
+
+  $effect(() => {
+    const at = account.value;
+    if (at.state === "local") held = at;
+    else if (at.state === "none") nav.pop();
+  });
+
+  const local = $derived(held);
 
   // read once on open rather than polled, the daemon rewrites it only on a
   // `tiles data path` and this view is not on screen for long

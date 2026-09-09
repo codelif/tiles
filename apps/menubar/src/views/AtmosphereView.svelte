@@ -17,7 +17,16 @@
     did.dispose();
   });
 
-  const session = $derived(atproto.value.state === "session" ? atproto.value : null);
+  let held = $state(atproto.value.state === "session" ? atproto.value : null);
+
+  $effect(() => {
+    const at = atproto.value;
+    if (at.state === "session") held = at;
+    else if (at.state === "none") nav.pop();
+  });
+
+  const session = $derived(held);
+
   const name = $derived(session?.displayName?.trim() || null);
 
   const host = $derived(session?.pds?.replace(/^https:\/\//, "") ?? null);
