@@ -13,7 +13,8 @@
   outline: none;
 }
 
-input {
+input[type="text"],
+input:not([type]) {
   font: inherit;
   color: inherit;
   user-select: text;

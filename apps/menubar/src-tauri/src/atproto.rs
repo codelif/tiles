@@ -34,6 +34,7 @@ const LOGIN_PATH: &str = "/v1/tilekit/atproto/login";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(tag = "state", rename_all = "lowercase")]
+#[serde(rename_all_fields = "camelCase")]
 pub enum State {
     /// no daemon to ask through
     Unknown,
@@ -45,7 +46,6 @@ pub enum State {
     Session {
         handle: String,
         did: String,
-        #[serde(rename = "displayName")]
         display_name: Option<String>,
         /// a data uri
         avatar: Option<Arc<str>>,
@@ -575,6 +575,29 @@ mod tests {
         assert_eq!((misses, keeps), (3, false));
 
         assert_eq!(tally(true, misses), (0, true));
+    }
+
+    #[test]
+    fn the_session_serialises_the_way_the_panel_reads_it() {
+        let state = State::Session {
+            handle: "codelif.in".to_owned(),
+            did: "did:plc:abc".to_owned(),
+            display_name: Some("Harsh Sharma".to_owned()),
+            avatar: None,
+            pds: Some("https://pds.example".to_owned()),
+        };
+
+        assert_eq!(
+            serde_json::to_value(&state).unwrap(),
+            serde_json::json!({
+                "state": "session",
+                "handle": "codelif.in",
+                "did": "did:plc:abc",
+                "displayName": "Harsh Sharma",
+                "avatar": null,
+                "pds": "https://pds.example",
+            })
+        );
     }
 
     #[test]

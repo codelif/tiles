@@ -184,7 +184,7 @@ fn release(held: &mut Held) {
     }
 }
 
-fn reconcile(app: &AppHandle) {
+pub fn reconcile(app: &AppHandle) {
     let ac = on_ac();
     let now = now_ms();
     let awake = app.state::<Awake>();
@@ -239,10 +239,6 @@ fn reconcile(app: &AppHandle) {
     drop(held);
 
     set(app, next);
-}
-
-pub fn tick(app: &AppHandle) {
-    reconcile(app);
 }
 
 #[tauri::command]

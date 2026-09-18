@@ -11,8 +11,8 @@
   import Masthead, { type Mode } from "../lib/Masthead.svelte";
   import ProviderMark from "../lib/ProviderMark.svelte";
   import Row from "../lib/Row.svelte";
-  import Switch from "../lib/Switch.svelte";
   import SessionList from "../lib/SessionList.svelte";
+  import Switch from "../lib/Switch.svelte";
   import Zone from "../lib/Zone.svelte";
   import { Copier } from "../lib/copy.svelte";
   import { contextLabel, describe } from "../lib/model";
@@ -140,8 +140,16 @@
   });
 
   function askForHandle() {
-    drawer = !drawer;
-    if (!drawer) signInError = null;
+    if (drawer) {
+      closeDrawer();
+      return;
+    }
+    drawer = true;
+  }
+
+  function closeDrawer() {
+    drawer = false;
+    signInError = null;
   }
 
   async function signIn(handle: string) {
@@ -286,9 +294,9 @@
           open={drawer && !signingIn}
           pending={signingIn}
           onsubmit={signIn}
-          oncancel={() => (drawer = false)}
+          oncancel={closeDrawer}
         />
-        {#if signInError}<p class="drawer__error">{signInError}</p>{/if}
+        {#if signInError}<p class="drawer__error" role="alert">{signInError}</p>{/if}
       </div>
     </div>
   </div>
@@ -403,7 +411,8 @@
 
   .signin {
     flex: none;
-    clip-path: polygon(0 0, 100% 0, 100% calc(100% - 3px), calc(100% - 3px) 100%, 0 100%);
+    --cut: 3px;
+    clip-path: var(--clip-cut);
     padding: 3px 7px;
     background: var(--steel);
     color: var(--row-mark, var(--ash));

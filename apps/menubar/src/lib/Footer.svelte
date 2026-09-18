@@ -2,6 +2,7 @@
   import { invoke } from "@tauri-apps/api/core";
 
   import AwakeMenu from "./AwakeMenu.svelte";
+  import Chevron from "./Chevron.svelte";
   import CupMark from "./CupMark.svelte";
   import { awake } from "../state.svelte";
 
@@ -16,7 +17,7 @@
 
   let menu = $state(false);
 
-  let now = $state(Date.now());
+  let now = $state(0);
 
   $effect(() => {
     if (!awake.value.active || awake.value.paused) return;
@@ -35,7 +36,7 @@
       : `${pad(minutes)}:${pad(total % 60)}`;
   }
 
-  const session = $derived.by<"none" | "running" | "paused">(() =>
+  const session: "none" | "running" | "paused" = $derived(
     awake.value.paused ? "paused" : awake.value.active ? "running" : "none",
   );
 
@@ -52,7 +53,7 @@
     void invoke("awake_start", { seconds }).catch(() => {});
   }
 
-  function run(command: string) {
+  function run(command: "awake_pause" | "awake_resume" | "awake_stop") {
     menu = false;
     void invoke(command).catch(() => {});
   }
@@ -92,28 +93,21 @@
       class="footer__cup"
       data-state={session}
       disabled={!awake.value.ac}
-      aria-label="Keep this Mac awake"
+      aria-label={awake.value.ac ? "Keep this Mac awake" : "Keeping awake needs mains power"}
       aria-haspopup="menu"
       aria-expanded={menu}
-      title={awake.value.ac ? "Keep this Mac awake" : "Keeping awake needs mains power"}
       onclick={() => (menu = !menu)}
     >
       <CupMark active={session === "running"} />
       {#if session !== "none"}
         <span class="footer__count">{reading}</span>
-      {:else}
+      {:else if awake.value.ac}
         <span>Keep awake</span>
+      {:else}
+        <span>Needs mains</span>
       {/if}
 
-      <svg class="footer__trail" viewBox="0 0 10 10" width="10" height="10" aria-hidden="true">
-        <path
-          d="M2 6.5 5 3.5 8 6.5"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="1.5"
-          stroke-linecap="square"
-        />
-      </svg>
+      <Chevron dir="up" />
     </button>
   </div>
 
@@ -162,14 +156,11 @@
     color: var(--alert);
   }
 
-  .footer__trail {
-    flex: none;
-    display: block;
-  }
-
   .footer__count {
+    min-width: 7ch;
     font-family: var(--font-mono);
     font-variant-numeric: tabular-nums;
+    text-align: left;
   }
 
   .footer__cupwrap {
@@ -193,13 +184,7 @@
     align-items: center;
     height: var(--h-plate);
     padding: 0 9px;
-    clip-path: polygon(
-      0 0,
-      100% 0,
-      100% calc(100% - var(--cut)),
-      calc(100% - var(--cut)) 100%,
-      0 100%
-    );
+    clip-path: var(--clip-cut);
     border: none;
     background: var(--steel);
     color: var(--ash);
@@ -212,6 +197,8 @@
   }
 
   .footer__cup {
+    --row-mark: currentColor;
+
     gap: 6px;
     position: relative;
     z-index: 2;

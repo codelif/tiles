@@ -52,13 +52,7 @@
     width: var(--size);
     height: var(--size);
     padding: var(--frame-w);
-    clip-path: polygon(
-      0 0,
-      100% 0,
-      100% calc(100% - var(--cut)),
-      calc(100% - var(--cut)) 100%,
-      0 100%
-    );
+    clip-path: var(--clip-cut);
     transition: background var(--dur-state) ease-out;
   }
 

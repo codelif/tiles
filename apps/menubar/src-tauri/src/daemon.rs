@@ -96,7 +96,7 @@ async fn watch(app: AppHandle) {
         .expect("a client with only a timeout set always builds");
 
     loop {
-        awake::tick(&app);
+        awake::reconcile(&app);
 
         match ping(&liveness).await {
             Some(version) => {

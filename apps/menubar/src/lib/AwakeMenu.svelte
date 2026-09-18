@@ -19,28 +19,27 @@
   ];
 </script>
 
-<div class="menu" role="menu">
-  {#if session !== "none"}
-    {#if session === "running"}
-      <button class="menu__item menu__item--lead" role="menuitem" onclick={onpause}>
-        Pause
-      </button>
-    {:else}
-      <button class="menu__item menu__item--lead" role="menuitem" onclick={onresume}>
-        Resume
-      </button>
-    {/if}
-    <button class="menu__item menu__item--lead" role="menuitem" onclick={onstop}>
-      Turn off
-    </button>
-    <div class="menu__rule"></div>
-  {/if}
+<div class="menu">
+  <!-- clip-path takes the drop shadow with it, so the halo is a sibling -->
+  <span class="menu__halo"></span>
 
-  {#each DURATIONS as duration (duration.label)}
-    <button class="menu__item" role="menuitem" onclick={() => onpick(duration.seconds)}>
-      {duration.label}
-    </button>
-  {/each}
+  <div class="menu__list">
+    {#if session !== "none"}
+      {#if session === "running"}
+        <button class="menu__item menu__item--lead" onclick={onpause}>Pause</button>
+      {:else}
+        <button class="menu__item menu__item--lead" onclick={onresume}>Resume</button>
+      {/if}
+      <button class="menu__item menu__item--lead" onclick={onstop}>Turn off</button>
+      <div class="menu__rule"></div>
+    {/if}
+
+    {#each DURATIONS as duration (duration.label)}
+      <button class="menu__item" onclick={() => onpick(duration.seconds)}>
+        {duration.label}
+      </button>
+    {/each}
+  </div>
 </div>
 
 <style>
@@ -49,19 +48,22 @@
     right: 0;
     bottom: calc(100% + 6px);
     z-index: 2;
+    min-width: 100%;
+  }
+
+  .menu__halo {
+    position: absolute;
+    inset: 2px;
+    box-shadow: var(--lift);
+  }
+
+  .menu__list {
+    position: relative;
     display: flex;
     flex-direction: column;
-    min-width: 100%;
     padding: 3px 0;
-    clip-path: polygon(
-      0 0,
-      100% 0,
-      100% calc(100% - var(--cut)),
-      calc(100% - var(--cut)) 100%,
-      0 100%
-    );
+    clip-path: var(--clip-cut);
     background: var(--steel);
-    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.55);
   }
 
   .menu__item {
