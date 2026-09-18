@@ -10,20 +10,21 @@
   import Zone from "../lib/Zone.svelte";
   import { Copier } from "../lib/copy.svelte";
   import { nav } from "../nav.svelte";
-  import { account, truncateMiddle } from "../state.svelte";
+  import { account, held, truncateMiddle } from "../state.svelte";
 
   const copier = new Copier();
   onDestroy(() => copier.dispose());
 
-  let held = $state(account.value.state === "local" ? account.value : null);
+  const kept = held(
+    () => account.value,
+    (a) => (a.state === "local" ? a : null),
+  );
 
   $effect(() => {
-    const at = account.value;
-    if (at.state === "local") held = at;
-    else if (at.state === "none") nav.pop();
+    if (account.value.state === "none") nav.pop();
   });
 
-  const local = $derived(held);
+  const local = $derived(kept.value);
 
   // read once on open rather than polled, the daemon rewrites it only on a
   // `tiles data path` and this view is not on screen for long

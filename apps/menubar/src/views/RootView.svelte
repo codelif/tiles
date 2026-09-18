@@ -21,6 +21,7 @@
     account,
     atproto,
     health,
+    held,
     inference,
     remote,
     sessions,
@@ -93,32 +94,39 @@
     }
   });
 
+  const kept = held(
+    () => atproto.value,
+    (at) => (at.state === "session" ? at : null),
+  );
+
   const atmosphere = $derived.by(() => {
-    switch (atproto.value.state) {
-      case "session": {
-        const name = atproto.value.displayName?.trim() || null;
-        return {
-          name: name ?? atproto.value.handle,
-          title: name ?? `@${atproto.value.handle}`,
-          sub: name ? `@${atproto.value.handle}` : truncateMiddle(atproto.value.did, 16, 6),
-          avatar: atproto.value.avatar ?? null,
-        };
-      }
-      case "pending":
-        return {
-          name: atproto.value.handle,
-          title: `@${atproto.value.handle}`,
-          sub: "Waiting for your browser",
-          avatar: null,
-        };
-      default:
-        return { name: "?", title: "Not connected", sub: "", avatar: null };
+    if (atproto.value.state === "pending") {
+      return {
+        name: atproto.value.handle,
+        title: `@${atproto.value.handle}`,
+        sub: "Waiting for your browser",
+        avatar: null,
+      };
     }
+
+    const session = atproto.value.state === "none" ? null : kept.value;
+    if (session === null) {
+      return { name: "?", title: "Not connected", sub: "", avatar: null };
+    }
+
+    const name = session.displayName?.trim() || null;
+    return {
+      name: name ?? session.handle,
+      title: name ?? `@${session.handle}`,
+      sub: name ? `@${session.handle}` : truncateMiddle(session.did, 16, 6),
+      avatar: session.avatar ?? null,
+    };
   });
 
   const signedOut = $derived(atproto.value.state === "none");
   const signingIn = $derived(atproto.value.state === "pending");
-  const signedIn = $derived(atproto.value.state === "session");
+  const signedIn = $derived(!signedOut && !signingIn && kept.value !== null);
+  const waiting = $derived(!signedOut && !signingIn && kept.value === null);
 
   const enterAtmosphere = $derived(
     signedOut ? askForHandle : signedIn ? () => nav.push("atmosphere") : undefined,
@@ -255,8 +263,8 @@
     size="large"
     title={atmosphere.title}
     sub={atmosphere.sub}
-    submono={atproto.value.state === "session"}
-    dimmed={atproto.value.state === "unknown"}
+    submono={signedIn}
+    dimmed={waiting}
     onselect={enterAtmosphere}
   >
     {#snippet leading()}

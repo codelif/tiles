@@ -123,6 +123,18 @@ export function connect(): () => void {
   };
 }
 
+/** keeps the last answer that named an identity */
+export function held<T, L>(read: () => T, live: (value: T) => L | null): { value: L | null } {
+  const kept = $state<{ value: L | null }>({ value: live(read()) });
+
+  $effect(() => {
+    const next = live(read());
+    if (next !== null) kept.value = next;
+  });
+
+  return kept;
+}
+
 /** both ends carry the meaning, the middle is a base32 blur at 380px */
 export function truncateMiddle(text: string, head: number, tail: number): string {
   return text.length <= head + tail + 2 ? text : `${text.slice(0, head)}…${text.slice(-tail)}`;

@@ -10,6 +10,8 @@ use tauri::{AppHandle, Emitter, Manager};
 const PORT: u16 = 1729;
 
 const PING_TIMEOUT: Duration = Duration::from_secs(1);
+/// the routes behind `GET /` open sqlcipher and read the keychain
+const POLL_TIMEOUT: Duration = Duration::from_secs(5);
 const POLL_UP: Duration = Duration::from_secs(5);
 const POLL_STARTING: Duration = Duration::from_millis(500);
 
@@ -84,15 +86,19 @@ fn set(app: &AppHandle, next: Health) {
 
 /// the daemon owns its own lifecycle now, so this only ever reports
 async fn watch(app: AppHandle) {
-    let client = reqwest::Client::builder()
+    let liveness = reqwest::Client::builder()
         .timeout(PING_TIMEOUT)
+        .build()
+        .expect("a client with only a timeout set always builds");
+    let client = reqwest::Client::builder()
+        .timeout(POLL_TIMEOUT)
         .build()
         .expect("a client with only a timeout set always builds");
 
     loop {
         awake::tick(&app);
 
-        match ping(&client).await {
+        match ping(&liveness).await {
             Some(version) => {
                 set(&app, Health::Up { version });
                 inference::poll(&app, &client).await;

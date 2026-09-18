@@ -1,7 +1,7 @@
 //! the atproto session, held by the daemon
 
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::Duration;
 
 use crate::daemon;
@@ -15,6 +15,13 @@ const AVATAR_MAX_BYTES: u64 = 2 * 1024 * 1024;
 const AVATAR_TYPES: [&str; 4] = ["image/jpeg", "image/png", "image/webp", "image/gif"];
 
 const PROFILE_TIMEOUT: Duration = Duration::from_secs(10);
+
+const MISSES_BEFORE_UNKNOWN: u32 = 3;
+
+const REFRESH_TIMEOUT: Duration = Duration::from_secs(5);
+
+const STATUS_PATH: &str = "/v1/tilekit/atproto/status";
+const LOGIN_PATH: &str = "/v1/tilekit/atproto/login";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(tag = "state", rename_all = "lowercase")]
@@ -56,12 +63,14 @@ struct Atproto {
     state: Mutex<State>,
     /// one login at a time; the daemon binds one callback port
     in_flight: AtomicBool,
+    misses: AtomicU32,
     profiles: Mutex<Profiles>,
 }
 
 pub fn init(app: &AppHandle) {
     app.manage(Atproto {
         state: Mutex::new(State::Unknown),
+        misses: AtomicU32::new(0),
         in_flight: AtomicBool::new(false),
         profiles: Mutex::new(Profiles::default()),
     });
@@ -84,39 +93,69 @@ fn set(app: &AppHandle, next: State) {
 }
 
 pub fn unknown(app: &AppHandle) {
-    set(app, State::Unknown);
+    if logging_in(app) {
+        return;
+    }
+    settle(app, false);
 }
 
 pub async fn poll(app: &AppHandle, client: &reqwest::Client) {
     // the daemon reports signed out for the whole browser round trip
-    if app.state::<Atproto>().in_flight.load(Ordering::SeqCst) {
+    if logging_in(app) {
         return;
     }
 
-    let next = dress(app, fetch(client).await);
-    set(app, next);
+    let answer = fetch(client).await;
+
+    if logging_in(app) {
+        return;
+    }
+
+    match answer {
+        Some(state) => {
+            settle(app, true);
+            let next = dress(app, state);
+            set(app, next);
+        }
+        None => settle(app, false),
+    }
 }
 
-async fn fetch(client: &reqwest::Client) -> State {
-    let Ok(res) = client
-        .get(daemon::url("/v1/tilekit/atproto/status"))
-        .send()
-        .await
-    else {
-        return State::Unknown;
-    };
+fn logging_in(app: &AppHandle) -> bool {
+    app.state::<Atproto>().in_flight.load(Ordering::SeqCst)
+}
+
+fn tally(answered: bool, misses: u32) -> (u32, bool) {
+    if answered {
+        return (0, true);
+    }
+
+    let misses = misses.saturating_add(1);
+    (misses, misses < MISSES_BEFORE_UNKNOWN)
+}
+
+fn settle(app: &AppHandle, answered: bool) {
+    let atproto = app.state::<Atproto>();
+    let (misses, keeps) = tally(answered, atproto.misses.load(Ordering::SeqCst));
+    atproto.misses.store(misses, Ordering::SeqCst);
+
+    if !keeps {
+        set(app, State::Unknown);
+    }
+}
+
+/// `None` is the daemon not answering
+async fn fetch(client: &reqwest::Client) -> Option<State> {
+    let res = client.get(daemon::url(STATUS_PATH)).send().await.ok()?;
 
     if res.status() == reqwest::StatusCode::NOT_FOUND {
-        return State::None;
+        return Some(State::None);
     }
     if !res.status().is_success() {
-        return State::Unknown;
+        return None;
     }
 
-    match res.text().await {
-        Ok(body) => parse(&body),
-        Err(_) => State::Unknown,
-    }
+    Some(parse(&res.text().await.ok()?))
 }
 
 fn parse(body: &str) -> State {
@@ -374,6 +413,28 @@ pub fn atproto_state(app: AppHandle) -> State {
     current(&app)
 }
 
+struct Login(AppHandle);
+
+impl Login {
+    /// `None` when a sign-in is already waiting
+    fn claim(app: &AppHandle) -> Option<Self> {
+        let taken = app
+            .state::<Atproto>()
+            .in_flight
+            .swap(true, Ordering::SeqCst);
+        (!taken).then(|| Self(app.clone()))
+    }
+}
+
+impl Drop for Login {
+    fn drop(&mut self) {
+        self.0
+            .state::<Atproto>()
+            .in_flight
+            .store(false, Ordering::SeqCst);
+    }
+}
+
 #[tauri::command]
 pub async fn atproto_login(app: AppHandle, handle: String) -> Result<(), String> {
     let handle = handle.trim().trim_start_matches('@').to_lowercase();
@@ -381,13 +442,7 @@ pub async fn atproto_login(app: AppHandle, handle: String) -> Result<(), String>
         return Err("A handle is needed".into());
     }
 
-    if app
-        .state::<Atproto>()
-        .in_flight
-        .swap(true, Ordering::SeqCst)
-    {
-        return Err("A sign-in is already waiting".into());
-    }
+    let login = Login::claim(&app).ok_or("A sign-in is already waiting")?;
 
     set(
         &app,
@@ -397,16 +452,18 @@ pub async fn atproto_login(app: AppHandle, handle: String) -> Result<(), String>
     );
 
     let outcome = request(&handle).await;
-    app.state::<Atproto>()
-        .in_flight
-        .store(false, Ordering::SeqCst);
+    drop(login);
 
-    if let Err(err) = outcome {
-        set(&app, State::Unknown);
-        return Err(err);
-    }
+    refresh(&app).await;
 
-    Ok(())
+    outcome
+}
+
+async fn refresh(app: &AppHandle) {
+    let Ok(client) = reqwest::Client::builder().timeout(REFRESH_TIMEOUT).build() else {
+        return;
+    };
+    poll(app, &client).await;
 }
 
 async fn request(handle: &str) -> Result<(), String> {
@@ -414,7 +471,7 @@ async fn request(handle: &str) -> Result<(), String> {
     let body = serde_json::json!({ "user_handle": handle }).to_string();
 
     let res = client
-        .post(daemon::url("/v1/tilekit/atproto/login"))
+        .post(daemon::url(LOGIN_PATH))
         .header("content-type", "application/json")
         .body(body)
         .send()
@@ -441,7 +498,7 @@ fn reason(body: &str, status: reqwest::StatusCode) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{State, did_doc_url, parse, parse_profile, pds_from_doc};
+    use super::{State, did_doc_url, parse, parse_profile, pds_from_doc, tally};
 
     const SUCCESS: &str = r#"{"status":"success","data":{"handle":"codelif.in","did":"did:plc:7iza6de2dwap2sbkpav7c6c6"}}"#;
 
@@ -459,6 +516,20 @@ mod tests {
                 pds: None,
             }
         );
+    }
+
+    #[test]
+    fn a_quiet_tick_does_not_unseat_the_account_on_its_own() {
+        let (misses, keeps) = tally(false, 0);
+        assert_eq!((misses, keeps), (1, true));
+
+        let (misses, keeps) = tally(false, misses);
+        assert_eq!((misses, keeps), (2, true));
+
+        let (misses, keeps) = tally(false, misses);
+        assert_eq!((misses, keeps), (3, false));
+
+        assert_eq!(tally(true, misses), (0, true));
     }
 
     #[test]

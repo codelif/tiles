@@ -8,7 +8,7 @@
   import Zone from "../lib/Zone.svelte";
   import { Copier } from "../lib/copy.svelte";
   import { nav } from "../nav.svelte";
-  import { atproto, truncateMiddle } from "../state.svelte";
+  import { atproto, held, truncateMiddle } from "../state.svelte";
 
   const handle = new Copier();
   const did = new Copier();
@@ -17,15 +17,16 @@
     did.dispose();
   });
 
-  let held = $state(atproto.value.state === "session" ? atproto.value : null);
+  const kept = held(
+    () => atproto.value,
+    (at) => (at.state === "session" ? at : null),
+  );
 
   $effect(() => {
-    const at = atproto.value;
-    if (at.state === "session") held = at;
-    else if (at.state === "none") nav.pop();
+    if (atproto.value.state === "none") nav.pop();
   });
 
-  const session = $derived(held);
+  const session = $derived(kept.value);
 
   const name = $derived(session?.displayName?.trim() || null);
 
