@@ -16,16 +16,12 @@
       .join("") || "?",
   );
 
-  let failed = $state(false);
-  let ready = $state(false);
+  // keyed to src: an effect clearing these runs after the flush
+  let loaded = $state<string | null>(null);
+  let broken = $state<string | null>(null);
 
-  $effect(() => {
-    src;
-    failed = false;
-    ready = false;
-  });
-
-  const showing = $derived(!!src && !failed);
+  const showing = $derived(!!src && broken !== src);
+  const ready = $derived(!!src && loaded === src);
 </script>
 
 <div
@@ -41,8 +37,8 @@
         {src}
         alt=""
         data-ready={ready}
-        onload={() => (ready = true)}
-        onerror={() => (failed = true)}
+        onload={() => (loaded = src)}
+        onerror={() => (broken = src)}
       />
     {/if}
   </span>

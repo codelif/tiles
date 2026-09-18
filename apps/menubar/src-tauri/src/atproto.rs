@@ -1,8 +1,8 @@
 //! the atproto session, held by the daemon
 
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::time::Duration;
+use std::sync::{Arc, LazyLock, Mutex};
+use std::time::{Duration, Instant};
 
 use crate::daemon;
 use serde::Serialize;
@@ -15,6 +15,15 @@ const AVATAR_MAX_BYTES: u64 = 2 * 1024 * 1024;
 const AVATAR_TYPES: [&str; 4] = ["image/jpeg", "image/png", "image/webp", "image/gif"];
 
 const PROFILE_TIMEOUT: Duration = Duration::from_secs(10);
+
+const PROFILE_RETRY_AFTER: Duration = Duration::from_secs(120);
+
+static PROFILES: LazyLock<Option<reqwest::Client>> = LazyLock::new(|| {
+    reqwest::Client::builder()
+        .timeout(PROFILE_TIMEOUT)
+        .build()
+        .ok()
+});
 
 const MISSES_BEFORE_UNKNOWN: u32 = 3;
 
@@ -39,7 +48,7 @@ pub enum State {
         #[serde(rename = "displayName")]
         display_name: Option<String>,
         /// a data uri
-        avatar: Option<String>,
+        avatar: Option<Arc<str>>,
         pds: Option<String>,
     },
 }
@@ -47,7 +56,7 @@ pub enum State {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct Profile {
     display_name: Option<String>,
-    avatar: Option<String>,
+    avatar: Option<Arc<str>>,
     pds: Option<String>,
 }
 
@@ -57,6 +66,8 @@ struct Profiles {
     loaded: Option<(String, Profile)>,
     /// the did a task already has out
     reading: Option<String>,
+    /// when a did last gave nothing
+    failed: Option<(String, Instant)>,
 }
 
 struct Atproto {
@@ -185,20 +196,29 @@ fn dress(app: &AppHandle, state: State) -> State {
         return state;
     };
 
-    let profile = {
+    let (profile, read) = {
         let atproto = app.state::<Atproto>();
         let mut profiles = atproto.profiles.lock().unwrap();
         match &profiles.loaded {
-            Some((seen, profile)) if *seen == did => profile.clone(),
+            Some((seen, profile)) if *seen == did => (profile.clone(), false),
             _ => {
-                if profiles.reading.as_deref() != Some(did.as_str()) {
+                let waiting = profiles.reading.as_deref() == Some(did.as_str());
+                let resting = profiles.failed.as_ref().is_some_and(|(failed, at)| {
+                    *failed == did && at.elapsed() < PROFILE_RETRY_AFTER
+                });
+
+                let read = !waiting && !resting;
+                if read {
                     profiles.reading = Some(did.clone());
-                    spawn_read(app.clone(), did.clone());
                 }
-                Profile::default()
+                (Profile::default(), read)
             }
         }
     };
+
+    if read {
+        spawn_read(app.clone(), did.clone());
+    }
 
     State::Session {
         handle,
@@ -209,6 +229,38 @@ fn dress(app: &AppHandle, state: State) -> State {
     }
 }
 
+/// one hold of the lock, or a stale read resurrects the account
+fn dress_in(app: &AppHandle, did: &str, profile: Profile) {
+    let atproto = app.state::<Atproto>();
+    let mut state = atproto.state.lock().unwrap();
+
+    let State::Session {
+        handle, did: at, ..
+    } = &*state
+    else {
+        return;
+    };
+    if at != did {
+        return;
+    }
+
+    let next = State::Session {
+        handle: handle.clone(),
+        did: at.clone(),
+        display_name: profile.display_name,
+        avatar: profile.avatar,
+        pds: profile.pds,
+    };
+    if *state == next {
+        return;
+    }
+
+    *state = next.clone();
+    drop(state);
+
+    let _ = app.emit(STATE_EVENT, next);
+}
+
 fn spawn_read(app: AppHandle, did: String) {
     tauri::async_runtime::spawn(async move {
         let profile = read_profile(&did).await;
@@ -216,9 +268,16 @@ fn spawn_read(app: AppHandle, did: String) {
         {
             let atproto = app.state::<Atproto>();
             let mut profiles = atproto.profiles.lock().unwrap();
-            profiles.reading = None;
-            if let Some(profile) = profile.clone() {
-                profiles.loaded = Some((did.clone(), profile));
+            if profiles.reading.as_deref() == Some(did.as_str()) {
+                profiles.reading = None;
+            }
+
+            match &profile {
+                None => profiles.failed = Some((did.clone(), Instant::now())),
+                Some(profile) => {
+                    profiles.failed = None;
+                    profiles.loaded = Some((did.clone(), profile.clone()));
+                }
             }
         }
 
@@ -226,37 +285,15 @@ fn spawn_read(app: AppHandle, did: String) {
             return;
         };
 
-        let State::Session {
-            handle, did: at, ..
-        } = current(&app)
-        else {
-            return;
-        };
-        if at != did {
-            return;
-        }
-
-        set(
-            &app,
-            State::Session {
-                handle,
-                did: at,
-                display_name: profile.display_name,
-                avatar: profile.avatar,
-                pds: profile.pds,
-            },
-        );
+        dress_in(&app, &did, profile);
     });
 }
 
 /// `None` is the pds saying nothing, not an empty profile
 async fn read_profile(did: &str) -> Option<Profile> {
-    let client = reqwest::Client::builder()
-        .timeout(PROFILE_TIMEOUT)
-        .build()
-        .ok()?;
+    let client = PROFILES.as_ref()?;
 
-    let pds = resolve_pds(&client, did).await?;
+    let pds = resolve_pds(client, did).await?;
     let res = client
         .get(format!(
             "{pds}/xrpc/com.atproto.repo.getRecord?repo={did}&collection=app.bsky.actor.profile&rkey=self"
@@ -275,7 +312,7 @@ async fn read_profile(did: &str) -> Option<Profile> {
 
     let (display_name, blob) = parse_profile(&res.text().await.ok()?);
     let avatar = match blob {
-        Some((cid, mime)) => blob_uri(&client, &pds, did, &cid, &mime).await,
+        Some((cid, mime)) => blob_uri(client, &pds, did, &cid, &mime).await,
         None => None,
     };
 
@@ -377,8 +414,8 @@ async fn blob_uri(
     did: &str,
     cid: &str,
     mime: &str,
-) -> Option<String> {
-    let res = client
+) -> Option<Arc<str>> {
+    let mut res = client
         .get(format!(
             "{pds}/xrpc/com.atproto.sync.getBlob?did={did}&cid={cid}"
         ))
@@ -397,15 +434,23 @@ async fn blob_uri(
         return None;
     }
 
-    let bytes = res.bytes().await.ok()?;
-    if bytes.len() as u64 > AVATAR_MAX_BYTES {
-        return None;
+    // chunked carries no length, so cap the bytes themselves
+    let mut bytes: Vec<u8> = Vec::new();
+    while let Some(chunk) = res.chunk().await.ok()? {
+        if bytes.len().saturating_add(chunk.len()) as u64 > AVATAR_MAX_BYTES {
+            return None;
+        }
+        bytes.extend_from_slice(&chunk);
     }
 
-    Some(format!(
-        "data:{mime};base64,{}",
-        data_encoding::BASE64.encode(&bytes)
-    ))
+    Some(
+        format!(
+            "data:{mime};base64,{}",
+            data_encoding::BASE64.encode(&bytes)
+        )
+        .into_boxed_str()
+        .into(),
+    )
 }
 
 #[tauri::command]

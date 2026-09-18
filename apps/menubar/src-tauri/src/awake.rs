@@ -1,8 +1,8 @@
 //! holding the mac up
 
 use std::process::{Child, Command, Stdio};
-use std::sync::Mutex;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::{LazyLock, Mutex};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
@@ -24,11 +24,26 @@ fn on_ac() -> bool {
     unsafe { IOPSGetTimeRemainingEstimate() == UNLIMITED }
 }
 
+/// monotonic: an ntp step must not stall or end a session
+static EPOCH: LazyLock<Instant> = LazyLock::new(Instant::now);
+
 fn now_ms() -> u64 {
-    SystemTime::now()
+    EPOCH.elapsed().as_millis() as u64
+}
+
+/// run-clock ms as unix ms
+fn wall_ms(at: u64) -> u64 {
+    let wall = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
+        .unwrap_or(0);
+    let now = now_ms();
+
+    if at >= now {
+        wall.saturating_add(at - now)
+    } else {
+        wall.saturating_sub(now - at)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -71,7 +86,8 @@ impl Session {
 
     /// ms on the clock, counting the run in progress
     fn ran(&self, now: u64) -> u64 {
-        self.elapsed + self.started.map_or(0, |at| now.saturating_sub(at))
+        self.elapsed
+            .saturating_add(self.started.map_or(0, |at| now.saturating_sub(at)))
     }
 
     /// ms before it ends
@@ -91,12 +107,18 @@ impl Session {
     }
 
     fn until(&self) -> Option<u64> {
-        Some(self.started? + self.length?.saturating_sub(self.elapsed))
+        Some(
+            self.started?
+                .saturating_add(self.length?.saturating_sub(self.elapsed)),
+        )
     }
 
     fn frozen(&self) -> u64 {
         match self.length {
-            Some(len) => len.saturating_sub(self.elapsed).div_ceil(1000) * 1000,
+            Some(len) => len
+                .saturating_sub(self.elapsed)
+                .div_ceil(1000)
+                .saturating_mul(1000),
             None => self.elapsed / 1000 * 1000,
         }
     }
@@ -140,8 +162,8 @@ fn describe(held: &Held, ac: bool) -> State {
     if session.running() {
         return State {
             active: held.child.is_some(),
-            since: session.since(),
-            until: session.until(),
+            since: session.since().map(wall_ms),
+            until: session.until().map(wall_ms),
             ac,
             ..IDLE
         };
@@ -155,17 +177,29 @@ fn describe(held: &Held, ac: bool) -> State {
     }
 }
 
+fn release(held: &mut Held) {
+    if let Some(mut child) = held.child.take() {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+}
+
 fn reconcile(app: &AppHandle) {
     let ac = on_ac();
     let now = now_ms();
     let awake = app.state::<Awake>();
     let mut held = awake.held.lock().unwrap();
 
-    if let Some(child) = held.child.as_mut()
-        && matches!(child.try_wait(), Ok(Some(_)) | Err(_))
-    {
-        held.child = None;
-        held.session = None;
+    match held.child.as_mut().map(Child::try_wait) {
+        Some(Ok(Some(_))) => {
+            held.child = None;
+            held.session = None;
+        }
+        Some(Err(_)) => {
+            release(&mut held);
+            held.session = None;
+        }
+        _ => {}
     }
 
     if !ac {
@@ -197,12 +231,7 @@ fn reconcile(app: &AppHandle) {
                 Err(_) => held.session = None,
             }
         }
-        (false, true) => {
-            if let Some(mut child) = held.child.take() {
-                let _ = child.kill();
-                let _ = child.wait();
-            }
-        }
+        (false, true) => release(&mut held),
         _ => {}
     }
 
@@ -227,7 +256,7 @@ pub fn awake_start(app: AppHandle, seconds: Option<u64>) {
         let awake = app.state::<Awake>();
         let mut held = awake.held.lock().unwrap();
         held.session = Some(Session {
-            length: seconds.map(|s| s * 1000),
+            length: seconds.map(|s| s.saturating_mul(1000)),
             elapsed: 0,
             started: Some(now_ms()),
         });
@@ -254,7 +283,7 @@ pub fn awake_pause(app: AppHandle) {
         if let Some(session) = held.session.as_mut()
             && let Some(at) = session.started.take()
         {
-            session.elapsed += now.saturating_sub(at);
+            session.elapsed = session.elapsed.saturating_add(now.saturating_sub(at));
         }
     }
     reconcile(&app);
@@ -337,6 +366,20 @@ mod tests {
         };
         assert_eq!(open.since(), Some(NOW - 60_000));
         assert_eq!(open.until(), None);
+    }
+
+    #[test]
+    fn an_absurd_length_saturates_rather_than_wrapping() {
+        let session = Session {
+            length: Some(u64::MAX.saturating_mul(1000)),
+            elapsed: 0,
+            started: Some(NOW),
+        };
+
+        assert!(!session.expired(NOW));
+        assert_eq!(session.left(NOW), Some(u64::MAX));
+        assert_eq!(session.until(), Some(u64::MAX));
+        assert_eq!(session.frozen(), u64::MAX);
     }
 
     #[test]
