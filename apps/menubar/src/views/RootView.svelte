@@ -134,9 +134,11 @@
 
   let drawer = $state(false);
   let signInError = $state<string | null>(null);
+  // plain, not state: it only decides whether a settled login still owns the drawer
+  let attempt = 0;
 
   $effect(() => {
-    if (atproto.value.state === "session") drawer = false;
+    if (atproto.value.state === "session") closeDrawer();
   });
 
   function askForHandle() {
@@ -150,15 +152,17 @@
   function closeDrawer() {
     drawer = false;
     signInError = null;
+    attempt += 1;
   }
 
   async function signIn(handle: string) {
     signInError = null;
+    const mine = attempt;
     try {
       await invoke("atproto_login", { handle });
-      drawer = false;
+      if (mine === attempt) drawer = false;
     } catch (err) {
-      signInError = String(err);
+      if (mine === attempt) signInError = String(err);
     }
   }
 

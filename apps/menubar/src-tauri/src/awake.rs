@@ -142,16 +142,15 @@ pub fn init(app: &AppHandle) {
     });
 }
 
-fn set(app: &AppHandle, next: State) {
+// the caller still holds `held`, so the snapshot cannot be overtaken by a later one
+fn store(app: &AppHandle, next: State) -> bool {
     let awake = app.state::<Awake>();
     let mut state = awake.state.lock().unwrap();
     if *state == next {
-        return;
+        return false;
     }
     *state = next;
-    drop(state);
-
-    let _ = app.emit(STATE_EVENT, next);
+    true
 }
 
 fn describe(held: &Held, ac: bool) -> State {
@@ -236,9 +235,12 @@ pub fn reconcile(app: &AppHandle) {
     }
 
     let next = describe(&held, ac);
+    let changed = store(app, next);
     drop(held);
 
-    set(app, next);
+    if changed {
+        let _ = app.emit(STATE_EVENT, next);
+    }
 }
 
 #[tauri::command]
@@ -251,6 +253,7 @@ pub fn awake_start(app: AppHandle, seconds: Option<u64>) {
     {
         let awake = app.state::<Awake>();
         let mut held = awake.held.lock().unwrap();
+        release(&mut held);
         held.session = Some(Session {
             length: seconds.map(|s| s.saturating_mul(1000)),
             elapsed: 0,
