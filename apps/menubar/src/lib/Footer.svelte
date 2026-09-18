@@ -17,7 +17,7 @@
 
   let menu = $state(false);
 
-  let now = $state(0);
+  let now = $state(Date.now());
 
   $effect(() => {
     if (!awake.value.active || awake.value.paused) return;

@@ -14,6 +14,8 @@ const AVATAR_MAX_BYTES: u64 = 2 * 1024 * 1024;
 
 const AVATAR_TYPES: [&str; 4] = ["image/jpeg", "image/png", "image/webp", "image/gif"];
 
+const META_MAX_BYTES: u64 = 256 * 1024;
+
 const PROFILE_TIMEOUT: Duration = Duration::from_secs(10);
 
 const PROFILE_RETRY_AFTER: Duration = Duration::from_secs(120);
@@ -28,6 +30,9 @@ static PROFILES: LazyLock<Option<reqwest::Client>> = LazyLock::new(|| {
 const MISSES_BEFORE_UNKNOWN: u32 = 3;
 
 const REFRESH_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// the browser round trip, not a network read
+const LOGIN_TIMEOUT: Duration = Duration::from_secs(300);
 
 const STATUS_PATH: &str = "/v1/tilekit/atproto/status";
 const LOGIN_PATH: &str = "/v1/tilekit/atproto/login";
@@ -302,15 +307,15 @@ async fn read_profile(did: &str) -> Option<Profile> {
         .await
         .ok()?;
 
-    // a record never written answers 400, not 404
-    if !res.status().is_success() {
-        return Some(Profile {
+    let status = res.status();
+    if !status.is_success() {
+        return no_record(status).then(|| Profile {
             pds: Some(pds),
             ..Profile::default()
         });
     }
 
-    let (display_name, blob) = parse_profile(&res.text().await.ok()?);
+    let (display_name, blob) = parse_profile(&text(res, META_MAX_BYTES).await?);
     let avatar = match blob {
         Some((cid, mime)) => blob_uri(client, &pds, did, &cid, &mime).await,
         None => None,
@@ -329,7 +334,36 @@ async fn resolve_pds(client: &reqwest::Client, did: &str) -> Option<String> {
         return None;
     }
 
-    pds_from_doc(&res.text().await.ok()?)
+    pds_from_doc(&text(res, META_MAX_BYTES).await?)
+}
+
+/// a record never written answers 400, not 404; the rest may answer next time
+fn no_record(status: reqwest::StatusCode) -> bool {
+    matches!(
+        status,
+        reqwest::StatusCode::BAD_REQUEST | reqwest::StatusCode::NOT_FOUND
+    )
+}
+
+async fn text(res: reqwest::Response, max: u64) -> Option<String> {
+    String::from_utf8(body(res, max).await?).ok()
+}
+
+async fn body(mut res: reqwest::Response, max: u64) -> Option<Vec<u8>> {
+    if res.content_length().is_some_and(|len| len > max) {
+        return None;
+    }
+
+    // chunked carries no length, so cap the bytes themselves
+    let mut bytes: Vec<u8> = Vec::new();
+    while let Some(chunk) = res.chunk().await.ok()? {
+        if bytes.len().saturating_add(chunk.len()) as u64 > max {
+            return None;
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+
+    Some(bytes)
 }
 
 fn did_doc_url(did: &str) -> Option<String> {
@@ -415,7 +449,7 @@ async fn blob_uri(
     cid: &str,
     mime: &str,
 ) -> Option<Arc<str>> {
-    let mut res = client
+    let res = client
         .get(format!(
             "{pds}/xrpc/com.atproto.sync.getBlob?did={did}&cid={cid}"
         ))
@@ -427,21 +461,7 @@ async fn blob_uri(
         return None;
     }
 
-    if res
-        .content_length()
-        .is_some_and(|len| len > AVATAR_MAX_BYTES)
-    {
-        return None;
-    }
-
-    // chunked carries no length, so cap the bytes themselves
-    let mut bytes: Vec<u8> = Vec::new();
-    while let Some(chunk) = res.chunk().await.ok()? {
-        if bytes.len().saturating_add(chunk.len()) as u64 > AVATAR_MAX_BYTES {
-            return None;
-        }
-        bytes.extend_from_slice(&chunk);
-    }
+    let bytes = body(res, AVATAR_MAX_BYTES).await?;
 
     Some(
         format!(
@@ -512,7 +532,10 @@ async fn refresh(app: &AppHandle) {
 }
 
 async fn request(handle: &str) -> Result<(), String> {
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .timeout(LOGIN_TIMEOUT)
+        .build()
+        .map_err(|err| err.to_string())?;
     let body = serde_json::json!({ "user_handle": handle }).to_string();
 
     let res = client
@@ -521,7 +544,13 @@ async fn request(handle: &str) -> Result<(), String> {
         .body(body)
         .send()
         .await
-        .map_err(|err| err.to_string())?;
+        .map_err(|err| {
+            if err.is_timeout() {
+                "The browser did not come back in time".to_owned()
+            } else {
+                err.to_string()
+            }
+        })?;
 
     let status = res.status();
     if status.is_success() {
@@ -543,7 +572,7 @@ fn reason(body: &str, status: reqwest::StatusCode) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{State, did_doc_url, parse, parse_profile, pds_from_doc, tally};
+    use super::{State, did_doc_url, no_record, parse, parse_profile, pds_from_doc, tally};
 
     const SUCCESS: &str = r#"{"status":"success","data":{"handle":"codelif.in","did":"did:plc:7iza6de2dwap2sbkpav7c6c6"}}"#;
 
@@ -651,5 +680,15 @@ mod tests {
         );
         assert_eq!(did_doc_url("did:web:example.com:u:alice"), None);
         assert_eq!(did_doc_url("did:plc:a/../../evil"), None);
+    }
+
+    #[test]
+    fn only_a_missing_record_settles_the_profile() {
+        for code in [400, 404] {
+            assert!(no_record(reqwest::StatusCode::from_u16(code).unwrap()));
+        }
+        for code in [401, 429, 500, 502, 503] {
+            assert!(!no_record(reqwest::StatusCode::from_u16(code).unwrap()));
+        }
     }
 }
