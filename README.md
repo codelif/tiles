@@ -62,6 +62,8 @@ Start here:
 - [Contributing to Tiles](CONTRIBUTING.md)
 - [Developing Tiles](HACKING.md)
 
+Have a question? Feel free to join the [Tiles discord server](https://discord.gg/PPSjcpZzvt).
+
 ## License
 
 This project is dual-licensed under MIT and Apache 2.0:
