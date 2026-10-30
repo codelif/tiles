@@ -15,6 +15,7 @@ use core_foundation::runloop::{
     CFRunLoop, CFRunLoopSource, CFRunLoopSourceRef, kCFRunLoopCommonModes,
 };
 use core_foundation::string::{CFString, CFStringRef};
+use serde::Serialize;
 use tauri::{AppHandle, Manager};
 
 use crate::awake;
@@ -143,12 +144,22 @@ fn sentinel(marker: &Path, reset: &[&str]) -> Command {
     command
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Lid {
+    Held,
+    /// no grant, the lid still sleeps the Mac
+    Refused,
+    /// sleep came back on from outside, and the hold stepped back
+    Cleared,
+}
+
 pub struct Hold {
     marker: Option<PathBuf>,
     /// this hold turned it on, so it turns it off. another app's setting stays put
     owned: bool,
-    /// sudo said no once, asking every tick would only fill the log
-    refused: bool,
+    /// set once, so a refusal is not retried and an outside change is not fought
+    state: Option<Lid>,
     /// dropping it closes the pipe, which resets sleep as surely as a crash
     sentinel: Option<Child>,
 }
@@ -157,7 +168,7 @@ pub fn hold(app: &AppHandle) -> Hold {
     Hold {
         marker: marker(app),
         owned: false,
-        refused: false,
+        state: None,
         sentinel: None,
     }
 }
@@ -195,42 +206,47 @@ fn disarm(hold: &mut Hold) {
     }
 }
 
-/// every tick: macOS clears the setting on power and display changes
-pub fn keep(hold: &mut Hold) -> bool {
-    if disabled() {
-        if hold.owned {
-            arm(hold);
+pub fn keep(hold: &mut Hold) -> Lid {
+    let lid = match hold.state {
+        None => take(hold),
+        Some(Lid::Held) if !disabled() => {
+            settle(hold);
+            Lid::Cleared
         }
-        return true;
-    }
-    if hold.refused {
-        return false;
-    }
+        Some(Lid::Held) => {
+            if hold.owned {
+                arm(hold);
+            }
+            Lid::Held
+        }
+        Some(lid) => lid,
+    };
+    hold.state = Some(lid);
+    lid
+}
 
+fn take(hold: &mut Hold) -> Lid {
+    if disabled() {
+        return Lid::Held;
+    }
     if arm(hold) && set(true) {
         hold.owned = true;
-        return true;
+        return Lid::Held;
     }
 
     disarm(hold);
     if let Some(marker) = &hold.marker {
         let _ = fs::remove_file(marker);
     }
-    hold.refused = true;
-    false
-}
-
-/// with sleep off the built-in screen can stay lit under the lid
-pub fn blank() {
-    let _ = quiet(Command::new(PMSET).arg("displaysleepnow")).status();
+    Lid::Refused
 }
 
 /// waits for the reset, so a hold that follows cannot be undone by this one
-pub fn release(mut hold: Hold) {
+fn settle(hold: &mut Hold) {
     if !hold.owned {
-        disarm(&mut hold);
         return;
     }
+    hold.owned = false;
     if let Some(mut child) = hold.sentinel.take() {
         drop(child.stdin.take());
         let _ = child.wait();
@@ -242,6 +258,16 @@ pub fn release(mut hold: Hold) {
     {
         let _ = fs::remove_file(marker);
     }
+}
+
+/// with sleep off the built-in screen can stay lit under the lid
+pub fn blank() {
+    let _ = quiet(Command::new(PMSET).arg("displaysleepnow")).status();
+}
+
+pub fn release(mut hold: Hold) {
+    settle(&mut hold);
+    disarm(&mut hold);
 }
 
 /// a marker at launch means the last sentinel went down with the app

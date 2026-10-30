@@ -138,8 +138,8 @@ pub struct State {
     pub frozen: Option<u64>,
     pub power: DevicePower,
     pub available: bool,
-    /// whether the running session also holds through a closed lid
-    pub lid: Option<bool>,
+    /// how the running session fares with the lid closed
+    pub lid: Option<lid::Lid>,
 }
 
 const IDLE: State = State {
@@ -245,7 +245,7 @@ fn store(app: &AppHandle, next: State) -> bool {
     true
 }
 
-fn describe(held: &Held, power: DevicePower, lid: Option<bool>) -> State {
+fn describe(held: &Held, power: DevicePower, lid: Option<lid::Lid>) -> State {
     let available = power.allows_stay_awake();
     let Some(session) = held.session else {
         return State {
@@ -336,7 +336,7 @@ pub fn reconcile(app: &AppHandle) {
 
     let lid = held.lid.as_mut().map(lid::keep);
     let closed = lid::closed();
-    if lid == Some(true) && closed && !held.lid_closed {
+    if lid == Some(lid::Lid::Held) && closed && !held.lid_closed {
         lid::blank();
     }
     held.lid_closed = closed;

@@ -51,7 +51,7 @@ export type Awake = {
   frozen: number | null;
   power: DevicePower;
   available: boolean;
-  lid: boolean | null;
+  lid: "held" | "refused" | "cleared" | null;
 };
 
 export type DevicePower = { pluggedIn: boolean; batteryPercent: number | null };
