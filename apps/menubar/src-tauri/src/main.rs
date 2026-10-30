@@ -7,11 +7,12 @@ mod inference;
 mod lifeline;
 mod panel;
 mod paths;
+mod quit;
 mod remote;
 mod sessions;
 mod tray;
 
-use tauri::{ActivationPolicy, Manager, WindowEvent};
+use tauri::{ActivationPolicy, Manager, RunEvent, WindowEvent};
 
 fn main() {
     tauri::Builder::default()
@@ -80,6 +81,11 @@ fn main() {
                 panel::dismiss(app, mode);
             }
         })
-        .run(tauri::generate_context!())
-        .expect("failed to start the Tiles menu bar app");
+        .build(tauri::generate_context!())
+        .expect("failed to start the Tiles menu bar app")
+        .run(|app, event| {
+            if let RunEvent::Ready = event {
+                quit::init(app);
+            }
+        });
 }
