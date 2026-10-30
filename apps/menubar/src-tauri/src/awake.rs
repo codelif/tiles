@@ -385,7 +385,7 @@ pub fn awake_lid(app: AppHandle, on: bool) {
         let awake = app.state::<Awake>();
         awake.held.lock().unwrap().lid_wanted = on;
     }
-    reconcile(&app);
+    lid::wake();
 }
 
 #[tauri::command]
@@ -402,14 +402,18 @@ pub fn awake_start(app: AppHandle, seconds: Option<u64>) -> Result<(), String> {
     {
         let awake = app.state::<Awake>();
         let mut held = awake.held.lock().unwrap();
-        release(&mut held);
+        // only caffeinate, its -t is the old session's. the lid hold carries over
+        if let Some(mut child) = held.child.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
         held.session = Some(Session {
             length: seconds.map(|s| s.saturating_mul(1000)),
             elapsed: 0,
             started: Some(now_ms()),
         });
     }
-    reconcile(&app);
+    lid::wake();
     Ok(())
 }
 
@@ -420,7 +424,7 @@ pub fn awake_stop(app: AppHandle) {
         let mut held = awake.held.lock().unwrap();
         held.session = None;
     }
-    reconcile(&app);
+    lid::wake();
 }
 
 #[tauri::command]
@@ -435,7 +439,7 @@ pub fn awake_pause(app: AppHandle) {
             session.elapsed = session.elapsed.saturating_add(now.saturating_sub(at));
         }
     }
-    reconcile(&app);
+    lid::wake();
 }
 
 #[tauri::command]
@@ -453,7 +457,7 @@ pub fn awake_resume(app: AppHandle) -> Result<(), String> {
             session.started = Some(now_ms());
         }
     }
-    reconcile(&app);
+    lid::wake();
     Ok(())
 }
 

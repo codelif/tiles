@@ -24,7 +24,18 @@ const SUDO: &str = "/usr/bin/sudo";
 const PMSET: &str = "/usr/bin/pmset";
 
 /// exactly what the grant allows, sudoers matches the arguments literally
-const RESET: [&str; 6] = [SUDO, "-n", PMSET, "-a", "disablesleep", "0"];
+const fn pmset(on: bool) -> [&'static str; 6] {
+    [
+        SUDO,
+        "-n",
+        PMSET,
+        "-a",
+        "disablesleep",
+        if on { "1" } else { "0" },
+    ]
+}
+
+const RESET: [&str; 6] = pmset(false);
 
 /// there while Tiles has sleep off. the pkg's boot guard looks for this name too
 const MARKER: &str = "closed-display";
@@ -45,7 +56,7 @@ while read -r _; do :; done
 
 const CLAMSHELL_CHANGED: u32 = 0xE003_4100;
 
-/// the IOKit callbacks only wake the worker that reconciles
+/// commands, the poll and the IOKit callbacks only wake the worker that reconciles
 static WAKE: OnceLock<Sender<()>> = OnceLock::new();
 
 type IoObject = u32;
@@ -119,15 +130,8 @@ fn quiet(command: &mut Command) -> &mut Command {
 
 /// false is a missing grant: a dev build, or a Mac that never ran the pkg
 fn set(on: bool) -> bool {
-    let mut command = Command::new(SUDO);
-    command.args([
-        "-n",
-        PMSET,
-        "-a",
-        "disablesleep",
-        if on { "1" } else { "0" },
-    ]);
-    quiet(&mut command)
+    let [program, args @ ..] = pmset(on);
+    quiet(Command::new(program).args(args))
         .status()
         .is_ok_and(|status| status.success())
 }
@@ -323,7 +327,8 @@ pub fn recover(app: &AppHandle) {
     }
 }
 
-fn wake() {
+/// queues a reconcile, sudo there is nobody's to wait on
+pub fn wake() {
     if let Some(wake) = WAKE.get() {
         let _ = wake.send(());
     }
@@ -346,7 +351,7 @@ pub fn watch(app: &AppHandle) {
         return;
     }
     let app = app.clone();
-    // off the main thread since sudo is not instant, and a burst is one pass
+    // the one place reconcile runs, off the main thread, and a burst is one pass
     std::thread::spawn(move || {
         while events.recv().is_ok() {
             while events.try_recv().is_ok() {}
@@ -394,7 +399,7 @@ mod tests {
     use std::path::Path;
     use std::time::{Duration, Instant};
 
-    use super::sentinel;
+    use super::{pmset, sentinel};
 
     fn scratch(name: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("tiles-lid-{}-{name}", std::process::id()));
@@ -418,6 +423,15 @@ mod tests {
         while child.try_wait().unwrap().is_none() {
             assert!(Instant::now() < deadline, "sentinel never finished");
             std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    #[test]
+    fn the_grant_allows_exactly_what_set_runs() {
+        let postinstall = include_str!("../../../../pkg/scripts/postinstall");
+        for on in [true, false] {
+            let [_, _, command @ ..] = pmset(on);
+            assert!(postinstall.contains(&command.join(" ")), "{command:?}");
         }
     }
 
