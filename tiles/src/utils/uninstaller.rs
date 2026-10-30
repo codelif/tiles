@@ -97,8 +97,11 @@ impl UninstallPlanner {
             }
             self.remove_files
                 .iter()
-                .any(|path| requires_elevation(path))
-                || self.remove_dirs.iter().any(|path| requires_elevation(path))
+                .any(|path| path.exists() && requires_elevation(path))
+                || self
+                    .remove_dirs
+                    .iter()
+                    .any(|path| path.exists() && requires_elevation(path))
         }
         #[cfg(not(unix))]
         {
@@ -448,12 +451,15 @@ impl InstallLayout {
     }
 }
 
+/// unreadable counts as disabled, a spare reset beats losing the marker
 #[cfg(target_os = "macos")]
 fn sleep_disabled() -> bool {
     Command::new("/usr/bin/pmset")
         .arg("-g")
         .output()
-        .is_ok_and(|output| reports_sleep_disabled(&String::from_utf8_lossy(&output.stdout)))
+        .ok()
+        .filter(|output| output.status.success())
+        .is_none_or(|output| reports_sleep_disabled(&String::from_utf8_lossy(&output.stdout)))
 }
 
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]

@@ -378,7 +378,9 @@ pub fn shutdown(app: &AppHandle) {
 /// takes effect on a running session too
 #[tauri::command]
 pub fn awake_lid(app: AppHandle, on: bool) {
-    lid::want(&app, on);
+    if !lid::want(&app, on) {
+        return;
+    }
     {
         let awake = app.state::<Awake>();
         awake.held.lock().unwrap().lid_wanted = on;

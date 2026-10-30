@@ -151,18 +151,21 @@ pub fn wanted(app: &AppHandle) -> bool {
     opt_in(app).is_some_and(|path| path.exists())
 }
 
-pub fn want(app: &AppHandle, on: bool) {
+/// false when the choice could not be saved, so it is not shown as made
+pub fn want(app: &AppHandle, on: bool) -> bool {
     let Some(path) = opt_in(app) else {
-        return;
+        return false;
     };
     if !on {
-        let _ = fs::remove_file(path);
-        return;
+        return match fs::remove_file(path) {
+            Ok(()) => true,
+            Err(err) => err.kind() == std::io::ErrorKind::NotFound,
+        };
     }
     if let Some(dir) = path.parent() {
         let _ = fs::create_dir_all(dir);
     }
-    let _ = fs::write(path, "");
+    fs::write(path, "").is_ok()
 }
 
 fn sentinel(marker: &Path, reset: &[&str]) -> Command {
@@ -284,10 +287,12 @@ fn settle(hold: &mut Hold) {
     hold.owned = false;
     if let Some(mut child) = hold.sentinel.take() {
         drop(child.stdin.take());
-        let _ = child.wait();
-        return;
+        if child.wait().is_ok_and(|status| status.success()) {
+            return;
+        }
     }
-    // a failed reset keeps the marker for recover and the boot guard
+    // a sentinel that died early never reset. a failed reset keeps the marker
+    // for recover and the boot guard
     if set(false)
         && let Some(marker) = &hold.marker
     {
