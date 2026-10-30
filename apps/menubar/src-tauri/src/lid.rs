@@ -56,6 +56,9 @@ while read -r _; do :; done
 
 const CLAMSHELL_CHANGED: u32 = 0xE003_4100;
 
+/// kCGDisplayBeginConfigurationFlag, the list is still the old one then
+const DISPLAYS_CHANGING: u32 = 1 << 0;
+
 /// commands, the poll and the IOKit callbacks only wake the worker that reconciles
 static WAKE: OnceLock<Sender<()>> = OnceLock::new();
 
@@ -86,6 +89,18 @@ unsafe extern "C" {
         callback: extern "C" fn(*mut c_void),
         context: *mut c_void,
     ) -> CFRunLoopSourceRef;
+}
+
+type DisplayCallback = extern "C" fn(u32, u32, *mut c_void);
+
+#[link(name = "CoreGraphics", kind = "framework")]
+unsafe extern "C" {
+    fn CGGetOnlineDisplayList(max: u32, displays: *mut u32, count: *mut u32) -> i32;
+    fn CGDisplayIsBuiltin(display: u32) -> u32;
+    fn CGDisplayRegisterReconfigurationCallback(
+        callback: DisplayCallback,
+        context: *mut c_void,
+    ) -> i32;
 }
 
 /// never released, it lives as long as the app does
@@ -119,6 +134,18 @@ fn disabled() -> bool {
 
 pub fn closed() -> bool {
     flag("AppleClamshellState")
+}
+
+/// connected counts, asleep or mirrored too, the same as clamshell mode goes by
+pub fn external() -> bool {
+    let mut displays = [0; 16];
+    let mut count = 0;
+    unsafe {
+        CGGetOnlineDisplayList(displays.len() as u32, displays.as_mut_ptr(), &mut count) == 0
+            && displays[..count as usize]
+                .iter()
+                .any(|&display| CGDisplayIsBuiltin(display) == 0)
+    }
 }
 
 fn quiet(command: &mut Command) -> &mut Command {
@@ -344,6 +371,12 @@ extern "C" fn on_power(_: *mut c_void) {
     wake();
 }
 
+extern "C" fn on_displays(_: u32, flags: u32, _: *mut c_void) {
+    if flags & DISPLAYS_CHANGING == 0 {
+        wake();
+    }
+}
+
 /// the poll is seconds apart, and a lid shut on a cleared setting sleeps in less
 pub fn watch(app: &AppHandle) {
     let (sender, events) = mpsc::channel();
@@ -389,6 +422,11 @@ pub fn watch(app: &AppHandle) {
         } else {
             let source = CFRunLoopSource::wrap_under_create_rule(power);
             main.add_source(&source, kCFRunLoopCommonModes);
+        }
+
+        // an external going away under a shut lid is a lid to blank now
+        if CGDisplayRegisterReconfigurationCallback(on_displays, context) != 0 {
+            eprintln!("[lid] no display notifications");
         }
     }
 }

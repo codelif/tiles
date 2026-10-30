@@ -221,7 +221,8 @@ struct Held {
     /// held only while the child runs and the user opted in
     lid: Option<lid::Hold>,
     lid_wanted: bool,
-    lid_closed: bool,
+    /// once per shut lid, and again if an external leaves it on its own
+    blanked: bool,
     session: Option<Session>,
 }
 
@@ -351,11 +352,12 @@ pub fn reconcile(app: &AppHandle) {
     }
 
     let lid = held.lid.as_mut().map(lid::keep);
-    let closed = lid::closed();
-    if lid == Some(lid::Lid::Held) && closed && !held.lid_closed {
+    // with an external on, macOS darkens the built-in itself and blank would take both
+    let blank = lid == Some(lid::Lid::Held) && lid::closed() && !lid::external();
+    if blank && !held.blanked {
         lid::blank();
     }
-    held.lid_closed = closed;
+    held.blanked = blank;
     let next = describe(&held, power, lid, awake.lid_offered);
     let changed = store(app, next);
     drop(held);
