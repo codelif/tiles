@@ -46,7 +46,8 @@ fn main() {
             awake::awake_start,
             awake::awake_stop,
             awake::awake_pause,
-            awake::awake_resume
+            awake::awake_resume,
+            awake::awake_lid
         ])
         .setup(|app| {
             // LSUIElement covers the launch window before this runs

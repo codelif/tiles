@@ -29,6 +29,12 @@ const RESET: [&str; 6] = [SUDO, "-n", PMSET, "-a", "disablesleep", "0"];
 /// there while Tiles has sleep off. the pkg's boot guard looks for this name too
 const MARKER: &str = "closed-display";
 
+/// there when the user opted in, kept across launches
+const OPT_IN: &str = "closed-lid";
+
+const PKGUTIL: &str = "/usr/sbin/pkgutil";
+const RECEIPT: &str = "com.tilesprivacy.tiles";
+
 /// blocks on a pipe only the app holds the other end of, so the app dying in any
 /// way ends the read, and release closing it on purpose takes the same path
 const SENTINEL: &str = r#"trap '' HUP INT TERM
@@ -128,6 +134,35 @@ fn set(on: bool) -> bool {
 
 fn marker(app: &AppHandle) -> Option<PathBuf> {
     app.path().app_data_dir().ok().map(|dir| dir.join(MARKER))
+}
+
+/// the grant only ships with the pkg, so no other install offers the mode
+pub fn offered() -> bool {
+    quiet(Command::new(PKGUTIL).args(["--pkg-info", RECEIPT]))
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+fn opt_in(app: &AppHandle) -> Option<PathBuf> {
+    app.path().app_data_dir().ok().map(|dir| dir.join(OPT_IN))
+}
+
+pub fn wanted(app: &AppHandle) -> bool {
+    opt_in(app).is_some_and(|path| path.exists())
+}
+
+pub fn want(app: &AppHandle, on: bool) {
+    let Some(path) = opt_in(app) else {
+        return;
+    };
+    if !on {
+        let _ = fs::remove_file(path);
+        return;
+    }
+    if let Some(dir) = path.parent() {
+        let _ = fs::create_dir_all(dir);
+    }
+    let _ = fs::write(path, "");
 }
 
 fn sentinel(marker: &Path, reset: &[&str]) -> Command {

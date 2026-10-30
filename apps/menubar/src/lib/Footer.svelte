@@ -104,6 +104,8 @@
         available={awake.value.available}
         note={menuNote}
         alert={!awake.value.available || lidNote !== null}
+        lid={awake.value.lidOffered ? awake.value.lidWanted : null}
+        onlid={() => void invoke("awake_lid", { on: !awake.value.lidWanted }).catch(() => {})}
         onpick={pick}
         onpause={() => run("awake_pause")}
         onresume={() => run("awake_resume")}

@@ -140,6 +140,8 @@ pub struct State {
     pub available: bool,
     /// how the running session fares with the lid closed
     pub lid: Option<lid::Lid>,
+    pub lid_offered: bool,
+    pub lid_wanted: bool,
 }
 
 const IDLE: State = State {
@@ -154,6 +156,8 @@ const IDLE: State = State {
     },
     available: false,
     lid: None,
+    lid_offered: false,
+    lid_wanted: false,
 };
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -214,8 +218,9 @@ impl Session {
 #[derive(Default)]
 struct Held {
     child: Option<Child>,
-    /// taken and let go with the child, the two are one mode
+    /// held only while the child runs and the user opted in
     lid: Option<lid::Hold>,
+    lid_wanted: bool,
     lid_closed: bool,
     session: Option<Session>,
 }
@@ -223,12 +228,17 @@ struct Held {
 struct Awake {
     held: Mutex<Held>,
     state: Mutex<State>,
+    lid_offered: bool,
 }
 
 pub fn init(app: &AppHandle) {
     app.manage(Awake {
-        held: Mutex::new(Held::default()),
+        held: Mutex::new(Held {
+            lid_wanted: lid::wanted(app),
+            ..Held::default()
+        }),
         state: Mutex::new(IDLE),
+        lid_offered: lid::offered(),
     });
     lid::recover(app);
     lid::watch(app);
@@ -245,14 +255,16 @@ fn store(app: &AppHandle, next: State) -> bool {
     true
 }
 
-fn describe(held: &Held, power: DevicePower, lid: Option<lid::Lid>) -> State {
-    let available = power.allows_stay_awake();
+fn describe(held: &Held, power: DevicePower, lid: Option<lid::Lid>, offered: bool) -> State {
+    let base = State {
+        power,
+        available: power.allows_stay_awake(),
+        lid_offered: offered,
+        lid_wanted: held.lid_wanted,
+        ..IDLE
+    };
     let Some(session) = held.session else {
-        return State {
-            power,
-            available,
-            ..IDLE
-        };
+        return base;
     };
 
     if session.running() {
@@ -260,19 +272,15 @@ fn describe(held: &Held, power: DevicePower, lid: Option<lid::Lid>) -> State {
             active: held.child.is_some(),
             since: session.since().map(wall_ms),
             until: session.until().map(wall_ms),
-            power,
-            available,
             lid,
-            ..IDLE
+            ..base
         };
     }
 
     State {
         paused: true,
         frozen: Some(session.frozen()),
-        power,
-        available,
-        ..IDLE
+        ..base
     }
 }
 
@@ -323,14 +331,22 @@ pub fn reconcile(app: &AppHandle) {
                 .stderr(Stdio::null())
                 .spawn()
             {
-                Ok(child) => {
-                    held.child = Some(child);
-                    held.lid = Some(lid::hold(app));
-                }
+                Ok(child) => held.child = Some(child),
                 Err(_) => held.session = None,
             }
         }
         (false, true) => release(&mut held),
+        _ => {}
+    }
+
+    let lid_due = held.child.is_some() && awake.lid_offered && held.lid_wanted;
+    match (lid_due, held.lid.is_some()) {
+        (true, false) => held.lid = Some(lid::hold(app)),
+        (false, true) => {
+            if let Some(hold) = held.lid.take() {
+                lid::release(hold);
+            }
+        }
         _ => {}
     }
 
@@ -340,7 +356,7 @@ pub fn reconcile(app: &AppHandle) {
         lid::blank();
     }
     held.lid_closed = closed;
-    let next = describe(&held, power, lid);
+    let next = describe(&held, power, lid, awake.lid_offered);
     let changed = store(app, next);
     drop(held);
 
@@ -357,6 +373,17 @@ pub fn shutdown(app: &AppHandle) {
     let mut held = awake.held.lock().unwrap();
     release(&mut held);
     held.session = None;
+}
+
+/// takes effect on a running session too
+#[tauri::command]
+pub fn awake_lid(app: AppHandle, on: bool) {
+    lid::want(&app, on);
+    {
+        let awake = app.state::<Awake>();
+        awake.held.lock().unwrap().lid_wanted = on;
+    }
+    reconcile(&app);
 }
 
 #[tauri::command]
