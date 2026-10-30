@@ -164,6 +164,11 @@ fn restore_sleep() {
     if !marker.exists() {
         return;
     }
+    // the boot guard may have turned it back on already, no password needed then
+    if !sleep_disabled() {
+        let _ = fs::remove_file(&marker);
+        return;
+    }
 
     let command = if is_running_as_root() {
         Ok(Command::new("/usr/bin/pmset"))
@@ -443,6 +448,22 @@ impl InstallLayout {
     }
 }
 
+#[cfg(target_os = "macos")]
+fn sleep_disabled() -> bool {
+    Command::new("/usr/bin/pmset")
+        .arg("-g")
+        .output()
+        .is_ok_and(|output| reports_sleep_disabled(&String::from_utf8_lossy(&output.stdout)))
+}
+
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn reports_sleep_disabled(pmset: &str) -> bool {
+    pmset.lines().any(|line| {
+        let mut words = line.split_whitespace();
+        words.next() == Some("SleepDisabled") && words.next() == Some("1")
+    })
+}
+
 fn requires_elevation(path: &Path) -> bool {
     #[cfg(target_os = "macos")]
     if path.starts_with(SLEEP_GRANT_PATH) || path.starts_with(SLEEP_GUARD_PATH) {
@@ -680,6 +701,15 @@ mod tests {
             assert!(plan.remove_files.contains(&path), "{path:?} missing");
             assert!(requires_elevation(&path));
         }
+    }
+
+    #[test]
+    fn sleep_disabled_is_read_from_pmset() {
+        let off = "System-wide power settings:\n SleepDisabled\t\t1\nCurrently in use:\n";
+        let on = "System-wide power settings:\n SleepDisabled\t\t0\n";
+        assert!(super::reports_sleep_disabled(off));
+        assert!(!super::reports_sleep_disabled(on));
+        assert!(!super::reports_sleep_disabled(""));
     }
 
     #[test]

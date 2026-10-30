@@ -41,7 +41,7 @@ install_sleep_guard() {
 	<array>
 		<string>/bin/sh</string>
 		<string>-c</string>
-		<string>for m in /Users/*/Library/"Application Support"/com.tilesprivacy.tiles.menubar/closed-display; do if [ -f "$m" ]; then exec /usr/bin/pmset -a disablesleep 0; fi; done</string>
+		<string>for m in /Users/*/Library/"Application Support"/com.tilesprivacy.tiles.menubar/closed-display; do if [ -f "$m" ]; then /usr/bin/pmset -a disablesleep 0 &amp;&amp; rm -f "$m"; fi; done</string>
 	</array>
 	<key>RunAtLoad</key>
 	<true/>
