@@ -46,6 +46,11 @@
     }
     return "Available when plugged in or battery is above 10%";
   });
+  // the grant comes with the pkg, so a Mac without it sleeps on a closed lid
+  const lidExposed = $derived(session === "running" && awake.value.lid === false);
+  const menuNote = $derived(
+    lidExposed ? "Closing the lid will still sleep this Mac · Reinstall Tiles to fix" : powerCopy,
+  );
 
   const reading = $derived.by(() => {
     const { paused, since, until, frozen } = awake.value;
@@ -90,7 +95,8 @@
       <AwakeMenu
         {session}
         available={awake.value.available}
-        note={powerCopy}
+        note={menuNote}
+        alert={!awake.value.available || lidExposed}
         onpick={pick}
         onpause={() => run("awake_pause")}
         onresume={() => run("awake_resume")}

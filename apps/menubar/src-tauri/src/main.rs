@@ -4,6 +4,7 @@ mod awake;
 mod clipboard;
 mod daemon;
 mod inference;
+mod lid;
 mod lifeline;
 mod panel;
 mod paths;
@@ -83,9 +84,10 @@ fn main() {
         })
         .build(tauri::generate_context!())
         .expect("failed to start the Tiles menu bar app")
-        .run(|app, event| {
-            if let RunEvent::Ready = event {
-                quit::init(app);
-            }
+        .run(|app, event| match event {
+            RunEvent::Ready => quit::init(app),
+            // the lifeline and a daemon quit both end here
+            RunEvent::Exit => awake::shutdown(app),
+            _ => {}
         });
 }

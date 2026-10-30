@@ -12,6 +12,8 @@ use core_foundation::string::{CFString, CFStringRef};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 
+use crate::lid;
+
 pub const STATE_EVENT: &str = "awake://state";
 
 /// `-w` releases the assertion even on a kill we never see, which Drop cannot
@@ -136,6 +138,8 @@ pub struct State {
     pub frozen: Option<u64>,
     pub power: DevicePower,
     pub available: bool,
+    /// whether the running session also holds through a closed lid
+    pub lid: Option<bool>,
 }
 
 const IDLE: State = State {
@@ -149,6 +153,7 @@ const IDLE: State = State {
         battery_percent: None,
     },
     available: false,
+    lid: None,
 };
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -209,6 +214,8 @@ impl Session {
 #[derive(Default)]
 struct Held {
     child: Option<Child>,
+    /// taken and let go with the child, the two are one mode
+    lid: Option<lid::Hold>,
     session: Option<Session>,
 }
 
@@ -222,6 +229,8 @@ pub fn init(app: &AppHandle) {
         held: Mutex::new(Held::default()),
         state: Mutex::new(IDLE),
     });
+    lid::recover(app);
+    lid::watch(app);
 }
 
 // the caller still holds `held`, so the snapshot cannot be overtaken by a later one
@@ -235,7 +244,7 @@ fn store(app: &AppHandle, next: State) -> bool {
     true
 }
 
-fn describe(held: &Held, power: DevicePower) -> State {
+fn describe(held: &Held, power: DevicePower, lid: Option<bool>) -> State {
     let available = power.allows_stay_awake();
     let Some(session) = held.session else {
         return State {
@@ -252,6 +261,7 @@ fn describe(held: &Held, power: DevicePower) -> State {
             until: session.until().map(wall_ms),
             power,
             available,
+            lid,
             ..IDLE
         };
     }
@@ -270,6 +280,9 @@ fn release(held: &mut Held) {
         let _ = child.kill();
         let _ = child.wait();
     }
+    if let Some(hold) = held.lid.take() {
+        lid::release(hold);
+    }
 }
 
 pub fn reconcile(app: &AppHandle) {
@@ -278,16 +291,9 @@ pub fn reconcile(app: &AppHandle) {
     let awake = app.state::<Awake>();
     let mut held = awake.held.lock().unwrap();
 
-    match held.child.as_mut().map(Child::try_wait) {
-        Some(Ok(Some(_))) => {
-            held.child = None;
-            held.session = None;
-        }
-        Some(Err(_)) => {
-            release(&mut held);
-            held.session = None;
-        }
-        _ => {}
+    if let Some(Ok(Some(_)) | Err(_)) = held.child.as_mut().map(Child::try_wait) {
+        release(&mut held);
+        held.session = None;
     }
 
     // a charger coming back later does not bring the session back
@@ -316,7 +322,10 @@ pub fn reconcile(app: &AppHandle) {
                 .stderr(Stdio::null())
                 .spawn()
             {
-                Ok(child) => held.child = Some(child),
+                Ok(child) => {
+                    held.child = Some(child);
+                    held.lid = Some(lid::hold(app));
+                }
                 Err(_) => held.session = None,
             }
         }
@@ -324,13 +333,24 @@ pub fn reconcile(app: &AppHandle) {
         _ => {}
     }
 
-    let next = describe(&held, power);
+    let lid = held.lid.as_mut().map(lid::keep);
+    let next = describe(&held, power, lid);
     let changed = store(app, next);
     drop(held);
 
     if changed {
         let _ = app.emit(STATE_EVENT, next);
     }
+}
+
+/// the sentinel would reset it too, this is only sooner
+pub fn shutdown(app: &AppHandle) {
+    let Some(awake) = app.try_state::<Awake>() else {
+        return;
+    };
+    let mut held = awake.held.lock().unwrap();
+    release(&mut held);
+    held.session = None;
 }
 
 #[tauri::command]

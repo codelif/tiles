@@ -13,6 +13,17 @@ use crate::utils::config::{
     SYSTEM_LIB_DIR, is_tiles_lib_dir,
 };
 
+/// closed-display mode: the sudoers grant and the boot guard the pkg installs
+#[cfg(target_os = "macos")]
+const SLEEP_GRANT_PATH: &str = "/private/etc/sudoers.d/tiles";
+#[cfg(target_os = "macos")]
+const SLEEP_GUARD_PATH: &str = "/Library/LaunchDaemons/com.tilesprivacy.tiles.sleep-guard.plist";
+
+/// written by the menu bar app while it holds sleep off
+#[cfg(target_os = "macos")]
+const SLEEP_MARKER: &str =
+    "Library/Application Support/com.tilesprivacy.tiles.menubar/closed-display";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct InstallLayout {
     bin: PathBuf,
@@ -35,6 +46,8 @@ pub fn uninstall(all: bool) -> Result<()> {
     #[cfg(target_os = "macos")]
     crate::core::service::unload().context("Failed to unload Tiles service")?;
     plan.apply()?;
+    #[cfg(target_os = "macos")]
+    restore_sleep();
 
     println!("Tiles uninstalled successfully.");
     Ok(())
@@ -58,6 +71,8 @@ impl UninstallPlanner {
         plan.remove_files.insert(layout.bin);
         #[cfg(target_os = "macos")]
         add_service_file_to_plan(&mut plan, crate::core::service::plist_path()?);
+        #[cfg(target_os = "macos")]
+        add_sleep_grant_to_plan(&mut plan);
 
         if all {
             let user_data_dir = resolve_user_data_dir_for_uninstall(&data_dir, &config_dir)?;
@@ -132,6 +147,45 @@ fn add_service_file_to_plan(plan: &mut UninstallPlanner, path: PathBuf) {
     plan.remove_files.insert(path);
 }
 
+#[cfg(target_os = "macos")]
+fn add_sleep_grant_to_plan(plan: &mut UninstallPlanner) {
+    for path in [SLEEP_GRANT_PATH, SLEEP_GUARD_PATH] {
+        plan.remove_files.insert(PathBuf::from(path));
+    }
+}
+
+/// after the grant is gone, so an app still on its way out cannot turn sleep
+/// back off, and its own reset may already have failed for want of it
+#[cfg(target_os = "macos")]
+fn restore_sleep() {
+    let Some(marker) = std::env::home_dir().map(|home| home.join(SLEEP_MARKER)) else {
+        return;
+    };
+    if !marker.exists() {
+        return;
+    }
+
+    let command = if is_running_as_root() {
+        Ok(Command::new("/usr/bin/pmset"))
+    } else {
+        new_trusted_sudo_command().map(|mut command| {
+            command.arg("/usr/bin/pmset");
+            command
+        })
+    };
+    let restored = command.and_then(|mut command| {
+        command.args(["-a", "disablesleep", "0"]);
+        run_elevated_command(&mut command, "turn sleep back on")
+    });
+
+    match restored {
+        Ok(()) => {
+            let _ = fs::remove_file(&marker);
+        }
+        Err(err) => eprintln!("Sleep may still be off, run `sudo pmset -a disablesleep 0`: {err}"),
+    }
+}
+
 fn print_plan(plan: &UninstallPlanner, needs_elevation: bool) {
     println!("Tiles uninstall will remove:");
 
@@ -145,7 +199,7 @@ fn print_plan(plan: &UninstallPlanner, needs_elevation: bool) {
 
     if needs_elevation {
         println!();
-        println!("Administrator privileges are required to remove system files under /usr/local.");
+        println!("Administrator privileges are required to remove system files.");
         println!();
     }
 }
@@ -390,6 +444,11 @@ impl InstallLayout {
 }
 
 fn requires_elevation(path: &Path) -> bool {
+    #[cfg(target_os = "macos")]
+    if path.starts_with(SLEEP_GRANT_PATH) || path.starts_with(SLEEP_GUARD_PATH) {
+        return true;
+    }
+
     path.starts_with(SYSTEM_BIN_DIR) || path.starts_with(SYSTEM_LIB_DIR)
 }
 
@@ -609,6 +668,18 @@ mod tests {
         assert_eq!(layout.lib_dir, root.path());
         assert!(is_tiles_lib_dir(&layout.lib_dir));
         Ok(())
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_sleep_grant_goes_with_the_app() {
+        let mut plan = UninstallPlanner::default();
+        super::add_sleep_grant_to_plan(&mut plan);
+        for path in [super::SLEEP_GRANT_PATH, super::SLEEP_GUARD_PATH] {
+            let path = PathBuf::from(path);
+            assert!(plan.remove_files.contains(&path), "{path:?} missing");
+            assert!(requires_elevation(&path));
+        }
     }
 
     #[test]
