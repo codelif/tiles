@@ -15,6 +15,7 @@ use crate::{
         agent::agent_router,
         atproto::atproto_router,
         authz::authz_router,
+        model::model_router,
         net::{NetworkState, network_router, start_network_cli},
         server::server_router,
         session::session_router,
@@ -57,9 +58,11 @@ pub mod account;
 pub mod agent;
 pub mod atproto;
 pub mod authz;
+pub mod model;
 pub mod net;
 pub mod server;
 pub mod session;
+mod sse;
 pub mod web;
 use crate::{
     core::{
@@ -74,7 +77,6 @@ use crate::{
     },
 };
 
-#[derive(Debug)]
 pub struct AppState {
     /// A watch rather than a one-shot: quit, `tiles daemon stop` and a SIGTERM
     /// from launchd all land here, and a one-shot panics on the second of them
@@ -92,6 +94,7 @@ pub struct AppState {
     pub login: AsyncMutex<Option<atproto::LoginTask>>,
     pub ui: Arc<Ui>,
     pub web_ui: web::WebUiState,
+    pub models: model::Models,
     pub network_state: AsyncRwLock<Option<NetworkState>>,
 }
 
@@ -116,6 +119,13 @@ impl AppState {
             web_ui: web::WebUiState::Serving {
                 url: format!("http://127.0.0.1:{}", web::UI_PORT),
             },
+            models: model::Models::new(
+                crate::utils::hf_model_downloader::Hub::new("http://127.0.0.1:9", None)
+                    .expect("a test hub"),
+                std::env::temp_dir(),
+                std::env::temp_dir(),
+                None,
+            ),
             network_state: None.into(),
         }
     }
@@ -133,10 +143,11 @@ pub enum AppError {
     MethodNotAllowed(String),
     UnsupportedMediaType(String),
     ServiceUnavailable(String),
+    InsufficientStorage(String),
 }
-impl IntoResponse for AppError {
-    fn into_response(self) -> axum::response::Response {
-        let (status, reason) = match self {
+impl AppError {
+    fn parts(self) -> (StatusCode, String) {
+        match self {
             Self::NotFound(e) => (StatusCode::NOT_FOUND, e),
             Self::InternalServerError(e) => (StatusCode::INTERNAL_SERVER_ERROR, e),
             Self::RequestTimeout => (StatusCode::REQUEST_TIMEOUT, "request timedout".to_string()),
@@ -147,8 +158,18 @@ impl IntoResponse for AppError {
             Self::MethodNotAllowed(e) => (StatusCode::METHOD_NOT_ALLOWED, e),
             Self::UnsupportedMediaType(e) => (StatusCode::UNSUPPORTED_MEDIA_TYPE, e),
             Self::ServiceUnavailable(e) => (StatusCode::SERVICE_UNAVAILABLE, e),
-        };
+            Self::InsufficientStorage(e) => (StatusCode::INSUFFICIENT_STORAGE, e),
+        }
+    }
 
+    pub fn reason(self) -> String {
+        self.parts().1
+    }
+}
+
+impl IntoResponse for AppError {
+    fn into_response(self) -> axum::response::Response {
+        let (status, reason) = self.parts();
         let body = Json(json!({
             "status": "failed",
             "reason": reason
@@ -241,6 +262,7 @@ const INFERENCE_STOP_TIMEOUT: Duration = Duration::from_secs(10);
 const DAEMON_STOP_TIMEOUT: Duration = Duration::from_secs(20);
 // how long an open connection, like an SSE stream, gets after a shutdown
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(3);
+const MODEL_PAUSE_TIMEOUT: Duration = Duration::from_secs(5);
 const DAEMON_STOP_POLL: Duration = Duration::from_millis(250);
 pub async fn start_cmd(port: Option<u32>) -> Result<()> {
     start_daemon(port).await
@@ -299,6 +321,7 @@ fn tilekit_router() -> Router<Arc<AppState>> {
         .merge(account_router())
         .merge(session_router())
         .merge(atproto_router())
+        .merge(model_router())
         .merge(authz_router())
         .merge(network_router())
         .route("/v1/tilekit/ui", get(web::ui_state))
@@ -466,6 +489,7 @@ pub async fn start_server(port: Option<u32>, with_ui: bool) -> Result<()> {
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let ui = Ui::new();
     let (web_ui_state, web_ui_listener) = web::bind().await;
+    let models = model::Models::for_daemon()?;
 
     let state = AppState {
         shutdown_sender: shutdown_tx,
@@ -478,6 +502,7 @@ pub async fn start_server(port: Option<u32>, with_ui: bool) -> Result<()> {
         login: None.into(),
         ui: ui.clone(),
         web_ui: web_ui_state,
+        models,
         network_state: None.into(),
     };
 
@@ -573,6 +598,13 @@ fn listen_for_signals(state: Arc<AppState>) {
 pub async fn shutdown_all(state: Arc<AppState>) {
     info!("Daemon server shutting down");
     ui::begin_stop(&state.ui);
+    // so they show as paused next time. resuming hashes the part on disk, which can't be cut short
+    if tokio::time::timeout(MODEL_PAUSE_TIMEOUT, state.models.pause_all())
+        .await
+        .is_err()
+    {
+        log::warn!("Model downloads did not pause in time");
+    }
     // a stuck inference server must not hold the shutdown open
     match tokio::time::timeout(
         INFERENCE_STOP_TIMEOUT,
