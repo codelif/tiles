@@ -5,16 +5,40 @@
 
   let { text }: Props = $props();
 
-  // the tip shows on focus, so escape closes it rather than reaching the panel's back
-  function onkeydown(event: KeyboardEvent) {
-    if (event.key !== "Escape") return;
+  let button = $state<HTMLButtonElement | null>(null);
+  let hovered = $state(false);
+  let focused = $state(false);
+  let dismissed = $state(false);
+
+  // capture, so escape closes a showing tip rather than reaching the panel's back
+  function onkeydowncapture(event: KeyboardEvent) {
+    if (event.key !== "Escape" || dismissed || !(hovered || focused)) return;
     event.preventDefault();
     event.stopPropagation();
-    (event.currentTarget as HTMLElement).blur();
+    dismissed = true;
+    button?.blur();
   }
 </script>
 
-<button type="button" class="info" aria-label={text} {onkeydown}>
+<svelte:window {onkeydowncapture} />
+
+<button
+  type="button"
+  class="info"
+  aria-label={text}
+  data-dismissed={dismissed}
+  bind:this={button}
+  onpointerenter={() => (hovered = true)}
+  onpointerleave={() => {
+    hovered = false;
+    dismissed = false;
+  }}
+  onfocus={() => {
+    focused = true;
+    dismissed = false;
+  }}
+  onblur={() => (focused = false)}
+>
   <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true">
     <circle cx="6" cy="6" r="5.2" fill="none" stroke="currentColor" stroke-width="1.2" />
     <circle cx="6" cy="3.7" r="0.75" fill="currentColor" />
@@ -62,5 +86,9 @@
   .info:hover .info__tip,
   .info:focus-visible .info__tip {
     opacity: 1;
+  }
+
+  .info[data-dismissed="true"] .info__tip {
+    opacity: 0;
   }
 </style>
