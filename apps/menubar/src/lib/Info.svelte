@@ -4,9 +4,17 @@
   }
 
   let { text }: Props = $props();
+
+  // the tip shows on focus, so escape closes it rather than reaching the panel's back
+  function onkeydown(event: KeyboardEvent) {
+    if (event.key !== "Escape") return;
+    event.preventDefault();
+    event.stopPropagation();
+    (event.currentTarget as HTMLElement).blur();
+  }
 </script>
 
-<button type="button" class="info" aria-label={text}>
+<button type="button" class="info" aria-label={text} {onkeydown}>
   <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true">
     <circle cx="6" cy="6" r="5.2" fill="none" stroke="currentColor" stroke-width="1.2" />
     <circle cx="6" cy="3.7" r="0.75" fill="currentColor" />
