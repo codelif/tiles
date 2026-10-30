@@ -24,6 +24,15 @@ const SLEEP_GUARD_PATH: &str = "/Library/LaunchDaemons/com.tilesprivacy.tiles.sl
 const SLEEP_MARKER: &str =
     "Library/Application Support/com.tilesprivacy.tiles.menubar/closed-display";
 
+/// every user's marker, like the boot guard. $1 is SLEEP_MARKER
+#[cfg(target_os = "macos")]
+const SLEEP_RESET: &str = r#"failed=0
+for marker in /Users/*/"$1"; do
+  [ -f "$marker" ] || continue
+  /usr/bin/pmset -a disablesleep 0 && rm -f "$marker" || failed=1
+done
+exit $failed"#;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct InstallLayout {
     bin: PathBuf,
@@ -36,6 +45,9 @@ pub fn uninstall(all: bool) -> Result<()> {
     if !plan.remove_files.iter().any(|path| path.exists())
         && !plan.remove_dirs.iter().any(|path| path.exists())
     {
+        // a marker can outlive the grant and the guard
+        #[cfg(target_os = "macos")]
+        restore_sleep();
         println!("No Tiles files found to uninstall.");
         return Ok(());
     }
@@ -45,9 +57,11 @@ pub fn uninstall(all: bool) -> Result<()> {
     confirm_uninstall(all)?;
     #[cfg(target_os = "macos")]
     crate::core::service::unload().context("Failed to unload Tiles service")?;
-    plan.apply()?;
+    // a half done apply may have taken the grant already, and the app's reset with it
+    let applied = plan.apply();
     #[cfg(target_os = "macos")]
     restore_sleep();
+    applied?;
 
     println!("Tiles uninstalled successfully.");
     Ok(())
@@ -161,36 +175,30 @@ fn add_sleep_grant_to_plan(plan: &mut UninstallPlanner) {
 /// back off, and its own reset may already have failed for want of it
 #[cfg(target_os = "macos")]
 fn restore_sleep() {
-    let Some(marker) = std::env::home_dir().map(|home| home.join(SLEEP_MARKER)) else {
-        return;
-    };
-    if !marker.exists() {
-        return;
-    }
     // the boot guard may have turned it back on already, no password needed then
     if !sleep_disabled() {
-        let _ = fs::remove_file(&marker);
+        if let Some(home) = std::env::home_dir() {
+            let _ = fs::remove_file(home.join(SLEEP_MARKER));
+        }
         return;
     }
 
+    // other users' markers sit behind their own 700 ~/Library, only root sees them all
     let command = if is_running_as_root() {
-        Ok(Command::new("/usr/bin/pmset"))
+        Ok(Command::new("/bin/sh"))
     } else {
         new_trusted_sudo_command().map(|mut command| {
-            command.arg("/usr/bin/pmset");
+            command.arg("/bin/sh");
             command
         })
     };
     let restored = command.and_then(|mut command| {
-        command.args(["-a", "disablesleep", "0"]);
+        command.args(["-c", SLEEP_RESET, "tiles-uninstall", SLEEP_MARKER]);
         run_elevated_command(&mut command, "turn sleep back on")
     });
 
-    match restored {
-        Ok(()) => {
-            let _ = fs::remove_file(&marker);
-        }
-        Err(err) => eprintln!("Sleep may still be off, run `sudo pmset -a disablesleep 0`: {err}"),
+    if let Err(err) = restored {
+        eprintln!("Sleep may still be off, run `sudo pmset -a disablesleep 0`: {err}");
     }
 }
 
