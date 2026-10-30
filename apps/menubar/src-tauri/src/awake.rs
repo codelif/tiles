@@ -4,6 +4,11 @@ use std::process::{Child, Command, Stdio};
 use std::sync::{LazyLock, Mutex};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
+use core_foundation::array::{CFArray, CFArrayRef};
+use core_foundation::base::{CFType, CFTypeRef, TCFType};
+use core_foundation::dictionary::{CFDictionary, CFDictionaryRef};
+use core_foundation::number::CFNumber;
+use core_foundation::string::{CFString, CFStringRef};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -12,16 +17,88 @@ pub const STATE_EVENT: &str = "awake://state";
 /// `-w` releases the assertion even on a kill we never see, which Drop cannot
 const CAFFEINATE: &str = "/usr/bin/caffeinate";
 
-/// -2.0, external power; a desktop reads this too
-const UNLIMITED: f64 = -2.0;
+const MINIMUM_BATTERY_PERCENT: u8 = 10;
 
 #[link(name = "IOKit", kind = "framework")]
 unsafe extern "C" {
-    fn IOPSGetTimeRemainingEstimate() -> f64;
+    fn IOPSCopyPowerSourcesInfo() -> CFTypeRef;
+    fn IOPSCopyPowerSourcesList(blob: CFTypeRef) -> CFArrayRef;
+    fn IOPSGetPowerSourceDescription(blob: CFTypeRef, source: CFTypeRef) -> CFDictionaryRef;
+    fn IOPSGetProvidingPowerSourceType(blob: CFTypeRef) -> CFStringRef;
 }
 
-fn on_ac() -> bool {
-    unsafe { IOPSGetTimeRemainingEstimate() == UNLIMITED }
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DevicePower {
+    pub plugged_in: bool,
+    pub battery_percent: Option<u8>,
+}
+
+impl DevicePower {
+    fn allows_stay_awake(self) -> bool {
+        self.plugged_in
+            || self
+                .battery_percent
+                .is_some_and(|percent| percent > MINIMUM_BATTERY_PERCENT)
+    }
+}
+
+fn device_power() -> DevicePower {
+    unsafe {
+        let snapshot_ref = IOPSCopyPowerSourcesInfo();
+        if snapshot_ref.is_null() {
+            return DevicePower::default();
+        }
+        let snapshot = CFType::wrap_under_create_rule(snapshot_ref);
+
+        let source_ref = IOPSGetProvidingPowerSourceType(snapshot.as_CFTypeRef());
+        let plugged_in =
+            !source_ref.is_null() && CFString::wrap_under_get_rule(source_ref) == "AC Power";
+
+        let list_ref = IOPSCopyPowerSourcesList(snapshot.as_CFTypeRef());
+        if list_ref.is_null() {
+            return DevicePower {
+                plugged_in,
+                battery_percent: None,
+            };
+        }
+        let sources: CFArray<CFType> = CFArray::wrap_under_create_rule(list_ref);
+        let type_key = CFString::new("Type");
+        let current_key = CFString::new("Current Capacity");
+        let maximum_key = CFString::new("Max Capacity");
+
+        let battery_percent = sources.iter().find_map(|source| {
+            let description_ref =
+                IOPSGetPowerSourceDescription(snapshot.as_CFTypeRef(), source.as_CFTypeRef());
+            if description_ref.is_null() {
+                return None;
+            }
+            let description: CFDictionary<CFString, CFType> =
+                CFDictionary::wrap_under_get_rule(description_ref);
+
+            let source_type = description
+                .find(&type_key)
+                .and_then(|value| value.downcast::<CFString>())?;
+            if source_type != "InternalBattery" {
+                return None;
+            }
+
+            let number = |key: &CFString| {
+                description
+                    .find(key)
+                    .and_then(|value| value.downcast::<CFNumber>())
+                    .and_then(|value| value.to_i32())
+            };
+            let current = number(&current_key)?;
+            let maximum = number(&maximum_key)?;
+            (maximum > 0).then(|| (current.clamp(0, maximum) * 100 / maximum) as u8)
+        });
+
+        DevicePower {
+            plugged_in,
+            battery_percent,
+        }
+    }
 }
 
 /// monotonic: an ntp step must not stall or end a session
@@ -57,7 +134,8 @@ pub struct State {
     pub until: Option<u64>,
     /// the paused reading, already whole seconds
     pub frozen: Option<u64>,
-    pub ac: bool,
+    pub power: DevicePower,
+    pub available: bool,
 }
 
 const IDLE: State = State {
@@ -66,7 +144,11 @@ const IDLE: State = State {
     since: None,
     until: None,
     frozen: None,
-    ac: false,
+    power: DevicePower {
+        plugged_in: false,
+        battery_percent: None,
+    },
+    available: false,
 };
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -153,9 +235,14 @@ fn store(app: &AppHandle, next: State) -> bool {
     true
 }
 
-fn describe(held: &Held, ac: bool) -> State {
+fn describe(held: &Held, power: DevicePower) -> State {
+    let available = power.allows_stay_awake();
     let Some(session) = held.session else {
-        return State { ac, ..IDLE };
+        return State {
+            power,
+            available,
+            ..IDLE
+        };
     };
 
     if session.running() {
@@ -163,7 +250,8 @@ fn describe(held: &Held, ac: bool) -> State {
             active: held.child.is_some(),
             since: session.since().map(wall_ms),
             until: session.until().map(wall_ms),
-            ac,
+            power,
+            available,
             ..IDLE
         };
     }
@@ -171,7 +259,8 @@ fn describe(held: &Held, ac: bool) -> State {
     State {
         paused: true,
         frozen: Some(session.frozen()),
-        ac,
+        power,
+        available,
         ..IDLE
     }
 }
@@ -184,7 +273,7 @@ fn release(held: &mut Held) {
 }
 
 pub fn reconcile(app: &AppHandle) {
-    let ac = on_ac();
+    let power = device_power();
     let now = now_ms();
     let awake = app.state::<Awake>();
     let mut held = awake.held.lock().unwrap();
@@ -201,7 +290,8 @@ pub fn reconcile(app: &AppHandle) {
         _ => {}
     }
 
-    if !ac {
+    // a charger coming back later does not bring the session back
+    if !power.allows_stay_awake() {
         held.session = None;
     }
 
@@ -234,7 +324,7 @@ pub fn reconcile(app: &AppHandle) {
         _ => {}
     }
 
-    let next = describe(&held, ac);
+    let next = describe(&held, power);
     let changed = store(app, next);
     drop(held);
 
@@ -249,7 +339,11 @@ pub fn awake_state(app: AppHandle) -> State {
 }
 
 #[tauri::command]
-pub fn awake_start(app: AppHandle, seconds: Option<u64>) {
+pub fn awake_start(app: AppHandle, seconds: Option<u64>) -> Result<(), String> {
+    if !device_power().allows_stay_awake() {
+        return Err("Connect a charger or charge above 10% to use Stay Awake".into());
+    }
+
     {
         let awake = app.state::<Awake>();
         let mut held = awake.held.lock().unwrap();
@@ -261,6 +355,7 @@ pub fn awake_start(app: AppHandle, seconds: Option<u64>) {
         });
     }
     reconcile(&app);
+    Ok(())
 }
 
 #[tauri::command]
@@ -289,7 +384,11 @@ pub fn awake_pause(app: AppHandle) {
 }
 
 #[tauri::command]
-pub fn awake_resume(app: AppHandle) {
+pub fn awake_resume(app: AppHandle) -> Result<(), String> {
+    if !device_power().allows_stay_awake() {
+        return Err("Connect a charger or charge above 10% to resume Stay Awake".into());
+    }
+
     {
         let awake = app.state::<Awake>();
         let mut held = awake.held.lock().unwrap();
@@ -300,11 +399,12 @@ pub fn awake_resume(app: AppHandle) {
         }
     }
     reconcile(&app);
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::Session;
+    use super::{DevicePower, Session};
 
     const NOW: u64 = 1_700_000_000_000;
 
@@ -314,6 +414,19 @@ mod tests {
             elapsed: 0,
             started: Some(NOW),
         }
+    }
+
+    #[test]
+    fn stay_awake_needs_power_or_more_than_ten_percent() {
+        let power = |plugged_in, battery_percent| DevicePower {
+            plugged_in,
+            battery_percent,
+        };
+        assert!(power(true, Some(1)).allows_stay_awake());
+        assert!(power(true, None).allows_stay_awake());
+        assert!(power(false, Some(11)).allows_stay_awake());
+        assert!(!power(false, Some(10)).allows_stay_awake());
+        assert!(!DevicePower::default().allows_stay_awake());
     }
 
     #[test]
