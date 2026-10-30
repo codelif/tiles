@@ -6,8 +6,8 @@ use std::fs;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::LazyLock;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, Sender};
+use std::sync::{LazyLock, OnceLock};
 
 use core_foundation::base::{CFType, CFTypeRef, TCFType};
 use core_foundation::boolean::CFBoolean;
@@ -25,22 +25,21 @@ const PMSET: &str = "/usr/bin/pmset";
 /// exactly what the grant allows, sudoers matches the arguments literally
 const RESET: [&str; 6] = [SUDO, "-n", PMSET, "-a", "disablesleep", "0"];
 
-/// the holder's pid while sleep is off. the pkg's boot guard looks for this name too
+/// there while Tiles has sleep off. the pkg's boot guard looks for this name too
 const MARKER: &str = "closed-display";
 
 /// blocks on a pipe only the app holds the other end of, so the app dying in any
-/// way ends the read. a marker naming a newer holder means the reset is not its to do
+/// way ends the read, and release closing it on purpose takes the same path
 const SENTINEL: &str = r#"trap '' HUP INT TERM
-pid=$1 marker=$2
-shift 2
+marker=$1
+shift
 while read -r _; do :; done
-[ "$(cat "$marker" 2>/dev/null)" = "$pid" ] || exit 0
 "$@" && rm -f "$marker""#;
 
 const CLAMSHELL_CHANGED: u32 = 0xE003_4100;
 
-/// read by the clamshell callback, which has no way to reach the hold itself
-static HOLDING: AtomicBool = AtomicBool::new(false);
+/// the IOKit callbacks only wake the worker that reconciles
+static WAKE: OnceLock<Sender<()>> = OnceLock::new();
 
 type IoObject = u32;
 type InterestCallback = extern "C" fn(*mut c_void, IoObject, u32, *mut c_void);
@@ -69,12 +68,6 @@ unsafe extern "C" {
         callback: extern "C" fn(*mut c_void),
         context: *mut c_void,
     ) -> CFRunLoopSourceRef;
-}
-
-const EPERM: i32 = 1;
-
-unsafe extern "C" {
-    fn kill(pid: i32, signal: i32) -> i32;
 }
 
 /// never released, it lives as long as the app does
@@ -106,7 +99,7 @@ fn disabled() -> bool {
     flag("SleepDisabled")
 }
 
-fn closed() -> bool {
+pub fn closed() -> bool {
     flag("AppleClamshellState")
 }
 
@@ -132,18 +125,6 @@ fn set(on: bool) -> bool {
         .is_ok_and(|status| status.success())
 }
 
-fn owner(marker: &str) -> Option<u32> {
-    marker.trim().parse().ok()
-}
-
-fn alive(pid: u32) -> bool {
-    let Ok(pid) = i32::try_from(pid) else {
-        return false;
-    };
-    let found = unsafe { kill(pid, 0) } == 0;
-    found || std::io::Error::last_os_error().raw_os_error() == Some(EPERM)
-}
-
 fn marker(app: &AppHandle) -> Option<PathBuf> {
     app.path().app_data_dir().ok().map(|dir| dir.join(MARKER))
 }
@@ -152,7 +133,6 @@ fn sentinel(marker: &Path, reset: &[&str]) -> Command {
     let mut command = Command::new("/bin/sh");
     command
         .args(["-c", SENTINEL, "tiles-lid"])
-        .arg(std::process::id().to_string())
         .arg(marker)
         .args(reset)
         .stdout(Stdio::null())
@@ -189,12 +169,11 @@ fn arm(hold: &mut Hold) -> bool {
         return false;
     };
 
-    let pid = std::process::id().to_string();
-    if fs::read_to_string(marker).ok().as_deref() != Some(pid.as_str()) {
+    if !marker.exists() {
         if let Some(dir) = marker.parent() {
             let _ = fs::create_dir_all(dir);
         }
-        if fs::write(marker, &pid).is_err() {
+        if fs::write(marker, "").is_err() {
             return false;
         }
     }
@@ -208,8 +187,8 @@ fn arm(hold: &mut Hold) -> bool {
     hold.sentinel.is_some()
 }
 
+/// for a sentinel that never had anything to reset
 fn disarm(hold: &mut Hold) {
-    // killed before its pipe closes, or it races release to the reset
     if let Some(mut child) = hold.sentinel.take() {
         let _ = child.kill();
         let _ = child.wait();
@@ -218,12 +197,6 @@ fn disarm(hold: &mut Hold) {
 
 /// every tick: macOS clears the setting on power and display changes
 pub fn keep(hold: &mut Hold) -> bool {
-    let kept = hold_off(hold);
-    HOLDING.store(kept, Ordering::SeqCst);
-    kept
-}
-
-fn hold_off(hold: &mut Hold) -> bool {
     if disabled() {
         if hold.owned {
             arm(hold);
@@ -248,14 +221,19 @@ fn hold_off(hold: &mut Hold) -> bool {
 }
 
 /// with sleep off the built-in screen can stay lit under the lid
-fn blank() {
+pub fn blank() {
     let _ = quiet(Command::new(PMSET).arg("displaysleepnow")).status();
 }
 
+/// waits for the reset, so a hold that follows cannot be undone by this one
 pub fn release(mut hold: Hold) {
-    HOLDING.store(false, Ordering::SeqCst);
-    disarm(&mut hold);
     if !hold.owned {
+        disarm(&mut hold);
+        return;
+    }
+    if let Some(mut child) = hold.sentinel.take() {
+        drop(child.stdin.take());
+        let _ = child.wait();
         return;
     }
     // a failed reset keeps the marker for recover and the boot guard
@@ -266,57 +244,51 @@ pub fn release(mut hold: Hold) {
     }
 }
 
-/// for a holder whose sentinel went down with it
+/// a marker at launch means the last sentinel went down with the app
 pub fn recover(app: &AppHandle) {
     let Some(marker) = marker(app) else {
         return;
     };
-    let Ok(contents) = fs::read_to_string(&marker) else {
-        return;
-    };
-    if let Some(pid) = owner(&contents)
-        && pid != std::process::id()
-        && alive(pid)
-    {
+    if !marker.exists() {
         return;
     }
-
     if !disabled() || set(false) {
         let _ = fs::remove_file(&marker);
     }
 }
 
-fn app_from(context: *mut c_void) -> AppHandle {
-    unsafe { &*(context as *const AppHandle) }.clone()
-}
-
-extern "C" fn on_root(
-    context: *mut c_void,
-    _service: IoObject,
-    message: u32,
-    _argument: *mut c_void,
-) {
-    if message != CLAMSHELL_CHANGED {
-        return;
+fn wake() {
+    if let Some(wake) = WAKE.get() {
+        let _ = wake.send(());
     }
-    let app = app_from(context);
-    // off the main thread, sudo is not instant
-    std::thread::spawn(move || {
-        awake::reconcile(&app);
-        if HOLDING.load(Ordering::SeqCst) && closed() {
-            blank();
-        }
-    });
 }
 
-extern "C" fn on_power(context: *mut c_void) {
-    let app = app_from(context);
-    std::thread::spawn(move || awake::reconcile(&app));
+extern "C" fn on_root(_: *mut c_void, _: IoObject, message: u32, _: *mut c_void) {
+    if message == CLAMSHELL_CHANGED {
+        wake();
+    }
+}
+
+extern "C" fn on_power(_: *mut c_void) {
+    wake();
 }
 
 /// the poll is seconds apart, and a lid shut on a cleared setting sleeps in less
 pub fn watch(app: &AppHandle) {
-    let context = Box::into_raw(Box::new(app.clone())).cast::<c_void>();
+    let (sender, events) = mpsc::channel();
+    if WAKE.set(sender).is_err() {
+        return;
+    }
+    let app = app.clone();
+    // off the main thread since sudo is not instant, and a burst is one pass
+    std::thread::spawn(move || {
+        while events.recv().is_ok() {
+            while events.try_recv().is_ok() {}
+            awake::reconcile(&app);
+        }
+    });
+
+    let context = std::ptr::null_mut();
     let main = CFRunLoop::get_main();
 
     unsafe {
@@ -356,7 +328,7 @@ mod tests {
     use std::path::Path;
     use std::time::{Duration, Instant};
 
-    use super::{owner, sentinel};
+    use super::sentinel;
 
     fn scratch(name: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("tiles-lid-{}-{name}", std::process::id()));
@@ -388,7 +360,7 @@ mod tests {
         let dir = scratch("reset");
         let marker = dir.join("closed-display");
         let flag = dir.join("reset");
-        fs::write(&marker, std::process::id().to_string()).unwrap();
+        fs::write(&marker, "").unwrap();
 
         let mut child = run(&marker, &flag);
         std::thread::sleep(Duration::from_millis(100));
@@ -401,25 +373,11 @@ mod tests {
     }
 
     #[test]
-    fn a_newer_holder_keeps_its_setting() {
-        let dir = scratch("newer");
-        let marker = dir.join("closed-display");
-        let flag = dir.join("reset");
-        fs::write(&marker, "1").unwrap();
-
-        let mut child = run(&marker, &flag);
-        drop(child.stdin.take());
-        settle(&mut child);
-        assert!(!flag.exists());
-        assert!(marker.exists());
-    }
-
-    #[test]
     fn terminating_it_does_not_skip_the_reset() {
         let dir = scratch("term");
         let marker = dir.join("closed-display");
         let flag = dir.join("reset");
-        fs::write(&marker, std::process::id().to_string()).unwrap();
+        fs::write(&marker, "").unwrap();
 
         let mut child = run(&marker, &flag);
         std::thread::sleep(Duration::from_millis(100));
@@ -432,13 +390,5 @@ mod tests {
         drop(child.stdin.take());
         settle(&mut child);
         assert!(flag.exists());
-    }
-
-    #[test]
-    fn a_marker_names_its_holder() {
-        assert_eq!(owner("4242"), Some(4242));
-        assert_eq!(owner("4242\n"), Some(4242));
-        assert_eq!(owner(""), None);
-        assert_eq!(owner("tiles"), None);
     }
 }

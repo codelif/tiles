@@ -216,6 +216,7 @@ struct Held {
     child: Option<Child>,
     /// taken and let go with the child, the two are one mode
     lid: Option<lid::Hold>,
+    lid_closed: bool,
     session: Option<Session>,
 }
 
@@ -334,6 +335,11 @@ pub fn reconcile(app: &AppHandle) {
     }
 
     let lid = held.lid.as_mut().map(lid::keep);
+    let closed = lid::closed();
+    if lid == Some(true) && closed && !held.lid_closed {
+        lid::blank();
+    }
+    held.lid_closed = closed;
     let next = describe(&held, power, lid);
     let changed = store(app, next);
     drop(held);
