@@ -40,9 +40,6 @@ const RESET: [&str; 6] = pmset(false);
 /// there while Tiles has sleep off. the pkg's boot guard looks for this name too
 const MARKER: &str = "closed-display";
 
-/// there when the user opted in, kept across launches
-const OPT_IN: &str = "closed-lid";
-
 const PKGUTIL: &str = "/usr/sbin/pkgutil";
 const RECEIPT: &str = "com.tilesprivacy.tiles";
 
@@ -172,31 +169,6 @@ pub fn offered() -> bool {
     quiet(Command::new(PKGUTIL).args(["--pkg-info", RECEIPT]))
         .status()
         .is_ok_and(|status| status.success())
-}
-
-fn opt_in(app: &AppHandle) -> Option<PathBuf> {
-    app.path().app_data_dir().ok().map(|dir| dir.join(OPT_IN))
-}
-
-pub fn wanted(app: &AppHandle) -> bool {
-    opt_in(app).is_some_and(|path| path.exists())
-}
-
-/// false when the choice could not be saved, so it is not shown as made
-pub fn want(app: &AppHandle, on: bool) -> bool {
-    let Some(path) = opt_in(app) else {
-        return false;
-    };
-    if !on {
-        return match fs::remove_file(path) {
-            Ok(()) => true,
-            Err(err) => err.kind() == std::io::ErrorKind::NotFound,
-        };
-    }
-    if let Some(dir) = path.parent() {
-        let _ = fs::create_dir_all(dir);
-    }
-    fs::write(path, "").is_ok()
 }
 
 fn sentinel(marker: &Path, reset: &[&str]) -> Command {

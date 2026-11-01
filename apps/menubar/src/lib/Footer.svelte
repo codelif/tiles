@@ -1,5 +1,6 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
+  import { getCurrentWindow } from "@tauri-apps/api/window";
 
   import AwakeMenu from "./AwakeMenu.svelte";
   import Chevron from "./Chevron.svelte";
@@ -16,6 +17,14 @@
   let { note, alert = false }: Props = $props();
 
   let menu = $state(false);
+
+  // a menu does not outlive its window
+  $effect(() => {
+    const off = getCurrentWindow().onFocusChanged(({ payload: focused }) => {
+      if (!focused) menu = false;
+    });
+    return () => void off.then((unlisten) => unlisten());
+  });
 
   let now = $state(Date.now());
 
@@ -57,7 +66,11 @@
     }
     return null;
   });
-  const menuNote = $derived(lidNote ?? powerCopy);
+  const heat = $derived(
+    awake.value.lidOffered
+      ? "Stays awake with the lid closed, so it can get hot in a bag for long periods."
+      : null,
+  );
 
   const reading = $derived.by(() => {
     const { paused, since, until, frozen } = awake.value;
@@ -102,10 +115,9 @@
       <AwakeMenu
         {session}
         available={awake.value.available}
-        note={menuNote}
-        alert={!awake.value.available || lidNote !== null}
-        lid={awake.value.lidOffered ? awake.value.lidWanted : null}
-        onlid={() => void invoke("awake_lid", { on: !awake.value.lidWanted }).catch(() => {})}
+        rule="Works when plugged in or above 10% battery."
+        {heat}
+        alert={lidNote ?? (awake.value.available ? null : powerCopy)}
         onpick={pick}
         onpause={() => run("awake_pause")}
         onresume={() => run("awake_resume")}
@@ -129,7 +141,7 @@
         <span>Keep awake</span>
       {/if}
 
-      <Chevron dir="up" />
+      <Chevron dir={menu ? "down" : "up"} />
     </button>
   </div>
 
@@ -185,8 +197,8 @@
     text-align: left;
   }
 
+  /* static, so the menu spans the footer rather than the button */
   .footer__cupwrap {
-    position: relative;
     flex: none;
     display: flex;
   }
@@ -196,7 +208,14 @@
     inset: 0;
     z-index: 1;
     border: none;
-    background: transparent;
+    background: rgba(0, 0, 0, 0.5);
+    animation: footer-dim var(--dur-push) ease-out;
+  }
+
+  @keyframes footer-dim {
+    from {
+      background: transparent;
+    }
   }
 
   .footer__cup,

@@ -53,7 +53,6 @@ export type Awake = {
   available: boolean;
   lid: "held" | "refused" | "cleared" | null;
   lidOffered: boolean;
-  lidWanted: boolean;
 };
 
 export type DevicePower = { pluggedIn: boolean; batteryPercent: number | null };
@@ -82,7 +81,6 @@ export const awake = $state<{ value: Awake }>({
     available: false,
     lid: null,
     lidOffered: false,
-    lidWanted: false,
   },
 });
 

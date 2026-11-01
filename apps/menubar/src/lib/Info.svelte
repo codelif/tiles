@@ -1,22 +1,33 @@
 <script lang="ts">
+  import { getCurrentWindow } from "@tauri-apps/api/window";
+  import type { Snippet } from "svelte";
+
   interface Props {
     text: string;
+    /** richer tip, `text` still labels the button */
+    children?: Snippet;
   }
 
-  let { text }: Props = $props();
+  let { text, children }: Props = $props();
 
-  let button = $state<HTMLButtonElement | null>(null);
   let hovered = $state(false);
-  let focused = $state(false);
   let dismissed = $state(false);
+  const open = $derived(hovered && !dismissed);
+
+  // state, not :hover. the panel hides with no pointerleave and webkit keeps a stale :hover
+  $effect(() => {
+    const off = getCurrentWindow().onFocusChanged(({ payload: focused }) => {
+      if (!focused) hovered = false;
+    });
+    return () => void off.then((unlisten) => unlisten());
+  });
 
   // capture, so escape closes a showing tip rather than reaching the panel's back
   function onkeydowncapture(event: KeyboardEvent) {
-    if (event.key !== "Escape" || dismissed || !(hovered || focused)) return;
+    if (event.key !== "Escape" || !open) return;
     event.preventDefault();
     event.stopPropagation();
     dismissed = true;
-    button?.blur();
   }
 </script>
 
@@ -26,25 +37,26 @@
   type="button"
   class="info"
   aria-label={text}
-  data-dismissed={dismissed}
-  bind:this={button}
-  onpointerenter={() => (hovered = true)}
-  onpointerleave={() => {
-    hovered = false;
+  data-open={open}
+  tabindex="-1"
+  onpointerenter={() => {
+    hovered = true;
     dismissed = false;
   }}
-  onfocus={() => {
-    focused = true;
-    dismissed = false;
-  }}
-  onblur={() => (focused = false)}
+  onpointerleave={() => (hovered = false)}
 >
   <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true">
     <circle cx="6" cy="6" r="5.2" fill="none" stroke="currentColor" stroke-width="1.2" />
     <circle cx="6" cy="3.7" r="0.75" fill="currentColor" />
     <path d="M6 5.4v3.4" stroke="currentColor" stroke-width="1.2" />
   </svg>
-  <span class="info__tip" aria-hidden="true">{text}</span>
+  <span class="info__tip" aria-hidden="true">
+    <!-- clip-path takes the drop shadow with it, so the halo is a sibling -->
+    <span class="info__halo"></span>
+    <span class="info__body">
+      {#if children}{@render children()}{:else}{text}{/if}
+    </span>
+  </span>
 </button>
 
 <style>
@@ -60,8 +72,7 @@
     transition: color var(--dur-state) ease-out;
   }
 
-  .info:hover,
-  .info:focus-visible {
+  .info:hover {
     color: var(--bone);
   }
 
@@ -71,9 +82,6 @@
     right: var(--pad-x);
     top: 100%;
     z-index: 3;
-    padding: 7px 10px;
-    clip-path: var(--clip-cut);
-    background: var(--steel);
     color: var(--ash);
     font-size: var(--fs-label);
     line-height: 1.35;
@@ -83,12 +91,21 @@
     transition: opacity var(--dur-state) ease-out;
   }
 
-  .info:hover .info__tip,
-  .info:focus-visible .info__tip {
-    opacity: 1;
+  .info__halo {
+    position: absolute;
+    inset: 2px;
+    box-shadow: var(--lift);
   }
 
-  .info[data-dismissed="true"] .info__tip {
-    opacity: 0;
+  .info__body {
+    position: relative;
+    display: block;
+    padding: 7px 10px;
+    clip-path: var(--clip-cut);
+    background: var(--steel);
+  }
+
+  .info[data-open="true"] .info__tip {
+    opacity: 1;
   }
 </style>

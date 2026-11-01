@@ -1,21 +1,20 @@
 <script lang="ts">
-  import Switch from "./Switch.svelte";
+  import Info from "./Info.svelte";
 
   interface Props {
     session: "none" | "running" | "paused";
     available: boolean;
-    note: string;
-    alert: boolean;
-    /** `null` where the install has no closed-lid mode to offer */
-    lid: boolean | null;
-    onlid: () => void;
+    rule: string;
+    /** `null` where the install never holds a closed lid */
+    heat: string | null;
+    alert: string | null;
     onpick: (seconds: number | null) => void;
     onpause: () => void;
     onresume: () => void;
     onstop: () => void;
   }
 
-  let { session, available, note, alert, lid, onlid, onpick, onpause, onresume, onstop }: Props =
+  let { session, available, rule, heat, alert, onpick, onpause, onresume, onstop }: Props =
     $props();
 
   const DURATIONS: { label: string; seconds: number | null }[] = [
@@ -33,22 +32,15 @@
   <span class="menu__halo"></span>
 
   <div class="menu__list">
-    <p class="menu__note" data-alert={alert}>{note}</p>
+    <div class="menu__head">
+      <span>Keep awake for</span>
+      <Info text={heat ? `${rule} ${heat}` : rule}>
+        {rule}
+        {#if heat}<span class="menu__heat">{heat}</span>{/if}
+      </Info>
+    </div>
+    {#if alert}<p class="menu__note">{alert}</p>{/if}
     <div class="menu__rule"></div>
-
-    {#if lid !== null}
-      <div class="menu__toggle">
-        <span>With the lid closed</span>
-        <Switch
-          on={lid}
-          size="small"
-          glow={false}
-          label="Keep awake with the lid closed"
-          onchange={onlid}
-        />
-      </div>
-      <div class="menu__rule"></div>
-    {/if}
 
     {#if session !== "none"}
       {#if session === "running"}
@@ -73,10 +65,10 @@
 <style>
   .menu {
     position: absolute;
-    right: 0;
+    left: var(--pad-x);
+    right: var(--pad-x);
     bottom: calc(100% + 6px);
     z-index: 2;
-    min-width: 100%;
   }
 
   .menu__halo {
@@ -121,29 +113,33 @@
     opacity: 0.45;
   }
 
-  .menu__toggle {
+  .menu__head {
+    position: relative;
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 12px;
-    padding: 5px var(--pad-x);
-    color: var(--ash);
-    font-family: var(--font-ui);
-    font-size: var(--fs-body);
-    white-space: nowrap;
-  }
-
-  .menu__note {
-    width: 190px;
-    margin: 0;
     padding: 7px var(--pad-x);
     color: var(--slate);
     font-family: var(--font-ui);
-    line-height: 1.35;
   }
 
-  .menu__note[data-alert="true"] {
+  .menu__head :global(.info__tip) {
+    top: calc(100% - 4px);
+    text-align: left;
+  }
+
+  .menu__heat {
+    display: block;
+    margin-top: 1lh;
     color: var(--alert);
+  }
+
+  .menu__note {
+    margin: 0;
+    padding: 0 var(--pad-x) 7px;
+    color: var(--alert);
+    font-family: var(--font-ui);
+    line-height: 1.35;
   }
 
   .menu__rule {

@@ -141,7 +141,6 @@ pub struct State {
     /// how the running session fares with the lid closed
     pub lid: Option<lid::Lid>,
     pub lid_offered: bool,
-    pub lid_wanted: bool,
 }
 
 const IDLE: State = State {
@@ -157,7 +156,6 @@ const IDLE: State = State {
     available: false,
     lid: None,
     lid_offered: false,
-    lid_wanted: false,
 };
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -218,9 +216,8 @@ impl Session {
 #[derive(Default)]
 struct Held {
     child: Option<Child>,
-    /// held only while the child runs and the user opted in
+    /// held only while the child runs
     lid: Option<lid::Hold>,
-    lid_wanted: bool,
     /// once per shut lid, and again if an external leaves it on its own
     blanked: bool,
     session: Option<Session>,
@@ -234,10 +231,7 @@ struct Awake {
 
 pub fn init(app: &AppHandle) {
     app.manage(Awake {
-        held: Mutex::new(Held {
-            lid_wanted: lid::wanted(app),
-            ..Held::default()
-        }),
+        held: Mutex::new(Held::default()),
         state: Mutex::new(IDLE),
         lid_offered: lid::offered(),
     });
@@ -261,7 +255,6 @@ fn describe(held: &Held, power: DevicePower, lid: Option<lid::Lid>, offered: boo
         power,
         available: power.allows_stay_awake(),
         lid_offered: offered,
-        lid_wanted: held.lid_wanted,
         ..IDLE
     };
     let Some(session) = held.session else {
@@ -340,7 +333,7 @@ pub fn reconcile(app: &AppHandle) {
         _ => {}
     }
 
-    let lid_due = held.child.is_some() && awake.lid_offered && held.lid_wanted;
+    let lid_due = held.child.is_some() && awake.lid_offered;
     match (lid_due, held.lid.is_some()) {
         (true, false) => held.lid = Some(lid::hold(app)),
         (false, true) => {
@@ -375,19 +368,6 @@ pub fn shutdown(app: &AppHandle) {
     let mut held = awake.held.lock().unwrap();
     release(&mut held);
     held.session = None;
-}
-
-/// takes effect on a running session too
-#[tauri::command]
-pub fn awake_lid(app: AppHandle, on: bool) {
-    if !lid::want(&app, on) {
-        return;
-    }
-    {
-        let awake = app.state::<Awake>();
-        awake.held.lock().unwrap().lid_wanted = on;
-    }
-    lid::wake();
 }
 
 #[tauri::command]
